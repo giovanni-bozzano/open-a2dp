@@ -25,6 +25,7 @@
 	<ClCompile Include="SbcTests.cpp" />
 	<ClCompile Include="AacTests.cpp" />
 	<ClCompile Include="CommonTests.cpp" />
+	<ClCompile Include="AvdtpSourceTests.cpp" />
   </ItemGroup>
   <ItemGroup>
 	<ProjectReference Include="..\..\codecs\OpenA2dpCodecs.vcxproj">

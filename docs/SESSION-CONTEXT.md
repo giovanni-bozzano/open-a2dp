@@ -1,4 +1,4 @@
-﻿# OpenA2dp â€“ Session Context (handoff from previous chat)
+# OpenA2dp â€“ Session Context (handoff from previous chat)
 
 Read this first in a new chat to pick up the previous one. It summarizes that conversation; it is not a full transcript.
 
@@ -40,7 +40,7 @@ out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 | Milestone | State |
 |---|---|
 | M1 codec library + tests | **Done** (commit 6fc217d) |
-| Solution migrated to `open-a2dp.slnx` with folders | Done (commit 4ec6684) |
+| Solution migrated to `OpenA2dp.slnx` with folders | Done (commit 4ec6684) |
 | M2 driver skeleton + L2CAP | **Code done and builds** (`out\x64\<cfg>\OpenA2dp\` has .sys/.inf/.cat; InfVerif valid). Not yet tested in a VM. |
 | M3â€“M8 (AVDTP, ACX, service, CLI/INF, signing) | Not started |
 

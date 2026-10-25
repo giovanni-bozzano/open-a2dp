@@ -1,4 +1,4 @@
-﻿# OpenA2dp
+# OpenA2dp
 
 Open-source A2DP source driver for Windows 11, built to replace `BthA2dp.sys` on a per-device basis. It supports SBC (with a configurable bitpool) and AAC-LC.
 
@@ -22,7 +22,7 @@ M1 includes:
 Requires Visual Studio 2026 (v145 toolset) and Windows SDK 10.0.26100.
 
 ```
-MSBuild open-a2dp.slnx /p:Configuration=Debug /p:Platform=x64
+MSBuild OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
 out\x64\Debug\CodecTests.exe            # all tests
 out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ```

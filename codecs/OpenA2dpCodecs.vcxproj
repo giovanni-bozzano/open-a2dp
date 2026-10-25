@@ -13,6 +13,7 @@
 	<ClInclude Include="sbc\SbcTables.h" />
 	<ClInclude Include="aac\LatmWriter.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\Avdtp.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\AvdtpSource.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\Rtp.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\RingBuffer.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\BitWriter.h" />

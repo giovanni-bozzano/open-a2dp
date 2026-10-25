@@ -1,4 +1,4 @@
-﻿# OpenA2dp â€” Open-Source A2DP Source Driver for Windows
+# OpenA2dp â€” Open-Source A2DP Source Driver for Windows
 
 Status: M1 (codec library) complete; M2 driver skeleton + L2CAP builds (WDK via NuGet), VM validation pending
 Target OS: Windows 11 (22H2+), x64 first, ARM64 later
@@ -151,7 +151,7 @@ Media packets:
 |---|---|---|---|
 | M1 | Codec library + unit tests | SBC & AAC tests pass | Done |
 | M2 | Driver skeleton + L2CAP | Loads in VM, signaling channel open | Code builds; VM validation pending |
-| M3 | AVDTP negotiation | Works vs BlueZ sink and real headset | Not started |
+| M3 | AVDTP negotiation | Works vs BlueZ sink and real headset | In progress (state machine + tests done) |
 | M4 | ACX endpoint + rings | Endpoint visible, PCM reaches ring | Not started |
 | M5 | Encoder service + streaming | Audible SBC then AAC | Not started |
 | M6 | CLI + install/uninstall | Force codec, clean restore | Not started |
@@ -194,12 +194,16 @@ Append an entry for every work session, newest last.
 | 10 | M2: `OpenA2dp.inf` (Class=MEDIA, `BTHENUM\{0000110b-...}`, KMDF service, PnpLockdown) | Inf2Cat OK; InfVerif: valid |
 | 11 | Updated SESSION-CONTEXT.md and this plan | Uncommitted |
 | 12 | Modern project format (closest equivalent to SDK-style, which native C++ does not support): `Directory.Build.props` now holds configurations, toolset (default only, so the driver keeps `WindowsKernelModeDriver10.0`), Debug/Release settings and LTCG; the three `.vcxproj` files contain only Globals, items and references | Debug and Release build with no warnings; 35/35 tests pass |
-| 13 | WDK via `PackageReference` with central versions in `Directory.Packages.props` (transitive pinning); removed `driver/packages.config`; restore with `msbuild -restore` | Driver package (.sys/.inf/.cat) built |
+| 13 | WDK via `PackageReference`
+| 14 | Committed M2 and the project-format work | 97ce477 |
+| 15 | M3: `common/include/OpenA2dp/AvdtpSource.h`, a kernel-safe AVDTP source state machine (DISCOVER, GET_CAPABILITIES per sink SEP, codec selection via callback, SET_CONFIGURATION, OPEN, START/SUSPEND/CLOSE, ABORT on timeout; answers sink DISCOVER/GET_CAPABILITIES/START/SUSPEND/CLOSE/ABORT, rejects sink-initiated configuration) and 6 tests in `AvdtpSourceTests.cpp` | 41/41 tests pass |
+| 16 | Solution file is `OpenA2dp.slnx` again (renamed in 97ce477); updated references in docs, README and instructions | |
+| 17 | Driver build now fails with MSB8020: the `WindowsKernelModeDriver10.0` toolset is no longer in Visual Studio (only v145 under `PlatformToolsets`), probably removed by the VS update | Fixed by reinstalling the WDK extension; Debug and Release build with no warnings, 41/41 tests pass |
 
 ## 15. Next Steps
-1. Commit the M2 work and the project-format change. Delete the old `packages/` folder once Visual Studio releases it.
+1. Delete the old `packages/` folder once Visual Studio releases it.
 2. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
 3. VM: confirm the log line "signaling channel open" in WinDbg (`ed nt!Kd_IHVDRIVER_Mask 0xF`), and check whether PSM 0x19 is free while BthA2dp is unloaded for that device. Then mark M2 as done.
-4. M3: AVDTP signaling (DISCOVER, GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START) using `common/include/OpenA2dp/Avdtp.h`, plus the media channel.
+4. M3: wire `AvdtpSource.h` into the driver: L2CAP read loop (BRB_L2CA_ACL_TRANSFER) on the signaling channel, a WDF timer for `OnTimeout`, a codec selector that calls the SBC/AAC IE logic (port the needed parts to kernel-safe code), and open the second L2CAP channel (media) once the state reaches `Open`.
 5. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.
 6. Optional: validate SBC output with ffmpeg or sbcdec.
