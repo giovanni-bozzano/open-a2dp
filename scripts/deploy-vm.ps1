@@ -66,11 +66,23 @@ foreach ($file in (Get-ChildItem $package -File) + (Get-Item $cer)) {
 }
 
 Write-Host 'Installing certificate and driver package...'
-$install = 'certutil -f -addstore Root C:\OpenA2dp\OpenA2dpTest.cer && ' +
-	'certutil -f -addstore TrustedPublisher C:\OpenA2dp\OpenA2dpTest.cer && ' +
-	'pnputil /add-driver C:\OpenA2dp\OpenA2dp.inf > C:\OpenA2dp\install.log 2>&1'
-Invoke-VmRun @auth runProgramInGuest $config.vmx -activeWindow 'C:\Windows\System32\cmd.exe' "/c $install"
-Invoke-VmRun @auth CopyFileFromGuestToHost $config.vmx 'C:\OpenA2dp\install.log' (Join-Path $root '.local\install.log')
+# vmrun mangles complex command lines, so run a batch file. It always exits 0;
+# the log reports each step.
+$cmd = Join-Path $root '.local\install.cmd'
+Set-Content $cmd -Encoding ascii -Value @(
+	'@echo off'
+	'cd /d C:\OpenA2dp'
+	'('
+	'certutil -f -addstore Root OpenA2dpTest.cer'
+	'certutil -f -addstore TrustedPublisher OpenA2dpTest.cer'
+	'pnputil /add-driver OpenA2dp.inf'
+	'echo pnputil exit=%errorlevel%'
+	') > install.log 2>&1'
+	'exit /b 0'
+)
+Invoke-VmRun @auth CopyFileFromHostToGuest $config.vmx $cmd 'C:\OpenA2dp\install.cmd'
+Invoke-VmRun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\cmd.exe' '/c C:\OpenA2dp\install.cmd'
+Invoke-VmRun @auth CopyFileFromGuestToHost
 Get-Content (Join-Path $root '.local\install.log')
 
 Write-Host "`nNext (in the VM): Device Manager > headset A2DP device (BTHENUM\{0000110b-...}) > Update driver > Have Disk > C:\OpenA2dp\OpenA2dp.inf"
