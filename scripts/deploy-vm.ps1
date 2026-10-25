@@ -5,7 +5,8 @@
 .DESCRIPTION
 	Uses VMware vmrun (requires VMware Tools in the guest). Guest credentials are read
 	from .local\vm.json (untracked):
-		{ "vmx": "D:\\Virtual Machines\\OpenA2dp\\OpenA2dp.vmx", "user": "...", "password": "..." }
+		{ "vmx": "D:\\Virtual Machines\\OpenA2dp\\OpenA2dp.vmx", "user": "...", "password": "...", "vmPassword": "..." }
+	vmPassword is the VM encryption password (VMware encrypts VMs that have a vTPM); omit it if the VM is not encrypted.
 
 	Steps: optional snapshot revert, copy package + test certificate, trust the
 	certificate, add the driver to the store with pnputil.
@@ -23,7 +24,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $vmrun = 'D:\Program Files\VMware\VMware Workstation\vmrun.exe'
 $config = Get-Content (Join-Path $root '.local\vm.json') -Raw | ConvertFrom-Json
-$auth = @('-T', 'ws', '-gu', $config.user, '-gp', $config.password)
+$base = @('-T', 'ws')
+if ($config.vmPassword) { $base += @('-vp', $config.vmPassword) }
+$auth = $base + @('-gu', $config.user, '-gp', $config.password)
 
 function Invoke-VmRun {
 	& $vmrun @args
@@ -49,12 +52,12 @@ Export-Certificate -Cert $signer -FilePath $cer -Force | Out-Null
 
 if ($Snapshot) {
 	Write-Host "Reverting to snapshot '$Snapshot'..."
-	Invoke-VmRun -T ws revertToSnapshot $config.vmx $Snapshot
-	Invoke-VmRun -T ws start $config.vmx
+	Invoke-VmRun @base revertToSnapshot $config.vmx $Snapshot
+	Invoke-VmRun @base start $config.vmx
 }
 
 Write-Host 'Waiting for VMware Tools...'
-& $vmrun -T ws checkToolsState $config.vmx | Out-Null
+& $vmrun @base checkToolsState $config.vmx | Out-Null
 Invoke-VmRun @auth createDirectoryInGuest $config.vmx 'C:\OpenA2dp' 2>$null
 
 foreach ($file in (Get-ChildItem $package -File) + (Get-Item $cer)) {
