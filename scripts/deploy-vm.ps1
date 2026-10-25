@@ -31,7 +31,7 @@ $auth = $base + @('-gu', $config.user, '-gp', $config.password)
 function Invoke-VmRun {
 	& $vmrun @args
 	if ($LASTEXITCODE -ne 0) {
-		throw "vmrun $($args[0..3] -join ' ') failed ($LASTEXITCODE)"
+		throw "vmrun $($args | Where-Object { $_ -cmatch '^[a-zA-Z]{6,}$' } | Select-Object -First 1) failed ($LASTEXITCODE)"
 	}
 }
 
@@ -58,7 +58,7 @@ if ($Snapshot) {
 
 Write-Host 'Waiting for VMware Tools...'
 & $vmrun @base checkToolsState $config.vmx | Out-Null
-Invoke-VmRun @auth createDirectoryInGuest $config.vmx 'C:\OpenA2dp' 2>$null
+& $vmrun @auth createDirectoryInGuest $config.vmx 'C:\OpenA2dp' 2>&1 | Out-Null
 
 foreach ($file in (Get-ChildItem $package -File) + (Get-Item $cer)) {
 	Write-Host "Copying $($file.Name)"
@@ -75,7 +75,7 @@ Set-Content $cmd -Encoding ascii -Value @(
 	'('
 	'certutil -f -addstore Root OpenA2dpTest.cer'
 	'certutil -f -addstore TrustedPublisher OpenA2dpTest.cer'
-	'pnputil /add-driver OpenA2dp.inf'
+	'pnputil /add-driver OpenA2dp.inf /install'
 	'echo pnputil exit=%errorlevel%'
 	') > install.log 2>&1'
 	'exit /b 0'
@@ -85,4 +85,4 @@ Invoke-VmRun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\cmd.exe' '
 Invoke-VmRun @auth CopyFileFromGuestToHost $config.vmx 'C:\OpenA2dp\install.log' (Join-Path $root '.local\install.log')
 Get-Content (Join-Path $root '.local\install.log')
 
-Write-Host "`nNext (in the VM): Device Manager > headset A2DP device (BTHENUM\{0000110b-...}) > Update driver > Have Disk > C:\OpenA2dp\OpenA2dp.inf"
+Write-Host "`npnputil /install binds the headset A2DP device; exit 3010 means reboot the VM."

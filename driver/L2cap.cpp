@@ -121,9 +121,11 @@ NTSTATUS L2capOpenSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 		brb.ConfigOut.Flags = CFG_MTU;
 		brb.ConfigOut.Mtu.Max = L2CAP_DEFAULT_MTU;
 		brb.ConfigOut.Mtu.Min = L2CAP_MIN_MTU;
+		brb.ConfigOut.Mtu.Preferred = L2CAP_DEFAULT_MTU;
 		brb.ConfigIn.Flags = CFG_MTU;
 		brb.ConfigIn.Mtu.Max = L2CAP_DEFAULT_MTU;
 		brb.ConfigIn.Mtu.Min = L2CAP_MIN_MTU;
+		brb.ConfigIn.Mtu.Preferred = L2CAP_DEFAULT_MTU;
 		brb.CallbackFlags = CALLBACK_DISCONNECT;
 		brb.Callback = &OnIndication;
 		brb.CallbackContext = ctx;

@@ -1,6 +1,6 @@
 # OpenA2dp â€” Open-Source A2DP Source Driver for Windows
 
-Status: M1 (codec library) complete; M2 driver skeleton + L2CAP builds (WDK via NuGet), VM validation pending
+Status: M1 and M2 complete (driver loads in VM, AVDTP signaling channel opens); M3 in progress
 Target OS: Windows 11 (22H2+), x64 first, ARM64 later
 License: Apache-2.0 (proposed, see Open Decisions)
 Repo location: `D:\repos\open-a2dp`
@@ -150,7 +150,7 @@ Media packets:
 | # | Milestone | Exit criteria | Status |
 |---|---|---|---|
 | M1 | Codec library + unit tests | SBC & AAC tests pass | Done |
-| M2 | Driver skeleton + L2CAP | Loads in VM, signaling channel open | Code builds; VM validation pending |
+| M2 | Driver skeleton + L2CAP | Loads in VM, signaling channel open | Done (VM: signaling channel open to headset) |
 | M3 | AVDTP negotiation | Works vs BlueZ sink and real headset | In progress (state machine + tests done) |
 | M4 | ACX endpoint + rings | Endpoint visible, PCM reaches ring | Not started |
 | M5 | Encoder service + streaming | Audible SBC then AAC | Not started |
@@ -205,10 +205,6 @@ Append an entry for every work session, newest last.
 | 21 | WinDbg MCP: connected to the kernel session, break-in works (target Windows 11 26100 x64, 1 vCPU). Kernel symbols failed: msdl returned 404 for the ntkrnlmp.pdb of this build, so only exports load and `nt!Kd_IHVDRIVER_Mask` can't be set; use the Debug Print Filter registry key instead | Session closed afterwards |
 | 22 | Driver now test-signed at build time (`SignMode=TestSign`, SHA256, WDK auto-generated `WDKTestCert`); added `scripts/deploy-vm.ps1` (vmrun: optional snapshot revert, copy package + exported cert, trust cert, `pnputil /add-driver`; credentials in ignored `.local/vm.json`) | .sys and .cat signed; 41/41 tests pass |
 | 23 | deploy-vm.ps1: added VM encryption password (`-vp`, VMware encrypts VMs with a vTPM); guest login needs a non-empty password; install now runs from a batch file because vmrun mangled the inline `&&` command. First deploy: certificate trusted, `pnputil /add-driver` published `oem11.inf`; test signing confirmed on | Driver in the VM's driver store; not yet bound to the headset |
+| 24 | Device Manager "Have Disk" refused the INF ("no compatible driver"; the inbox A2DP driver outranks it). Bound with `pnputil /add-driver OpenA2dp.inf /install` instead (now in deploy-vm.ps1). Driver loaded; WinDbg showed the L2CAP open failing with 0xC000000D: `Mtu.Preferred` was 0 (below Min 48). Set Preferred=672 for ConfigOut/ConfigIn. Also: deploy-vm.ps1 no longer echoes vmrun arguments (leaked the VM password) and tolerates an existing guest folder | Log: "signaling channel open, out MTU 672" with the real headset. M2 done |
 
-## 15. Next Steps
-1. VM: install VMware Tools, connect the USB Bluetooth dongle and pair the headset, set the Debug Print Filter `IHVDRIVER=0xF`, take the snapshot "clean, paired". Create `.local/vm.json`, run `scripts/deploy-vm.ps1 -Build`, then bind the driver with Update driver > Have Disk.
-2. VM: confirm the log line "signaling channel open" in WinDbg (`ed nt!Kd_IHVDRIVER_Mask 0xF`), and check whether PSM 0x19 is free while BthA2dp is unloaded for that device. Then mark M2 as done.
-3. M3: wire `AvdtpSource.h` into the driver: L2CAP read loop (BRB_L2CA_ACL_TRANSFER) on the signaling channel, a WDF timer for `OnTimeout`, a codec selector that calls the SBC/AAC IE logic (port the needed parts to kernel-safe code), and open the second L2CAP channel (media) once the state reaches `Open`.
-4. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.
-5. Optional: validate SBC output with ffmpeg or sbcdec.
+## 15. Next Steps. M3: wire `AvdtpSource.h` into the driver: L2CAP read loop (BRB_L2CA_ACL_TRANSFER) on the signaling channel, a WDF timer for `OnTimeout`, a codec selector that calls the SBC/AAC IE logic (port the needed parts to kernel-safe code), and open the second L2CAP channel (media) once the state reaches `Open`.. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.. VM: take the snapshot "clean, paired" (to revert: `pnputil /delete-driver oem12.inf /uninstall`). Kernel symbols for build 26100.1 are still missing on msdl; update the VM to a newer cumulative update if they're needed.. Optional: validate SBC output with ffmpeg or sbcdec.
