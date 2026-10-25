@@ -1,0 +1,9 @@
+out/
+obj/
+.vs/
+*.user
+*.aps
+*.ipch
+*.VC.db
+*.binlog
+tests/output/

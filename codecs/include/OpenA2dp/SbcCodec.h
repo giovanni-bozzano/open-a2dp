@@ -1,0 +1,98 @@
+#pragma once
+
+#include <OpenA2dp/IA2dpCodec.h>
+
+namespace OpenA2dp {
+
+namespace Sbc {
+
+// Codec IE bit masks (A2DP spec 4.3.2).
+constexpr uint8_t kFs16000 = 0x80;
+constexpr uint8_t kFs32000 = 0x40;
+constexpr uint8_t kFs44100 = 0x20;
+constexpr uint8_t kFs48000 = 0x10;
+constexpr uint8_t kModeMono = 0x08;
+constexpr uint8_t kModeDual = 0x04;
+constexpr uint8_t kModeStereo = 0x02;
+constexpr uint8_t kModeJoint = 0x01;
+constexpr uint8_t kBlocks4 = 0x80;
+constexpr uint8_t kBlocks8 = 0x40;
+constexpr uint8_t kBlocks12 = 0x20;
+constexpr uint8_t kBlocks16 = 0x10;
+constexpr uint8_t kSubbands4 = 0x08;
+constexpr uint8_t kSubbands8 = 0x04;
+constexpr uint8_t kAllocSnr = 0x02;
+constexpr uint8_t kAllocLoudness = 0x01;
+
+constexpr size_t kIeLength = 4;
+constexpr uint8_t kMinBitpool = 2;
+constexpr uint8_t kMaxBitpool = 250;
+constexpr uint8_t kSyncWord = 0x9C;
+constexpr size_t kMaxFramesPerPacket = 15;
+
+enum class ChannelMode : uint8_t { Mono = 0, DualChannel = 1, Stereo = 2, JointStereo = 3 };
+enum class Allocation : uint8_t { Loudness = 0, Snr = 1 };
+
+struct FrameParams {
+	uint32_t sampleRate = 44100;
+	uint8_t blocks = 16;
+	uint8_t subbands = 8;
+	ChannelMode channelMode = ChannelMode::JointStereo;
+	Allocation allocation = Allocation::Loudness;
+	uint8_t bitpool = 53;
+
+	uint8_t Channels() const noexcept { return channelMode == ChannelMode::Mono ? 1 : 2; }
+};
+
+// Index into the sampling-frequency dependent tables (0=16k, 1=32k, 2=44.1k, 3=48k), or -1.
+int SampleRateIndex(uint32_t sampleRate) noexcept;
+
+size_t FrameLength(const FrameParams& p) noexcept;
+uint32_t Bitrate(const FrameParams& p) noexcept;
+uint8_t MaxBitpoolForMode(ChannelMode mode, uint8_t subbands) noexcept;
+
+// Parses a fully configured IE (exactly one bit per field). Uses the max bitpool.
+bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept;
+
+// CRC-8 (x^8+x^4+x^3+x^2+1, init 0x0F) over `bitLength` bits, MSB first.
+uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept;
+
+// Bit allocation (A2DP spec 12.6.3). scaleFactors/bits are [channel][subband].
+void CalculateBits(const FrameParams& p, const uint8_t scaleFactors[2][8], int bits[2][8]) noexcept;
+
+} // namespace Sbc
+
+class SbcCodec final : public IA2dpCodec {
+public:
+	CodecType Type() const noexcept override { return CodecType::Sbc; }
+	const char* Name() const noexcept override { return "SBC"; }
+
+	size_t BuildLocalCapabilities(uint8_t* ie, size_t capacity) const noexcept override;
+	bool SelectConfiguration(const uint8_t* remoteIe, size_t remoteIeLength,
+							 const CodecPreference& preference, A2dpCodecConfig& out) const noexcept override;
+	uint8_t ValidateConfiguration(const uint8_t* ie, size_t ieLength) const noexcept override;
+	HRESULT CreateEncoder(const A2dpCodecConfig& config, std::unique_ptr<IA2dpEncoder>& encoder) const override;
+};
+
+class SbcEncoder final : public IA2dpEncoder {
+public:
+	explicit SbcEncoder(const Sbc::FrameParams& params) noexcept;
+
+	const Sbc::FrameParams& Params() const noexcept { return params_; }
+
+	PcmFormat InputFormat() const noexcept override;
+	uint32_t SamplesPerFrame() const noexcept override;
+	size_t MaxFrameBytes() const noexcept override;
+	HRESULT Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept override;
+	size_t FramesPerPacket(size_t payloadCapacity) const noexcept override;
+	size_t BuildMediaPayload(const uint8_t* frames, const size_t* frameSizes, size_t frameCount,
+							 uint8_t* out, size_t capacity) noexcept override;
+
+private:
+	void Analyze(const int16_t* pcm, int channel, int block, double* subbandSamples) noexcept;
+
+	Sbc::FrameParams params_;
+	double history_[2][80] = {};
+};
+
+} // namespace OpenA2dp

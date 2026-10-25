@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+	<OpenA2dpRoot>$(MSBuildThisFileDirectory)</OpenA2dpRoot>
+	<OutDir>$(OpenA2dpRoot)out\$(Platform)\$(Configuration)\</OutDir>
+	<IntDir>$(OpenA2dpRoot)obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
+	<WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+	<ClCompile>
+	  <LanguageStandard>stdcpp20</LanguageStandard>
+	  <WarningLevel>Level4</WarningLevel>
+	  <TreatWarningAsError>true</TreatWarningAsError>
+	  <SDLCheck>true</SDLCheck>
+	  <ConformanceMode>true</ConformanceMode>
+	  <MultiProcessorCompilation>true</MultiProcessorCompilation>
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)common\include;$(OpenA2dpRoot)codecs\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+	</ClCompile>
+  </ItemDefinitionGroup>
+</Project>

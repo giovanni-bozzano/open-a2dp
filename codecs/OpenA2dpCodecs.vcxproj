@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+	<ProjectConfiguration Include="Debug|x64">
+	  <Configuration>Debug</Configuration>
+	  <Platform>x64</Platform>
+	</ProjectConfiguration>
+	<ProjectConfiguration Include="Release|x64">
+	  <Configuration>Release</Configuration>
+	  <Platform>x64</Platform>
+	</ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+	<VCProjectVersion>18.0</VCProjectVersion>
+	<ProjectGuid>{6B1E3C2A-4F1D-4C7E-9A11-2D0F6E7A1001}</ProjectGuid>
+	<RootNamespace>OpenA2dpCodecs</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+	<ConfigurationType>StaticLibrary</ConfigurationType>
+	<PlatformToolset>v145</PlatformToolset>
+	<CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+	<UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+	<UseDebugLibraries>false</UseDebugLibraries>
+	<WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+	<ClCompile>
+	  <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+	</ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+	<ClCompile>
+	  <Optimization>MaxSpeed</Optimization>
+	  <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+	</ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+	<ClInclude Include="include\OpenA2dp\IA2dpCodec.h" />
+	<ClInclude Include="include\OpenA2dp\SbcCodec.h" />
+	<ClInclude Include="include\OpenA2dp\AacCodec.h" />
+	<ClInclude Include="sbc\SbcTables.h" />
+	<ClInclude Include="aac\LatmWriter.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\Avdtp.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\Rtp.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\RingBuffer.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\BitWriter.h" />
+  </ItemGroup>
+  <ItemGroup>
+	<ClCompile Include="CodecFactory.cpp" />
+	<ClCompile Include="sbc\SbcCodec.cpp" />
+	<ClCompile Include="sbc\SbcEncoder.cpp" />
+	<ClCompile Include="aac\AacCodec.cpp" />
+	<ClCompile Include="aac\LatmWriter.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
