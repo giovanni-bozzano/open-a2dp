@@ -199,11 +199,11 @@ Append an entry for every work session, newest last.
 | 15 | M3: `common/include/OpenA2dp/AvdtpSource.h`, a kernel-safe AVDTP source state machine (DISCOVER, GET_CAPABILITIES per sink SEP, codec selection via callback, SET_CONFIGURATION, OPEN, START/SUSPEND/CLOSE, ABORT on timeout; answers sink DISCOVER/GET_CAPABILITIES/START/SUSPEND/CLOSE/ABORT, rejects sink-initiated configuration) and 6 tests in `AvdtpSourceTests.cpp` | 41/41 tests pass |
 | 16 | Solution file is `OpenA2dp.slnx` again (renamed in 97ce477); updated references in docs, README and instructions | |
 | 17 | Driver build now fails with MSB8020: the `WindowsKernelModeDriver10.0` toolset is no longer in Visual Studio (only v145 under `PlatformToolsets`), probably removed by the VS update | Fixed by reinstalling the WDK extension; Debug and Release build with no warnings, 41/41 tests pass |
+| 18 | Old `packages/` folder is gone; removed its `.gitignore` entry (WDK now restores to the global NuGet cache) | |
 
 ## 15. Next Steps
-1. Delete the old `packages/` folder once Visual Studio releases it.
-2. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
-3. VM: confirm the log line "signaling channel open" in WinDbg (`ed nt!Kd_IHVDRIVER_Mask 0xF`), and check whether PSM 0x19 is free while BthA2dp is unloaded for that device. Then mark M2 as done.
-4. M3: wire `AvdtpSource.h` into the driver: L2CAP read loop (BRB_L2CA_ACL_TRANSFER) on the signaling channel, a WDF timer for `OnTimeout`, a codec selector that calls the SBC/AAC IE logic (port the needed parts to kernel-safe code), and open the second L2CAP channel (media) once the state reaches `Open`.
-5. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.
-6. Optional: validate SBC output with ffmpeg or sbcdec.
+1. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
+2. VM: confirm the log line "signaling channel open" in WinDbg (`ed nt!Kd_IHVDRIVER_Mask 0xF`), and check whether PSM 0x19 is free while BthA2dp is unloaded for that device. Then mark M2 as done.
+3. M3: wire `AvdtpSource.h` into the driver: L2CAP read loop (BRB_L2CA_ACL_TRANSFER) on the signaling channel, a WDF timer for `OnTimeout`, a codec selector that calls the SBC/AAC IE logic (port the needed parts to kernel-safe code), and open the second L2CAP channel (media) once the state reaches `Open`.
+4. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.
+5. Optional: validate SBC output with ffmpeg or sbcdec.

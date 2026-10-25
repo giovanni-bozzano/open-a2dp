@@ -7,4 +7,3 @@ obj/
 *.VC.db
 *.binlog
 tests/output/
-packages/
