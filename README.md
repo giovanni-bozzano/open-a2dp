@@ -22,7 +22,7 @@ M1 includes:
 Requires Visual Studio 2026 (v145 toolset) and Windows SDK 10.0.26100.
 
 ```
-MSBuild OpenA2dp.sln /p:Configuration=Debug /p:Platform=x64
+MSBuild OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
 out\x64\Debug\CodecTests.exe            # all tests
 out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ```

@@ -1,0 +1,27 @@
+﻿<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/docs/">
+    <File Path="docs/A2DP-Driver-Plan.md" />
+  </Folder>
+  <Folder Name="/common/">
+    <File Path="common/include/OpenA2dp/Avdtp.h" />
+    <File Path="common/include/OpenA2dp/BitWriter.h" />
+    <File Path="common/include/OpenA2dp/RingBuffer.h" />
+    <File Path="common/include/OpenA2dp/Rtp.h" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="codecs/OpenA2dpCodecs.vcxproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CodecTests/CodecTests.vcxproj">
+      <BuildDependency Project="codecs/OpenA2dpCodecs.vcxproj" />
+    </Project>
+  </Folder>
+</Solution>
