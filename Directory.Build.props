@@ -1,9 +1,31 @@
 <Project>
+  <!-- Shared settings for every C++ project; project files only declare what is specific to them. -->
+  <ItemGroup Label="ProjectConfigurations">
+	<ProjectConfiguration Include="Debug|x64">
+	  <Configuration>Debug</Configuration>
+	  <Platform>x64</Platform>
+	</ProjectConfiguration>
+	<ProjectConfiguration Include="Release|x64">
+	  <Configuration>Release</Configuration>
+	  <Platform>x64</Platform>
+	</ProjectConfiguration>
+  </ItemGroup>
   <PropertyGroup>
 	<OpenA2dpRoot>$(MSBuildThisFileDirectory)</OpenA2dpRoot>
 	<OutDir>$(OpenA2dpRoot)out\$(Platform)\$(Configuration)\</OutDir>
 	<IntDir>$(OpenA2dpRoot)obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
-	<WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+	<BaseIntermediateOutputPath>$(OpenA2dpRoot)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+	<RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+	<WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)' == ''">10.0</WindowsTargetPlatformVersion>
+	<PlatformToolset Condition="'$(PlatformToolset)' == ''">v145</PlatformToolset>
+	<CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+	<UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+	<UseDebugLibraries>false</UseDebugLibraries>
+	<WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
   <ItemDefinitionGroup>
 	<ClCompile>
@@ -14,7 +36,25 @@
 	  <ConformanceMode>true</ConformanceMode>
 	  <MultiProcessorCompilation>true</MultiProcessorCompilation>
 	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)common\include;$(OpenA2dpRoot)codecs\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-	  <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-	</ClCompile>
-  </ItemDefinitionGroup>
+		</ClCompile>
+	  </ItemDefinitionGroup>
+	  <ItemDefinitionGroup Condition="'$(ConfigurationType)' != 'Driver'">
+		<ClCompile>
+		  <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+		</ClCompile>
+	  </ItemDefinitionGroup>
+	  <ItemDefinitionGroup Condition="'$(ConfigurationType)' != 'Driver' and '$(Configuration)' == 'Debug'">
+		<ClCompile>
+		  <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+		</ClCompile>
+	  </ItemDefinitionGroup>
+	  <ItemDefinitionGroup Condition="'$(ConfigurationType)' != 'Driver' and '$(Configuration)' == 'Release'">
+		<ClCompile>
+		  <Optimization>MaxSpeed</Optimization>
+		  <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+		</ClCompile>
+		<Link>
+		  <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+		</Link>
+	  </ItemDefinitionGroup>
 </Project>

@@ -1,6 +1,6 @@
 ﻿# OpenA2dp â€” Open-Source A2DP Source Driver for Windows
 
-Status: M1 (codec library) complete; M2 blocked on WDK install
+Status: M1 (codec library) complete; M2 driver skeleton + L2CAP builds (WDK via NuGet), VM validation pending
 Target OS: Windows 11 (22H2+), x64 first, ARM64 later
 License: Apache-2.0 (proposed, see Open Decisions)
 Repo location: `D:\repos\open-a2dp`
@@ -147,16 +147,16 @@ Media packets:
 - Later: EV cert -> Partner Center attestation signing.
 
 ## 10. Milestones
-| # | Milestone | Exit criteria |
-|---|---|---|
-| M1 | Codec library + unit tests | SBC & AAC tests pass |
-| M2 | Driver skeleton + L2CAP | Loads in VM, signaling channel open |
-| M3 | AVDTP negotiation | Works vs BlueZ sink and real headset |
-| M4 | ACX endpoint + rings | Endpoint visible, PCM reaches ring |
-| M5 | Encoder service + streaming | Audible SBC then AAC |
-| M6 | CLI + install/uninstall | Force codec, clean restore |
-| M7 | System testing | Tier 4 matrix passes |
-| M8 | Signing & release | Attestation-signed package |
+| # | Milestone | Exit criteria | Status |
+|---|---|---|---|
+| M1 | Codec library + unit tests | SBC & AAC tests pass | Done |
+| M2 | Driver skeleton + L2CAP | Loads in VM, signaling channel open | Code builds; VM validation pending |
+| M3 | AVDTP negotiation | Works vs BlueZ sink and real headset | Not started |
+| M4 | ACX endpoint + rings | Endpoint visible, PCM reaches ring | Not started |
+| M5 | Encoder service + streaming | Audible SBC then AAC | Not started |
+| M6 | CLI + install/uninstall | Force codec, clean restore | Not started |
+| M7 | System testing | Tier 4 matrix passes | Not started |
+| M8 | Signing & release | Attestation-signed package | Not started |
 
 ## 11. Risks
 - Coexistence with Microsoft A2DP/HFP/AVRCP endpoints on same device.
@@ -174,5 +174,32 @@ Media packets:
 ## 13. Environment Status
 - Visual Studio 2026 Community: installed.
 - Windows SDK 10.0.26100: installed.
-- **WDK: NOT installed** -> required before M2. Install WDK for SDK 10.0.26100 + VS extension.
+- **WDK:** provided by NuGet (`driver/packages.config`, 10.0.28000.2526) plus the VS WDK component. No MSI install is needed.
 - To install: WinDbg, Bluetooth Test Platform (btvs), Wireshark, ffmpeg (for decode tests), VMware/VirtualBox.
+
+## 14. Action Log
+Append an entry for every work session, newest last.
+
+| # | Action | Result / commit |
+|---|---|---|
+| 1 | M1: codec library (SBC, AAC via MF/LATM) and CodecTests | 35 tests pass (6fc217d) |
+| 2 | Fixed the SBC reference-decoder synthesis (direct cosine filterbank, gain -M) and lowered the round-trip SNR thresholds | Tests pass |
+| 3 | Migrated the solution to `.slnx` with solution folders | 4ec6684 |
+| 4 | Added SESSION-CONTEXT.md and copilot-instructions.md | 5cfee89 |
+| 5 | Moved the repo to `D:\repos\open-a2dp` and renamed the solution to `open-a2dp.slnx` | 55bbb0b |
+| 6 | Chose WDK via NuGet (10.0.28000.2526: WDK.x64, SDK.CPP, SDK.CPP.x64) in `driver/packages.config`; added `packages/` to `.gitignore` | Restored with `nuget restore` |
+| 7 | `Directory.Build.props`: `WindowsTargetPlatformVersion` now defaults to 10.0 only when unset; user-mode defines no longer apply to driver projects | Codec projects unaffected |
+| 8 | M2: added `driver/OpenA2dp.vcxproj` (KMDF, target platform pinned to 10.0.28000.0, output in `out\`/`obj\`, `FilesToPackage` set to the .sys) and added it to `open-a2dp.slnx` | Builds in Debug and Release with no warnings |
+| 9 | M2: `Driver.cpp` (DeviceAdd, PrepareHardware gets the remote address, SelfManagedIo Init/Restart/Suspend) and `L2cap.cpp` (profile interface QI, async open of PSM 0x19, synchronous close, remote-disconnect work item) | Compiles; not yet run |
+| 10 | M2: `OpenA2dp.inf` (Class=MEDIA, `BTHENUM\{0000110b-...}`, KMDF service, PnpLockdown) | Inf2Cat OK; InfVerif: valid |
+| 11 | Updated SESSION-CONTEXT.md and this plan | Uncommitted |
+| 12 | Modern project format (closest equivalent to SDK-style, which native C++ does not support): `Directory.Build.props` now holds configurations, toolset (default only, so the driver keeps `WindowsKernelModeDriver10.0`), Debug/Release settings and LTCG; the three `.vcxproj` files contain only Globals, items and references | Debug and Release build with no warnings; 35/35 tests pass |
+| 13 | WDK via `PackageReference` with central versions in `Directory.Packages.props` (transitive pinning); removed `driver/packages.config`; restore with `msbuild -restore` | Driver package (.sys/.inf/.cat) built |
+
+## 15. Next Steps
+1. Commit the M2 work and the project-format change. Delete the old `packages/` folder once Visual Studio releases it.
+2. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
+3. VM: confirm the log line "signaling channel open" in WinDbg (`ed nt!Kd_IHVDRIVER_Mask 0xF`), and check whether PSM 0x19 is free while BthA2dp is unloaded for that device. Then mark M2 as done.
+4. M3: AVDTP signaling (DISCOVER, GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START) using `common/include/OpenA2dp/Avdtp.h`, plus the media channel.
+5. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.
+6. Optional: validate SBC output with ffmpeg or sbcdec.

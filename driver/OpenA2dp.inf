@@ -1,0 +1,58 @@
+;
+; OpenA2dp.inf - open-source A2DP Source profile driver (replaces BthA2dp.sys).
+;
+; Opt-in: matches the A2DP Sink service (UUID 0x110B) compatible ID on BTHENUM.
+; Select it per device with "Update driver" or pnputil; uninstalling restores BthA2dp.
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+CatalogFile = OpenA2dp.cat
+DriverVer   =
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+OpenA2dp.sys = 1,,
+
+[Manufacturer]
+%ProviderName% = OpenA2dp, NTamd64.10.0...22000
+
+[OpenA2dp.NTamd64.10.0...22000]
+%OpenA2dp.DeviceDesc% = OpenA2dp_Install, BTHENUM\{0000110b-0000-1000-8000-00805f9b34fb}
+
+[OpenA2dp_Install.NT]
+CopyFiles = OpenA2dp_CopyFiles
+
+[OpenA2dp_CopyFiles]
+OpenA2dp.sys
+
+[OpenA2dp_Install.NT.Services]
+AddService = OpenA2dp, 0x00000002, OpenA2dp_Service
+
+[OpenA2dp_Service]
+DisplayName   = %OpenA2dp.ServiceDesc%
+ServiceType   = 1               ; SERVICE_KERNEL_DRIVER
+StartType     = 3               ; SERVICE_DEMAND_START
+ErrorControl  = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary = %13%\OpenA2dp.sys
+
+[OpenA2dp_Install.NT.Wdf]
+KmdfService = OpenA2dp, OpenA2dp_WdfSection
+
+[OpenA2dp_WdfSection]
+KmdfLibraryVersion = $KMDFVERSION$
+
+[Strings]
+ProviderName         = "OpenA2dp"
+DiskName             = "OpenA2dp Installation Disk"
+OpenA2dp.DeviceDesc  = "OpenA2dp Bluetooth A2DP Source"
+OpenA2dp.ServiceDesc = "OpenA2dp Bluetooth A2DP Source Driver"

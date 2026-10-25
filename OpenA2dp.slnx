@@ -1,10 +1,11 @@
-﻿<Solution>
+<Solution>
   <Configurations>
     <Platform Name="x64" />
   </Configurations>
   <Folder Name="/Solution Items/">
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
     <File Path="README.md" />
     <File Path=".github/copilot-instructions.md" />
   </Folder>
@@ -19,10 +20,11 @@
     <File Path="common/include/OpenA2dp/Rtp.h" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="codecs/OpenA2dpCodecs.vcxproj" />
+    <Project Path="codecs/OpenA2dpCodecs.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1001" />
+    <Project Path="driver/OpenA2dp.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1003" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/CodecTests/CodecTests.vcxproj">
+    <Project Path="tests/CodecTests/CodecTests.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1002">
       <BuildDependency Project="codecs/OpenA2dpCodecs.vcxproj" />
     </Project>
   </Folder>

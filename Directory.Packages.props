@@ -1,0 +1,12 @@
+<Project>
+  <!-- Central Package Management: every NuGet version is pinned here. -->
+  <PropertyGroup>
+	<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+	<CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+	<PackageVersion Include="Microsoft.Windows.WDK.x64" Version="10.0.28000.2526" />
+	<PackageVersion Include="Microsoft.Windows.SDK.CPP" Version="10.0.28000.2526" />
+	<PackageVersion Include="Microsoft.Windows.SDK.CPP.x64" Version="10.0.28000.2526" />
+  </ItemGroup>
+</Project>

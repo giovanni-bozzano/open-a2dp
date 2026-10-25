@@ -1,0 +1,32 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup Label="Globals">
+	<ProjectGuid>{6B1E3C2A-4F1D-4C7E-9A11-2D0F6E7A1003}</ProjectGuid>
+	<RootNamespace>OpenA2dp</RootNamespace>
+	<TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
+	<ConfigurationType>Driver</ConfigurationType>
+	<DriverType>KMDF</DriverType>
+	<DriverTargetPlatform>Windows Driver</DriverTargetPlatform>
+	<TargetVersion>Windows10</TargetVersion>
+	<PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+	<WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+	<SignMode>Off</SignMode>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <!-- The WDK props override OutDir/IntDir; restore the repo layout. -->
+  <PropertyGroup>
+	<OutDir>$(OpenA2dpRoot)out\$(Platform)\$(Configuration)\</OutDir>
+	<IntDir>$(OpenA2dpRoot)obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemGroup>
+	<PackageReference Include="Microsoft.Windows.WDK.x64" />
+  </ItemGroup>
+  <ItemGroup>
+	<ClInclude Include="Driver.h" />
+	<ClCompile Include="Driver.cpp" />
+	<ClCompile Include="L2cap.cpp" />
+	<Inf Include="OpenA2dp.inf" />
+	<FilesToPackage Include="$(TargetPath)" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

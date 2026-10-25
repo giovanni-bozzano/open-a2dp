@@ -21,13 +21,17 @@ Read this first in a new chat to pick up the previous one. It summarizes that co
 
 ## Environment
 - Visual Studio Community 2026 18.11.1 at `D:\Program Files\Microsoft Visual Studio\18\Community`, toolset v145, C++20, x64.
-- Windows SDK 10.0.26100.0. **WDK is not installed**, which blocks M2.
+- Windows SDK 10.0.26100.0 is installed (used by the user-mode projects).
+- **WDK comes from NuGet, not an MSI.** `driver/packages.config` pins `Microsoft.Windows.WDK.x64`, `Microsoft.Windows.SDK.CPP`, and `Microsoft.Windows.SDK.CPP.x64` at 10.0.28000.2526 (the default kit for VS 2026). They restore into `packages/`, which is git-ignored.
+  - The VS "Windows Driver Kit" component (`WindowsKernelModeDriver10.0` toolset) and the Spectre-mitigated libraries are installed.
+  - The driver project pins `WindowsTargetPlatformVersion=10.0.28000.0`. `Directory.Build.props` now only defaults it to `10.0` when it's unset, and applies the user-mode defines only to projects that aren't drivers.
 - .NET SDK 10.0.402 is available (it was used to migrate the solution to `.slnx`).
 - Repo: `D:\repos\open-a2dp` (git, branch `master`).
 
 ## Build / test
 ```
-& "D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" open-a2dp.slnx /p:Configuration=Debug /p:Platform=x64 /m
+nuget restore driver\packages.config -PackagesDirectory packages   # once, for the WDK (VS restores it automatically)
+& "D:\Program Files
 out\x64\Debug\CodecTests.exe          # 35 tests, all passing
 out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 ```
@@ -37,7 +41,7 @@ out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 |---|---|
 | M1 codec library + tests | **Done** (commit 6fc217d) |
 | Solution migrated to `open-a2dp.slnx` with folders | Done (commit 4ec6684) |
-| M2 driver skeleton + L2CAP | Not started: install the WDK first |
+| M2 driver skeleton + L2CAP | **Code done and builds** (`out\x64\<cfg>\OpenA2dp\` has .sys/.inf/.cat; InfVerif valid). Not yet tested in a VM. |
 | M3â€“M8 (AVDTP, ACX, service, CLI/INF, signing) | Not started |
 
 ## Key decisions and lessons
@@ -52,7 +56,19 @@ out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
   - SBC frames have not been decoded by an external decoder yet (ffmpeg or BlueZ `sbcdec`; ffmpeg was not installed).
   - AAC LATM framing needs checking against captures from real headsets.
 
+## M2 driver (driver/)
+- `Driver.cpp` is the KMDF function driver for the BTHENUM A2DP Sink PDO.
+  - PrepareHardware calls `IOCTL_INTERNAL_BTHENUM_GET_DEVINFO` to get the remote address.
+  - SelfManagedIo Init/Restart opens the signaling channel; Suspend closes it.
+- `L2cap.cpp` handles the L2CAP side.
+  - It queries `BTH_PROFILE_DRIVER_INTERFACE` (v0x0200).
+  - It opens PSM 0x0019 asynchronously with a preallocated request and BRB, and logs the outbound MTU.
+  - The close is synchronous: it cancels any open still in flight first.
+  - On `IndicationRemoteDisconnect`, a work item closes the channel.
+- `OpenA2dp.inf` uses Class=MEDIA and matches `BTHENUM\{0000110b-...}` (opt-in through Update driver or pnputil). SignMode is Off; signing is done manually per the plan.
+- Logs use `DbgPrintEx(DPFLTR_IHVDRIVER_ID, INFO)` with an "OpenA2dp:" prefix. Enable them with `ed nt!Kd_IHVDRIVER_Mask 0xF`.
+
 ## Next steps
-1. Install the WDK for SDK 10.0.26100, plus its VS extension.
-2. M2: add a KMDF driver project (`driver/OpenA2dp.vcxproj`) and an INF to `open-a2dp.slnx`. Then open an L2CAP channel through BRBs on PSM 0x0019.
+1. In the VM: test-sign the driver, install it on a paired headset, and confirm the log line "signaling channel open". This also settles whether PSM 0x19 is free while BthA2dp is unloaded for that device.
+2. M3: AVDTP signaling (DISCOVER, GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START) over the signaling channel using `common/include/OpenA2dp/Avdtp.h`, followed by the media channel. Also add BRB_REGISTER_PSM so the driver accepts connections the headset initiates.
 3. Optional: validate SBC with ffmpeg/sbcdec.
