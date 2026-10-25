@@ -200,6 +200,7 @@ Append an entry for every work session, newest last.
 | 16 | Solution file is `OpenA2dp.slnx` again (renamed in 97ce477); updated references in docs, README and instructions | |
 | 17 | Driver build now fails with MSB8020: the `WindowsKernelModeDriver10.0` toolset is no longer in Visual Studio (only v145 under `PlatformToolsets`), probably removed by the VS update | Fixed by reinstalling the WDK extension; Debug and Release build with no warnings, 41/41 tests pass |
 | 18 | Old `packages/` folder is gone; removed its `.gitignore` entry (WDK now restores to the global NuGet cache) | |
+| 19 | Test VM: installed VMware Workstation Pro (free) and created the `OpenA2dp` Windows 11 VM | Next: USB Bluetooth dongle, Secure Boot off, test signing, KDNET, snapshot |
 
 ## 15. Next Steps
 1. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
