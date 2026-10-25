@@ -1,9 +1,9 @@
-# OpenA2dp — Open-Source A2DP Source Driver for Windows
+﻿# OpenA2dp â€” Open-Source A2DP Source Driver for Windows
 
 Status: M1 (codec library) complete; M2 blocked on WDK install
 Target OS: Windows 11 (22H2+), x64 first, ARM64 later
 License: Apache-2.0 (proposed, see Open Decisions)
-Repo location: `D:\OpenA2dp`
+Repo location: `D:\repos\open-a2dp`
 
 ## 1. Goals and Scope
 

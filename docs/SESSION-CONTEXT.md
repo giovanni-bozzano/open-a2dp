@@ -1,4 +1,4 @@
-# OpenA2dp – Session Context (handoff from previous chat)
+﻿# OpenA2dp â€“ Session Context (handoff from previous chat)
 
 Read this first in a new chat to pick up the previous one. It summarizes that conversation; it is not a full transcript.
 
@@ -23,11 +23,11 @@ Read this first in a new chat to pick up the previous one. It summarizes that co
 - Visual Studio Community 2026 18.11.1 at `D:\Program Files\Microsoft Visual Studio\18\Community`, toolset v145, C++20, x64.
 - Windows SDK 10.0.26100.0. **WDK is not installed**, which blocks M2.
 - .NET SDK 10.0.402 is available (it was used to migrate the solution to `.slnx`).
-- Repo: `D:\OpenA2dp` (git, branch `master`).
+- Repo: `D:\repos\open-a2dp` (git, branch `master`).
 
 ## Build / test
 ```
-& "D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64 /m
+& "D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" open-a2dp.slnx /p:Configuration=Debug /p:Platform=x64 /m
 out\x64\Debug\CodecTests.exe          # 35 tests, all passing
 out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 ```
@@ -36,9 +36,9 @@ out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 | Milestone | State |
 |---|---|
 | M1 codec library + tests | **Done** (commit 6fc217d) |
-| Solution migrated to `OpenA2dp.slnx` with folders | Done (commit 4ec6684) |
+| Solution migrated to `open-a2dp.slnx` with folders | Done (commit 4ec6684) |
 | M2 driver skeleton + L2CAP | Not started: install the WDK first |
-| M3–M8 (AVDTP, ACX, service, CLI/INF, signing) | Not started |
+| M3â€“M8 (AVDTP, ACX, service, CLI/INF, signing) | Not started |
 
 ## Key decisions and lessons
 - M1 is user-mode only so it can be unit tested with no risk of a BSOD. Code under `common/` must stay kernel-safe (no STL or exceptions in headers meant for the driver).
@@ -46,7 +46,7 @@ out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
   - Synthesis was rewritten as a direct cosine-modulated filterbank over a 10-block history.
   - Synthesis gain is `-M` because the synthesis filters are the negated time reverse of the analysis filters.
   - Measured delay is 73 samples for 8 subbands and 37 for 4.
-  - Filterbank-limited SNR is about 65–67 dB.
+  - Filterbank-limited SNR is about 65â€“67 dB.
 - **SBC round-trip SNR thresholds** were lowered to fit the noisy test signal: joint stereo 25 dB, stereo 48 kHz 17 dB, mono 18 dB, dual channel 20 dB, identical L/R 30 dB. These are sanity checks, not quality targets.
 - **Open validation gaps:**
   - SBC frames have not been decoded by an external decoder yet (ffmpeg or BlueZ `sbcdec`; ffmpeg was not installed).
@@ -54,5 +54,5 @@ out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 
 ## Next steps
 1. Install the WDK for SDK 10.0.26100, plus its VS extension.
-2. M2: add a KMDF driver project (`driver/OpenA2dp.vcxproj`) and an INF to `OpenA2dp.slnx`. Then open an L2CAP channel through BRBs on PSM 0x0019.
+2. M2: add a KMDF driver project (`driver/OpenA2dp.vcxproj`) and an INF to `open-a2dp.slnx`. Then open an L2CAP channel through BRBs on PSM 0x0019.
 3. Optional: validate SBC with ffmpeg/sbcdec.
