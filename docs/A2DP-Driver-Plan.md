@@ -201,6 +201,7 @@ Append an entry for every work session, newest last.
 | 17 | Driver build now fails with MSB8020: the `WindowsKernelModeDriver10.0` toolset is no longer in Visual Studio (only v145 under `PlatformToolsets`), probably removed by the VS update | Fixed by reinstalling the WDK extension; Debug and Release build with no warnings, 41/41 tests pass |
 | 18 | Old `packages/` folder is gone; removed its `.gitignore` entry (WDK now restores to the global NuGet cache) | |
 | 19 | Test VM: installed VMware Workstation Pro (free) and created the `OpenA2dp` Windows 11 VM | Next: USB Bluetooth dongle, Secure Boot off, test signing, KDNET, snapshot |
+| 20 | VM kernel debugging: KDNET over NAT (host VMnet8 192.168.135.1, port 50000; key in ignored `.local/kdnet.txt`); installed WinDbg via winget, connected with `WinDbgX -k net:port=50000,key=...` | Connected |
 
 ## 15. Next Steps
 1. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
