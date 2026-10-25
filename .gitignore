@@ -7,3 +7,4 @@ obj/
 *.VC.db
 *.binlog
 tests/output/
+.local/
