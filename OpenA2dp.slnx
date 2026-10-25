@@ -6,9 +6,11 @@
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
     <File Path="README.md" />
+    <File Path=".github/copilot-instructions.md" />
   </Folder>
   <Folder Name="/docs/">
     <File Path="docs/A2DP-Driver-Plan.md" />
+    <File Path="docs/SESSION-CONTEXT.md" />
   </Folder>
   <Folder Name="/common/">
     <File Path="common/include/OpenA2dp/Avdtp.h" />
