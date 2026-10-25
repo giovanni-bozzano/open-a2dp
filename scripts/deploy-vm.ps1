@@ -82,7 +82,7 @@ Set-Content $cmd -Encoding ascii -Value @(
 )
 Invoke-VmRun @auth CopyFileFromHostToGuest $config.vmx $cmd 'C:\OpenA2dp\install.cmd'
 Invoke-VmRun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\cmd.exe' '/c C:\OpenA2dp\install.cmd'
-Invoke-VmRun @auth CopyFileFromGuestToHost
+Invoke-VmRun @auth CopyFileFromGuestToHost $config.vmx 'C:\OpenA2dp\install.log' (Join-Path $root '.local\install.log')
 Get-Content (Join-Path $root '.local\install.log')
 
 Write-Host "`nNext (in the VM): Device Manager > headset A2DP device (BTHENUM\{0000110b-...}) > Update driver > Have Disk > C:\OpenA2dp\OpenA2dp.inf"
