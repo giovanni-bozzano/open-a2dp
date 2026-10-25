@@ -9,6 +9,9 @@
     <File Path="README.md" />
     <File Path=".github/copilot-instructions.md" />
   </Folder>
+  <Folder Name="/scripts/">
+    <File Path="scripts/deploy-vm.ps1" />
+  </Folder>
   <Folder Name="/docs/">
     <File Path="docs/A2DP-Driver-Plan.md" />
     <File Path="docs/SESSION-CONTEXT.md" />

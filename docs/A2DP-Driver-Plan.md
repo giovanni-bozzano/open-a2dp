@@ -202,9 +202,11 @@ Append an entry for every work session, newest last.
 | 18 | Old `packages/` folder is gone; removed its `.gitignore` entry (WDK now restores to the global NuGet cache) | |
 | 19 | Test VM: installed VMware Workstation Pro (free) and created the `OpenA2dp` Windows 11 VM | Next: USB Bluetooth dongle, Secure Boot off, test signing, KDNET, snapshot |
 | 20 | VM kernel debugging: KDNET over NAT (host VMnet8 192.168.135.1, port 50000; key in ignored `.local/kdnet.txt`); installed WinDbg via winget, connected with `WinDbgX -k net:port=50000,key=...` | Connected |
+| 21 | WinDbg MCP: connected to the kernel session, break-in works (target Windows 11 26100 x64, 1 vCPU). Kernel symbols failed: msdl returned 404 for the ntkrnlmp.pdb of this build, so only exports load and `nt!Kd_IHVDRIVER_Mask` can't be set; use the Debug Print Filter registry key instead | Session closed afterwards |
+| 22 | Driver now test-signed at build time (`SignMode=TestSign`, SHA256, WDK auto-generated `WDKTestCert`); added `scripts/deploy-vm.ps1` (vmrun: optional snapshot revert, copy package + exported cert, trust cert, `pnputil /add-driver`; credentials in ignored `.local/vm.json`) | .sys and .cat signed; 41/41 tests pass |
 
 ## 15. Next Steps
-1. VM: set up test signing (self-signed cert, `signtool`, cert in Root and TrustedPublisher) and install the driver on a paired headset with `pnputil` or Update driver.
+1. VM: install VMware Tools, connect the USB Bluetooth dongle and pair the headset, set the Debug Print Filter `IHVDRIVER=0xF`, take the snapshot "clean, paired". Create `.local/vm.json`, run `scripts/deploy-vm.ps1 -Build`, then bind the driver with Update driver > Have Disk.
 2. VM: confirm the log line "signaling channel open" in WinDbg (`ed nt!Kd_IHVDRIVER_Mask 0xF`), and check whether PSM 0x19 is free while BthA2dp is unloaded for that device. Then mark M2 as done.
 3. M3: wire `AvdtpSource.h` into the driver: L2CAP read loop (BRB_L2CA_ACL_TRANSFER) on the signaling channel, a WDF timer for `OnTimeout`, a codec selector that calls the SBC/AAC IE logic (port the needed parts to kernel-safe code), and open the second L2CAP channel (media) once the state reaches `Open`.
 4. M3: register PSM 0x19 (BRB_REGISTER_PSM / L2CAP server) so the driver accepts connections the headset initiates.
