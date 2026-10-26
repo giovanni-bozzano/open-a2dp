@@ -235,7 +235,7 @@ Append an entry for every work session, newest last.
 1. M4/M5: later, AVRCP absolute volume (headset hardware volume) with ACX volume/mute elements mapped to it.
 2. Deferred (needs hands-on testing): M5: measure end-to-end latency; check pause/resume and switching the default output away from and back to Speaker0.
 3. Deferred (needs hands-on testing): M5: exercise the send-failure path (headset out of range or BT adapter removed while streaming); confirm SUSPEND and no hang.
-4. M3: set up a BlueZ/PipeWire sink with `btmon` capture (Tier 3) and validate negotiation against it; use it to exercise the acceptor path (sink-initiated SET_CONFIGURATION, state 4, incoming media channel).
+4. Deferred (no Linux Bluetooth host available): M3: set up a BlueZ/PipeWire sink with `btmon` capture (Tier 3) and validate negotiation against it; use it to exercise the acceptor path (sink-initiated SET_CONFIGURATION, state 4, incoming media channel).
 5. Architecture: SBC is encoded in kernel, but section 3 plans user-mode encoding (`OpenA2dpSvc.exe`, needed for Media Foundation AAC). Decide before AAC work: keep kernel SBC and add a user-mode path for AAC only, or move all encoding to user mode.
 6. M3/M5: AAC: kernel-safe AAC IE selection (like `SbcConfig.h`), codec policy AAC > SBC, LATM packetization, encoder per the decision in step 5. Kept last by request.
 7. M6: CLI (force codec, status) and clean install/uninstall that restores `BthA2dp.sys`.
