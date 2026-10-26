@@ -198,7 +198,7 @@ TEST(AvdtpSource_AnswersSinkCommands)
 	WriteSignalHeader({9, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
 	REQUIRE(s.OnPacket(in, 2, out, sizeof(out)) == 4);
 	CHECK(Header(out).messageType == MessageType::ResponseReject);
-	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::NotSupportedCommand)});
+	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::BadLength)});
 }
 
 TEST(AvdtpSource_TimeoutAbortsAfterConfiguration)
@@ -218,4 +218,51 @@ TEST(AvdtpSource_TimeoutAbortsAfterConfiguration)
 	REQUIRE(d.Connect(cmd, sizeof(cmd)) == 2);
 	CHECK_EQ(d.OnTimeout(cmd, sizeof(cmd)), size_t{0});
 	CHECK(d.State() == SessionState::Failed);
+}
+
+TEST(AvdtpSource_AcceptsSinkConfiguration)
+{
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, 4, TestSelector, nullptr);
+	uint8_t in[kMaxSignalPacket];
+	uint8_t out[kMaxSignalPacket];
+	const uint8_t sbcConfig[4] = {0x21, 0x15, 0x02, 0x35};
+
+	WriteSignalHeader({1, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	in[3] = 2 << 2;
+	size_t n = 4 + CodecCaps(CodecType::Aac, sbcConfig, 4, in + 4);
+	REQUIRE(s.OnPacket(in, n, out, sizeof(out)) == 4);
+	CHECK(Header(out).messageType == MessageType::ResponseReject);
+	CHECK_EQ(out[2], uint8_t{static_cast<uint8_t>(ServiceCategory::MediaCodec)});
+	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::NotSupportedCodecType)});
+
+	WriteSignalHeader({2, PacketType::Single, MessageType::Command, Signal::Open}, in, 2);
+	in[2] = kLocalSeid << 2;
+	REQUIRE(s.OnPacket(in, 3, out, sizeof(out)) == 3);
+	CHECK(Header(out).messageType == MessageType::ResponseReject);
+
+	WriteSignalHeader({3, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	in[3] = 2 << 2;
+	n = 4 + CodecCaps(CodecType::Sbc, sbcConfig, 4, in + 4);
+	REQUIRE(s.OnPacket(in, n, out, sizeof(out)) == 2);
+	CHECK(Header(out).messageType == MessageType::ResponseAccept);
+	CHECK(s.State() == SessionState::Configured);
+	CHECK(s.IsAcceptor());
+	CHECK_EQ(s.RemoteSeid(), uint8_t{2});
+	CHECK_EQ(std::memcmp(s.SelectedIe(), sbcConfig, 4), 0);
+
+	WriteSignalHeader({4, PacketType::Single, MessageType::Command, Signal::GetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	n = s.OnPacket(in, 3, out, sizeof(out));
+	REQUIRE(n == 2 + 6 + 4);
+	CHECK_EQ(std::memcmp(out + 8, sbcConfig, 4), 0);
+
+	WriteSignalHeader({5, PacketType::Single, MessageType::Command, Signal::Open}, in, 2);
+	REQUIRE(s.OnPacket(in, 3, out, sizeof(out)) == 2);
+	CHECK(Header(out).messageType == MessageType::ResponseAccept);
+	CHECK(s.State() == SessionState::Open);
+
+	REQUIRE(s.Start(out, sizeof(out)) == 3);
+	CHECK_EQ(out[2], uint8_t{2 << 2});
 }

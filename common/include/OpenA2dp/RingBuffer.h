@@ -4,8 +4,7 @@
 // the kernel driver and the user-mode encoder service.
 // Kernel-safe: no STL, no exceptions, no allocation. Capacity must be a power of two.
 
-#include <stdint.h>
-#include <stddef.h>
+#include <OpenA2dp/Types.h>
 #include <string.h>
 
 #if defined(_KERNEL_MODE)

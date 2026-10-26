@@ -19,6 +19,7 @@ enum class SessionState : uint8_t {
 	Discovering,
 	GettingCapabilities,
 	Configuring,
+	Configured,	// configured by the sink (acceptor role); waiting for OPEN
 	Opening,
 	Open,		// configured; the caller opens the media channel, then calls Start()
 	Starting,
@@ -53,6 +54,8 @@ public:
 	const uint8_t* SelectedIe() const noexcept { return selectedIe_; }
 	size_t SelectedIeLength() const noexcept { return selectedIeLength_; }
 	bool HasPendingCommand() const noexcept { return pending_; }
+	// True when the sink configured the stream; the sink then opens the media channel.
+	bool IsAcceptor() const noexcept { return acceptor_; }
 
 	// Begins discovery. Returns the length of the command written to out (0 on bad state).
 	size_t Connect(uint8_t* out, size_t cap) noexcept
@@ -65,6 +68,7 @@ public:
 		bestScore_ = 0;
 		remoteSeid_ = 0;
 		selectedIeLength_ = 0;
+		acceptor_ = false;
 		state_ = SessionState::Discovering;
 		return Command(Signal::Discover, nullptr, 0, out, cap);
 	}
@@ -346,12 +350,39 @@ private:
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
 
 		case Signal::SetConfiguration:
-		case Signal::GetConfiguration:
-		case Signal::Reconfigure:
+			return OnSetConfiguration(h, p, len, out, cap);
+
+		case Signal::GetConfiguration: {
+			if (acpSeid != kLocalSeid) {
+				return Reject(h, ErrorCode::BadAcpSeid, out, cap);
+			}
+			if (selectedIeLength_ == 0 || state_ < SessionState::Configured || state_ == SessionState::Failed) {
+				return Reject(h, ErrorCode::SepNotInUse, out, cap);
+			}
+			uint8_t config[6 + kMaxCodecIe];
+			size_t n = 0;
+			config[n++] = static_cast<uint8_t>(ServiceCategory::MediaTransport);
+			config[n++] = 0;
+			config[n++] = static_cast<uint8_t>(ServiceCategory::MediaCodec);
+			config[n++] = static_cast<uint8_t>(2 + selectedIeLength_);
+			config[n++] = static_cast<uint8_t>(static_cast<uint8_t>(MediaType::Audio) << 4);
+			config[n++] = static_cast<uint8_t>(selectedCodec_);
+			for (size_t i = 0; i < selectedIeLength_; ++i) {
+				config[n++] = selectedIe_[i];
+			}
+			return Reply(h, MessageType::ResponseAccept, config, n, out, cap);
+		}
+
 		case Signal::Open:
+			if (acpSeid != kLocalSeid || state_ != SessionState::Configured) {
+				return Reject(h, acpSeid != kLocalSeid ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
+			}
+			state_ = SessionState::Open;
+			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
+
+		case Signal::Reconfigure:
 		case Signal::SecurityControl:
 		case Signal::DelayReport:
-			// TODO: sink-initiated configuration and delay reporting.
 			return Reject(h, ErrorCode::NotSupportedCommand, out, cap);
 
 		default:
@@ -359,13 +390,69 @@ private:
 		}
 	}
 
+	// SET_CONFIGURATION from the sink: [acpSeid][intSeid][capabilities...]. Takes over any
+	// discovery this side started; rejected once our own configuration is under way.
+	size_t OnSetConfiguration(const SignalHeader& h, const uint8_t* p, size_t len, uint8_t* out, size_t cap) noexcept
+	{
+		if (len < 2) {
+			return Reject(h, ErrorCode::BadLength, out, cap);
+		}
+		if (static_cast<uint8_t>(p[0] >> 2) != kLocalSeid) {
+			return Reject(h, ErrorCode::BadAcpSeid, out, cap);
+		}
+		if (state_ != SessionState::Idle && state_ != SessionState::Failed &&
+			state_ != SessionState::Discovering && state_ != SessionState::GettingCapabilities) {
+			return Reject(h, ErrorCode::SepInUse, out, cap);
+		}
+		CodecType codec{};
+		size_t ieLength = 0;
+		const uint8_t* ie = FindMediaCodec(p + 2, len - 2, codec, ieLength);
+		if (ie == nullptr) {
+			return Reject(h, ErrorCode::BadPayloadFormat, out, cap, ServiceCategory::MediaCodec);
+		}
+		if (codec != localCodec_) {
+			return Reject(h, ErrorCode::NotSupportedCodecType, out, cap, ServiceCategory::MediaCodec);
+		}
+		if (ieLength != localIeLength_ || !IsSubsetOfLocal(ie, ieLength)) {
+			return Reject(h, ErrorCode::UnsupportedConfiguration, out, cap, ServiceCategory::MediaCodec);
+		}
+
+		pending_ = false;
+		acceptor_ = true;
+		remoteSeid_ = static_cast<uint8_t>(p[1] >> 2);
+		selectedCodec_ = codec;
+		selectedIeLength_ = ieLength;
+		for (size_t i = 0; i < ieLength; ++i) {
+			selectedIe_[i] = ie[i];
+		}
+		state_ = SessionState::Configured;
+		return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
+	}
+
+	// SBC-style IE check: the bit fields must be offered locally; for SBC the
+	// bitpool range (bytes 2..3) must lie inside the local range.
+	bool IsSubsetOfLocal(const uint8_t* ie, size_t len) const noexcept
+	{
+		if (localCodec_ == CodecType::Sbc && len == 4) {
+			return (ie[0] & ~localIe_[0]) == 0 && (ie[1] & ~localIe_[1]) == 0 &&
+				   ie[2] >= localIe_[2] && ie[3] <= localIe_[3] && ie[2] <= ie[3];
+		}
+		for (size_t i = 0; i < len; ++i) {
+			if ((ie[i] & ~localIe_[i]) != 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// Reject payload layout depends on the signal (AVDTP 8.x).
-	static size_t Reject(const SignalHeader& h, ErrorCode error, uint8_t* out, size_t cap) noexcept
+	static size_t Reject(const SignalHeader& h, ErrorCode error, uint8_t* out, size_t cap,
+						 ServiceCategory category = static_cast<ServiceCategory>(0)) noexcept
 	{
 		uint8_t payload[2];
 		size_t n = 0;
 		if (h.signal == Signal::SetConfiguration || h.signal == Signal::Reconfigure) {
-			payload[n++] = 0;	// service category: none
+			payload[n++] = static_cast<uint8_t>(category);
 		} else if (h.signal == Signal::Start || h.signal == Signal::Suspend) {
 			payload[n++] = static_cast<uint8_t>(kLocalSeid << 2);
 		}
@@ -393,6 +480,7 @@ private:
 	CodecType selectedCodec_ = CodecType::Sbc;
 	uint8_t selectedIe_[kMaxCodecIe] = {};
 	size_t selectedIeLength_ = 0;
+	bool acceptor_ = false;
 };
 
 } // namespace OpenA2dp::Avdtp

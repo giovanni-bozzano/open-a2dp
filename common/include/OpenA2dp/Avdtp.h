@@ -3,8 +3,7 @@
 // AVDTP / A2DP protocol constants shared by the driver, the service and tests.
 // Kernel-safe: no STL, no exceptions, no allocation.
 
-#include <stdint.h>
-#include <stddef.h>
+#include <OpenA2dp/Types.h>
 
 namespace OpenA2dp::Avdtp {
 

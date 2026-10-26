@@ -3,8 +3,7 @@
 // RTP header used on the AVDTP media channel (RFC 3550, no CSRC, no extension).
 // Kernel-safe: no STL, no exceptions, no allocation.
 
-#include <stdint.h>
-#include <stddef.h>
+#include <OpenA2dp/Types.h>
 
 namespace OpenA2dp::Rtp {
 

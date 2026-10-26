@@ -3,8 +3,7 @@
 // MSB-first bit writer/reader over a caller-provided buffer.
 // Kernel-safe: no STL, no exceptions, no allocation.
 
-#include <stdint.h>
-#include <stddef.h>
+#include <OpenA2dp/Types.h>
 
 namespace OpenA2dp {
 

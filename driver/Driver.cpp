@@ -20,8 +20,10 @@ NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMR
 
 NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 {
-	// Failing to reach the headset is not fatal; the device stays started.
-	(void)L2capOpenSignalingChannel(GetDeviceContext(device));
+	// Failing to register or reach the headset is not fatal; the device stays started.
+	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	(void)L2capRegisterServer(ctx);
+	(void)L2capOpenSignalingChannel(ctx);
 	return STATUS_SUCCESS;
 }
 
@@ -33,6 +35,7 @@ NTSTATUS OnSelfManagedIoRestart(_In_ WDFDEVICE device)
 NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	L2capUnregisterServer(ctx);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
 	L2capCloseSignalingChannel(ctx);
 	return STATUS_SUCCESS;
@@ -63,12 +66,28 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	pnp.EvtDeviceSelfManagedIoSuspend = OnSelfManagedIoSuspend;
 	WdfDeviceInitSetPnpPowerEventCallbacks(deviceInit, &pnp);
 
+	ACX_DEVICEINIT_CONFIG acxInitConfig;
+	ACX_DEVICEINIT_CONFIG_INIT(&acxInitConfig);
+	NTSTATUS status = AcxDeviceInitInitialize(deviceInit, &acxInitConfig);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attrs, DEVICE_CONTEXT);
 	attrs.EvtCleanupCallback = OnDeviceCleanup;
 
 	WDFDEVICE device;
-	NTSTATUS status = WdfDeviceCreate(&deviceInit, &attrs, &device);
+	status = WdfDeviceCreate(&deviceInit, &attrs, &device);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	ACX_DEVICE_CONFIG acxConfig;
+	ACX_DEVICE_CONFIG_INIT(&acxConfig);
+	status = AcxDeviceInitialize(device, &acxConfig);
 	if (!NT_SUCCESS(status))
 	{
 		return status;
@@ -88,7 +107,26 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 		return status;
 	}
 
-	return L2capInitialize(ctx);
+	status = L2capInitialize(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	status = MediaInitialize(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	status = AudioInitialize(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_LOG("audio endpoint creation failed 0x%08X", status);
+		return status;
+	}
+
+	return SignalingInitialize(ctx);
 }
 
 } // namespace
@@ -99,7 +137,14 @@ extern "C" NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT driverObject, _In_ PUNICODE_
 	WDF_DRIVER_CONFIG_INIT(&config, OnDeviceAdd);
 	config.DriverPoolTag = OpenA2dpPoolTag;
 
-	NTSTATUS status = WdfDriverCreate(driverObject, registryPath, WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
-	OA2DP_LOG("DriverEntry 0x%08X", status);
+	WDFDRIVER driver;
+	NTSTATUS status = WdfDriverCreate(driverObject, registryPath, WDF_NO_OBJECT_ATTRIBUTES, &config, &driver);
+	if (NT_SUCCESS(status))
+	{
+		ACX_DRIVER_CONFIG acxConfig;
+		ACX_DRIVER_CONFIG_INIT(&acxConfig);
+		status = AcxDriverInitialize(driver, &acxConfig);
+	}
+	OA2DP_LOG("DriverEntry 0x%08X, built " __DATE__ " " __TIME__, status);
 	return status;
 }

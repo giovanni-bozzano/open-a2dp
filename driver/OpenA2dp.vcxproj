@@ -5,6 +5,9 @@
 	<TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
 	<ConfigurationType>Driver</ConfigurationType>
 	<DriverType>KMDF</DriverType>
+	<!-- ACX 1.1 requires KMDF 1.33 (Windows 11 22H2). -->
+	<KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+	<KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
 	<DriverTargetPlatform>Windows Driver</DriverTargetPlatform>
 	<TargetVersion>Windows10</TargetVersion>
 	<PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
@@ -18,10 +21,28 @@
 	<OutDir>$(OpenA2dpRoot)out\$(Platform)\$(Configuration)\</OutDir>
 	<IntDir>$(OpenA2dpRoot)obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
   </PropertyGroup>
+  <PropertyGroup>
+	<AcxVersionMajor>1</AcxVersionMajor>
+	<AcxVersionMinor>1</AcxVersionMinor>
+	<AcxIncludeDir>$(WDKContentRoot)\Include\$(WindowsTargetPlatformVersion)\km\acx\km\$(AcxVersionMajor).$(AcxVersionMinor)</AcxIncludeDir>
+	<AcxLibDir>$(WDKContentRoot)\Lib\$(WindowsTargetPlatformVersion)\km\$(Platform)\acx\km\$(AcxVersionMajor).$(AcxVersionMinor)</AcxLibDir>
+  </PropertyGroup>
   <ItemDefinitionGroup>
+	<ClCompile>
+	  <AdditionalIncludeDirectories>$(AcxIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <PreprocessorDefinitions>ACX_VERSION_MAJOR=$(AcxVersionMajor);ACX_VERSION_MINOR=$(AcxVersionMinor);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+	</ClCompile>
+	<Link>
+	  <AdditionalDependencies>$(AcxLibDir)\acxstub.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	</Link>
 	<DriverSign>
 	  <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
 	</DriverSign>
+	<Inf>
+	  <!-- UTC date and version (1.yy.MMdd.HHmm): inf2cat rejects a local date ahead of UTC, and a date-based version always increases so PnP replaces the installed package. -->
+	  <DateStamp>$([System.DateTime]::UtcNow.ToString('MM'))/$([System.DateTime]::UtcNow.ToString('dd'))/$([System.DateTime]::UtcNow.ToString('yyyy'))</DateStamp>
+	  <TimeStamp>1.$([System.DateTime]::UtcNow.ToString('yy')).$([System.DateTime]::UtcNow.ToString('MMdd')).$([System.DateTime]::UtcNow.ToString('HHmm'))</TimeStamp>
+	</Inf>
   </ItemDefinitionGroup>
   <ItemGroup>
 	<PackageReference Include="Microsoft.Windows.WDK.x64" />
@@ -30,6 +51,9 @@
 	<ClInclude Include="Driver.h" />
 	<ClCompile Include="Driver.cpp" />
 	<ClCompile Include="L2cap.cpp" />
+	<ClCompile Include="Signaling.cpp" />
+	<ClCompile Include="Media.cpp" />
+	<ClCompile Include="Audio.cpp" />
 	<Inf Include="OpenA2dp.inf" />
 	<FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>

@@ -17,6 +17,8 @@
 	<ClInclude Include="..\common\include\OpenA2dp\Rtp.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\RingBuffer.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\BitWriter.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\SbcFixed.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\SbcFixedTables.h" />
   </ItemGroup>
   <ItemGroup>
 	<ClCompile Include="CodecFactory.cpp" />

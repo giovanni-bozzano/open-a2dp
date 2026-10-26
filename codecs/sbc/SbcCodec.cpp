@@ -1,10 +1,10 @@
 #include <OpenA2dp/SbcCodec.h>
+#include <OpenA2dp/SbcConfig.h>
 
 #include "SbcTables.h"
 
 #include <algorithm>
 #include <climits>
-#include <initializer_list>
 
 namespace OpenA2dp {
 
@@ -191,27 +191,6 @@ namespace {
 
 bool SingleBit(uint8_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 
-uint8_t PickFirst(uint8_t available, std::initializer_list<uint8_t> order) noexcept
-{
-	for (uint8_t bit : order) {
-		if (available & bit) {
-			return bit;
-		}
-	}
-	return 0;
-}
-
-uint8_t SampleRateBit(uint32_t rate) noexcept
-{
-	switch (rate) {
-	case 16000: return kFs16000;
-	case 32000: return kFs32000;
-	case 44100: return kFs44100;
-	case 48000: return kFs48000;
-	default: return 0;
-	}
-}
-
 } // namespace
 
 bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept
@@ -261,49 +240,15 @@ size_t SbcCodec::BuildLocalCapabilities(uint8_t* ie, size_t capacity) const noex
 bool SbcCodec::SelectConfiguration(const uint8_t* remoteIe, size_t remoteIeLength,
 								   const CodecPreference& preference, A2dpCodecConfig& out) const noexcept
 {
-	if (remoteIeLength < kIeLength) {
+	uint8_t ie[kIeLength];
+	if (!SbcConfig::Select(remoteIe, remoteIeLength, preference.preferredSampleRate, preference.sbcMaxBitpool, ie)) {
 		return false;
 	}
-	uint8_t local[kIeLength];
-	BuildLocalCapabilities(local, sizeof(local));
-
-	const uint8_t fsAvail = remoteIe[0] & local[0] & 0xF0;
-	const uint8_t modeAvail = remoteIe[0] & local[0] & 0x0F;
-	const uint8_t blocksAvail = remoteIe[1] & local[1] & 0xF0;
-	const uint8_t sbAvail = remoteIe[1] & local[1] & 0x0C;
-	const uint8_t allocAvail = remoteIe[1] & local[1] & 0x03;
-
-	uint8_t fs = SampleRateBit(preference.preferredSampleRate) & fsAvail;
-	if (!fs) {
-		fs = PickFirst(fsAvail, {kFs44100, kFs48000, kFs32000, kFs16000});
-	}
-	const uint8_t mode = PickFirst(modeAvail, {kModeJoint, kModeStereo, kModeDual, kModeMono});
-	const uint8_t blocks = PickFirst(blocksAvail, {kBlocks16, kBlocks12, kBlocks8, kBlocks4});
-	const uint8_t subbands = PickFirst(sbAvail, {kSubbands8, kSubbands4});
-	const uint8_t alloc = PickFirst(allocAvail, {kAllocLoudness, kAllocSnr});
-	if (!fs || !mode || !blocks || !subbands || !alloc) {
-		return false;
-	}
-
-	const ChannelMode cm = mode == kModeMono ? ChannelMode::Mono
-						 : mode == kModeDual ? ChannelMode::DualChannel
-						 : mode == kModeStereo ? ChannelMode::Stereo
-						 : ChannelMode::JointStereo;
-	const uint8_t nsb = subbands == kSubbands4 ? 4 : 8;
-
-	const uint8_t minBitpool = std::max<uint8_t>(remoteIe[2], kMinBitpool);
-	uint8_t maxBitpool = std::min<uint8_t>(remoteIe[3], MaxBitpoolForMode(cm, nsb));
-	maxBitpool = std::min<uint8_t>(maxBitpool, std::max<uint8_t>(preference.sbcMaxBitpool, minBitpool));
-	if (maxBitpool < minBitpool) {
-		return false;
-	}
-
 	out = {};
 	out.codec = CodecType::Sbc;
-	out.ie[0] = static_cast<uint8_t>(fs | mode);
-	out.ie[1] = static_cast<uint8_t>(blocks | subbands | alloc);
-	out.ie[2] = minBitpool;
-	out.ie[3] = maxBitpool;
+	for (size_t i = 0; i < kIeLength; ++i) {
+		out.ie[i] = ie[i];
+	}
 	out.ieLength = kIeLength;
 	return true;
 }

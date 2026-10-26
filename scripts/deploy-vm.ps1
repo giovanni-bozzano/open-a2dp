@@ -77,6 +77,8 @@ Set-Content $cmd -Encoding ascii -Value @(
 	'certutil -f -addstore TrustedPublisher OpenA2dpTest.cer'
 	'pnputil /add-driver OpenA2dp.inf /install'
 	'echo pnputil exit=%errorlevel%'
+	'rem A same-version package is reported up-to-date; restart the device to load the new binary.'
+	'powershell -NoProfile -Command "Get-PnpDevice -PresentOnly | Where-Object Service -eq ''OpenA2dp'' | ForEach-Object { pnputil /restart-device $_.InstanceId }"'
 	') > install.log 2>&1'
 	'exit /b 0'
 )
