@@ -142,19 +142,14 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 	ctx->AudioCompletedPackets = completed;
 	ACXSTREAM stream = ctx->AudioStream;
 	static ULONG ticks;
-	const BOOLEAN report = (++ticks % 200) == 0;
-	INT16 firstSample = 0;
-	if (report)
-	{
-		RtlCopyMemory(&firstSample, ctx->AudioBuffer, sizeof(firstSample));
-	}
+	const BOOLEAN report = (++ticks % 1000) == 0;
 	const ULONG readable = ring.ReadableBytes();
 	const ULONGLONG dropped = ctx->AudioDroppedBytes;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	if (report)
 	{
-		OA2DP_LOG("audio: pos %llu ring %u dropped %llu sample0 %d", position, readable, dropped, firstSample);
+		OA2DP_LOG("audio: pos %llu ring %u dropped %llu", position, readable, dropped);
 	}
 
 	if (notify && stream != nullptr)
@@ -199,9 +194,9 @@ NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACX
 	attrs.EvtDestroyCallback = OnStreamDestroy;
 	ACXSTREAM stream;
 	status = AcxRtStreamCreate(device, circuit, &attrs, &streamInit, &stream);
-	OA2DP_LOG("audio: create stream 0x%08X", status);
 	if (!NT_SUCCESS(status))
 	{
+		OA2DP_LOG("audio: create stream 0x%08X", status);
 		return status;
 	}
 
@@ -229,18 +224,15 @@ void OnStreamDestroy(_In_ WDFOBJECT object)
 		ctx->AudioStream = nullptr;
 	}
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	OA2DP_LOG("audio: stream destroyed");
 }
 
 NTSTATUS OnStreamPrepareHardware(_In_ ACXSTREAM)
 {
-	OA2DP_LOG("audio: stream prepare hardware");
 	return STATUS_SUCCESS;
 }
 
 NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 {
-	OA2DP_LOG("audio: stream release hardware");
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	WdfTimerStop(ctx->AudioTimer, TRUE);
 
@@ -289,10 +281,9 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_ ULONG packetSize, _Out_ PACX_RTPACKET* packets)
 {
 	*packets = nullptr;
-	OA2DP_LOG("audio: allocate %u packets of %u bytes", packetCount, packetSize);
 	if (packetCount == 0 || packetCount > AudioMaxPacketCount || packetSize == 0 || packetSize % AudioBytesPerFrame != 0)
 	{
-		OA2DP_LOG("audio: allocate rejected");
+		OA2DP_LOG("audio: allocate %u packets of %u bytes rejected", packetCount, packetSize);
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -345,13 +336,11 @@ NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	*packets = rtPackets;
-	OA2DP_LOG("audio: allocate ok, buffer %Iu bytes", bufferSize);
 	return STATUS_SUCCESS;
 }
 
 void OnFreeRtPackets(_In_ ACXSTREAM stream, _In_ PACX_RTPACKET packets, _In_ ULONG)
 {
-	OA2DP_LOG("audio: free rt packets");
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	WdfTimerStop(ctx->AudioTimer, TRUE);
 
@@ -379,29 +368,18 @@ void OnFreeRtPackets(_In_ ACXSTREAM stream, _In_ PACX_RTPACKET packets, _In_ ULO
 
 NTSTATUS OnGetHwLatency(_In_ ACXSTREAM, _Out_ ULONG* fifoSize, _Out_ ULONG* delay)
 {
-	OA2DP_LOG("audio: get hw latency");
 	*fifoSize = 128;
 	*delay = 0;
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM, _In_ ULONG packet, _In_ ULONG flags, _In_ ULONG)
+NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM, _In_ ULONG, _In_ ULONG, _In_ ULONG)
 {
-	static ULONG calls;
-	if (calls++ < 4)
-	{
-		OA2DP_LOG("audio: set render packet %u flags 0x%X", packet, flags);
-	}
 	return STATUS_SUCCESS;
 }
 
 NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket)
 {
-	static ULONG calls;
-	if (calls++ < 4)
-	{
-		OA2DP_LOG("audio: get current packet");
-	}
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
@@ -413,11 +391,6 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket)
 
 NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG positionInBlocks, _Out_ PULONGLONG qpcPosition)
 {
-	static ULONG calls;
-	if (calls++ < 4)
-	{
-		OA2DP_LOG("audio: get presentation position");
-	}
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
