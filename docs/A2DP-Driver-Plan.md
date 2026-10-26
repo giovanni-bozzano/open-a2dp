@@ -227,14 +227,14 @@ Append an entry for every work session, newest last.
 | 43 | Docs: reviewed and reordered Next Steps: commit and snapshot first, then M4 cleanup and volume/mute, M5 quality and send-failure checks, M3 BlueZ/acceptor validation, the kernel vs user-mode encoding decision, AAC, and M6. | Docs only |
 | 44 | Review of #36-#40: required fixes were 1-packet RT allocation (#37) and FIFO 128 bytes (#40). `AcxStreamInitSetAcxRtStreamSupportsNotifications` (#36) is kept to match the ACX sample, but the driver never signals the notification event, so its effect is unverified. MediaStart log fix and build stamp kept. Committed the working state (a1e43f5), then removed per-callback logs (create/destroy/prepare/release/allocate/free/latency/packet/position) and the `sample0` read; timer status every 10 s; failures still logged. | Build clean; 44/44 tests pass. Not yet redeployed |
 | 45 | VM: cleaned-up build (#44) deployed; audio plays. Log shows only `stream run` and the 10 s `audio: pos` line (ring 4288 bytes, 0 dropped). #36 resolved: the timer already calls `AcxRtStreamNotifyPacketComplete`, which ACX uses to signal notification events, so the flag is kept. Note: the `DriverEntry` build stamp only changes when `Driver.cpp` recompiles. | Validated on VM |
+| 46 | M4: RT buffer is now rounded up to whole pages (zeroed), so no unrelated kernel memory is mapped to the audio engine. Volume/mute ACX elements were tried and reverted: without them Windows already applies the slider and mute in software (confirmed on VM), so driver-side elements only add value with AVRCP absolute volume. | Build clean; 44/44 tests pass |
 
 ## 15. Next Steps
 
-1. M4: optional: page-aligned RT packet allocation like the ACX sample.
-2. M4: add volume and mute elements to the render circuit so the Windows volume slider works.
-3. M5: long-run quality check (30+ min): watch `audio: pos` dropped bytes and PCM underruns, measure end-to-end latency, check pause/resume and endpoint switching.
-4. M5: exercise the send-failure path (headset out of range or BT adapter removed while streaming); confirm SUSPEND and no hang.
-5. M3: set up a BlueZ/PipeWire sink with `btmon` capture (Tier 3) and validate negotiation against it; use it to exercise the acceptor path (sink-initiated SET_CONFIGURATION, state 4, incoming media channel).
-6. Architecture: SBC is encoded in kernel, but section 3 plans user-mode encoding (`OpenA2dpSvc.exe`, needed for Media Foundation AAC). Decide before AAC work: keep kernel SBC and add a user-mode path for AAC only, or move all encoding to user mode.
-7. M3/M5: AAC: kernel-safe AAC IE selection (like `SbcConfig.h`), codec policy AAC > SBC, LATM packetization, encoder per the decision in step 6. Kept last by request.
-8. M6: CLI (force codec, status) and clean install/uninstall that restores `BthA2dp.sys`.
+1. M4/M5: later, AVRCP absolute volume (headset hardware volume) with ACX volume/mute elements mapped to it.
+2. M5: long-run quality check (30+ min): watch `audio: pos` dropped bytes and PCM underruns, measure end-to-end latency, check pause/resume and endpoint switching.
+3. M5: exercise the send-failure path (headset out of range or BT adapter removed while streaming); confirm SUSPEND and no hang.
+4. M3: set up a BlueZ/PipeWire sink with `btmon` capture (Tier 3) and validate negotiation against it; use it to exercise the acceptor path (sink-initiated SET_CONFIGURATION, state 4, incoming media channel).
+5. Architecture: SBC is encoded in kernel, but section 3 plans user-mode encoding (`OpenA2dpSvc.exe`, needed for Media Foundation AAC). Decide before AAC work: keep kernel SBC and add a user-mode path for AAC only, or move all encoding to user mode.
+6. M3/M5: AAC: kernel-safe AAC IE selection (like `SbcConfig.h`), codec policy AAC > SBC, LATM packetization, encoder per the decision in step 5. Kept last by request.
+7. M6: CLI (force codec, status) and clean install/uninstall that restores `BthA2dp.sys`.

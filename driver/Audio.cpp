@@ -288,7 +288,8 @@ NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_
 	}
 
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
-	const SIZE_T bufferSize = static_cast<SIZE_T>(packetSize) * packetCount;
+	// Whole pages, zeroed, so no stale kernel memory is mapped to user mode.
+	const SIZE_T bufferSize = ROUND_TO_PAGES(static_cast<SIZE_T>(packetSize) * packetCount);
 
 	auto* rtPackets = static_cast<PACX_RTPACKET>(
 		ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ACX_RTPACKET) * packetCount, OpenA2dpPoolTag));
