@@ -26,10 +26,11 @@ Repo location: `D:\repos\open-a2dp`
 +---------------------------------------------------------------+
 | Windows Audio Engine (audiodg.exe)                            |
 +---------------------------------------------------------------+
-| OpenA2dp.sys  (KMDF + ACX render endpoint, AVDTP, L2CAP BRBs) |  <-- replaces BthA2dp.sys
+| OpenA2dp.sys  (KMDF + ACX render endpoint, AVDTP, L2CAP BRBs, |  <-- replaces BthA2dp.sys
+|               kernel SBC encoder)                             |
 |      ^  shared-memory ring buffers (PCM out / frames in)      |
 |      v                                                        |
-| OpenA2dpSvc.exe (user mode: SBC/AAC encoding)                 |
+| OpenA2dpSvc.exe (user mode: AAC encoding only)                |
 +---------------------------------------------------------------+
 | bthport.sys / bthenum (Microsoft Bluetooth core stack)        |  <-- unchanged
 +---------------------------------------------------------------+
@@ -41,18 +42,19 @@ Repo location: `D:\repos\open-a2dp`
 
 | Component | Type | Responsibility |
 |---|---|---|
-| `OpenA2dp.sys` | KMDF + ACX kernel driver | PnP on A2DP sink service, L2CAP channels, AVDTP signaling, ACX render endpoint, RTP send, ring buffers |
-| `OpenA2dpSvc.exe` | Windows service (C++20) | Pull PCM, encode via codec lib, push encoded frames back |
+| `OpenA2dp.sys` | KMDF + ACX kernel driver | PnP on A2DP sink service, L2CAP channels, AVDTP signaling, ACX render endpoint, SBC encoding (`SbcFixed`), RTP send, ring buffers |
+| `OpenA2dpSvc.exe` | Windows service (C++20) | AAC only: pull PCM, encode via Media Foundation, push LATM frames back |
 | `OpenA2dpCodecs.lib` | Static library | `IA2dpCodec`: capability IE build/parse, config selection, encoding, payload packing |
-| `common/` | Header-only | IOCTL codes, ring buffer layout, AVDTP/RTP constants |
-| `a2dpctl.exe` | CLI | List devices, force codec, set bitpool/bitrate, status |
+| `common/` | Header-only, kernel-safe | IOCTL codes, ring buffer layout, AVDTP/RTP constants, codec selectors (`SbcConfig.h`, `AacConfig.h`) |
+| `OpenA2dpConfig.exe` | Desktop UI app | List devices, choose codec and presets, set SBC/AAC parameters per headset, show stream status (no CLI) |
 | `OpenA2dp.inf` | INF | Matches A2DP sink service (UUID 0x110B) on remote devices |
 
-Encoding is in user mode: no FPU state handling in kernel, codec bugs cannot BSOD, Media Foundation AAC is user-mode only, and codecs are unit-testable on the host.
+Hybrid encoding (decided, see Action Log #48): SBC is encoded in the kernel with the integer-only `SbcFixed` encoder (no FPU state, proven audible and 30+ min stable), so the mandatory codec works without any user-mode component. AAC is encoded only in `OpenA2dpSvc.exe`, because Media Foundation AAC is user-mode only and a codec fault there cannot BSOD. The driver advertises/selects AAC only while the service is registered; otherwise it falls back to SBC.
 
 Data flow:
 ```
-audiodg -> ACX buffer -> driver -> PCM ring (shared) -> service encodes -> frame ring
+SBC: audiodg -> ACX buffer -> driver -> PCM ring -> kernel SBC -> RTP -> L2CAP -> bthport
+AAC: audiodg -> ACX buffer -> driver -> PCM ring (shared) -> service encodes AAC/LATM -> frame ring
 		-> driver builds RTP packets <= L2CAP MTU -> BRB L2CA_ACL_TRANSFER -> bthport
 ```
 
@@ -79,7 +81,7 @@ OpenA2dp/
   codecs/                    IA2dpCodec.h, sbc/, aac/
   driver/                    (M2, needs WDK)
   service/                   (M5)
-  tools/a2dpctl/             (M6)
+  tools/config-ui/           (M5b/M6)
   tests/CodecTests/
   scripts/
   docs/
@@ -153,8 +155,9 @@ Media packets:
 | M2 | Driver skeleton + L2CAP | Loads in VM, signaling channel open | Done (VM: signaling channel open to headset) |
 | M3 | AVDTP negotiation | Works vs BlueZ sink and real headset | In progress (SBC stream reaches Streaming with real headset) |
 | M4 | ACX endpoint + rings | Endpoint visible, PCM reaches ring | Done (VM: Speaker0 visible, Windows audio plays through the headset) |
-| M5 | Encoder service + streaming | Audible SBC then AAC | In progress (Windows audio audible over SBC on real headset; AAC pending) |
-| M6 | CLI + install/uninstall | Force codec, clean restore | Not started |
+| M5 | Encoder service + streaming | Audible SBC then AAC | In progress (Windows audio audible over SBC on real headset; kernel-safe AAC selector done; AAC service pending) |
+| M5b | Codec configuration | SBC/AAC parameters (rate, channel mode, blocks/subbands, allocation, bitpool, AAC bitrate/VBR) selectable per device and globally; codec priority/force; presets incl. SBC XQ; changes applied by reconfigure/reconnect | Not started |
+| M6 | Config UI + install/uninstall | Codec settings, status and force codec in the UI; clean restore | Not started |
 | M7 | System testing | Tier 4 matrix passes | Not started |
 | M8 | Signing & release | Attestation-signed package | Not started |
 
@@ -169,6 +172,7 @@ Media packets:
 - [ ] License Apache-2.0 vs GPL
 - [ ] Win11-only confirmed
 - [ ] AAC backend MF (default) vs fdk-aac
+- [x] Encoder placement: kernel SBC + user-mode AAC service (#48)
 - [ ] Test framework
 
 ## 13. Environment Status
@@ -229,13 +233,39 @@ Append an entry for every work session, newest last.
 | 45 | VM: cleaned-up build (#44) deployed; audio plays. Log shows only `stream run` and the 10 s `audio: pos` line (ring 4288 bytes, 0 dropped). #36 resolved: the timer already calls `AcxRtStreamNotifyPacketComplete`, which ACX uses to signal notification events, so the flag is kept. Note: the `DriverEntry` build stamp only changes when `Driver.cpp` recompiles. | Validated on VM |
 | 46 | M4: RT buffer is now rounded up to whole pages (zeroed), so no unrelated kernel memory is mapped to the audio engine. Volume/mute ACX elements were tried and reverted: without them Windows already applies the slider and mute in software (confirmed on VM), so driver-side elements only add value with AVRCP absolute volume. | Build clean; 44/44 tests pass |
 | 47 | VM: long-run playback test (30+ min) on SBC 44.1 kHz with the real headset: no audible dropouts reported. | Validated on VM |
+| 48 | Architecture decided: SBC stays in kernel (mandatory fallback); AAC is encoded only in the user-mode service (Media Foundation). Added kernel-safe `common/include/OpenA2dp/AacConfig.h` (IE parse/write, local capabilities, `Select`, `Validate`); `AacCodec` now delegates to it. Sections 1, 2, 10 and 12 updated. Driver negotiation unchanged (SBC only) until the service exists. Build clean, CodecTests 44/44. | Done |
+| 49 | M4: Windows Settings appeared to show Speaker0 as 1 channel, 16 bit, 8000 Hz. Suspected cause: the 44.1 kHz stereo format was only added to the RAW mode list. `AddFormat` now also adds it to the `AUDIO_SIGNALPROCESSINGMODE_DEFAULT` list via `AcxPinRetrieveModeDataFormatList`. Build clean, CodecTests 44/44. | Failed on VM: `AcxPinRetrieveModeDataFormatList` returned 0xC0000225 (list does not exist), endpoint creation failed |
+| 50 | Fix for #49: `AddFormat` now creates the DEFAULT mode list (`AcxDataFormatListCreate`, parented to the pin), adds the format and assigns it with `AcxPinAssignModeDataFormatList`. Build clean, CodecTests 44/44. | VM: endpoint works, audio plays, Settings still shows 1 ch / 16 bit / 8000 Hz |
+| 51 | Investigation: suspected cause is a stale `PKEY_AudioEngine_DeviceFormat` ({f19f064d-082c-4e27-bc73-6882a1bb8e4c},0) stored in the MMDevices endpoint key when the endpoint was first built; it is not rebuilt on driver update. To check on VM: dump the value, then remove the device's MMDevices render key (or uninstall the device with driver removal) and reinstall. | Not the cause (see #52) |
+| 52 | VM registry dump: the OpenA2dp render endpoint (`Speakers`, OpenA2dp Bluetooth A2DP Source) stores 2 ch / 16 bit / 44100 Hz, so the stored format was not stale. The 1 ch / 16 bit / 8000 Hz entry in Settings is under *Input settings* of a `Headset` page (Provider Microsoft, 10.0.26100.x): the inbox Hands-Free (HFP) microphone capture endpoint. Settings labels it with the OpenA2dp device name because both share the headset's Bluetooth container. A2DP Source has no capture endpoint. Not an OpenA2dp bug. | Closed |
+| 53 | VM: confirmed in Settings > Sound that the OpenA2dp `Speakers` output shows 2 channel, 16 bit, 44100 Hz; the 8000 Hz format was the Hands-Free `Headset` input. | Resolved |
+| 54 | M4: reverted #49/#50. The DEFAULT mode format list was not needed (Settings and the stored format are the same without it) and added a failure point to endpoint creation. `AddFormat` again adds the format only to the RAW list, as in the validated build. Build clean, CodecTests 44/44. | Done |
+| 55 | Docs: Next Steps split into "Active (in order)" and a "Deferred" table (D1-D4) with milestone and reason; AVRCP absolute volume moved to Deferred (D4). | Done |
+| 56 | Docs: added milestone M5b (codec configuration: user-selectable SBC/AAC parameters, per-device settings, presets, codec priority) and its steps to Next Steps, after AAC and before M6. | Docs only |
+| 57 | Docs: configuration is done through a desktop UI (`OpenA2dpConfig.exe`) instead of the `a2dpctl` CLI; updated the components table, repo layout, M6 and Next Steps 5 and 7. | Docs only |
+| 58 | M4: the device (and so its Windows audio endpoint) is named after the headset: `OnPrepareHardware` reads the remote name from `IOCTL_INTERNAL_BTHENUM_GET_DEVINFO` (UTF-8 -> UTF-16, `RemoteName`) and sets `DEVPKEY_Device_FriendlyName` to `<name> (OpenA2dp)` (address if no name). Build clean, CodecTests 44/44. | Not yet validated on VM |
+| 59 | Fix intermittent redeploy hang (media still sending after `L2CAP server unregister`): `OnSelfManagedIoSuspend` now calls `MediaStop` first (stops timer, waits for the in-flight work item) before unregistering the server/closing channels; `L2capSend` uses a 1 s send timeout so a stalled ACL transfer cannot block teardown while holding `MediaLock`/`SessionLock`. Build clean, CodecTests 44/44. | Validated on VM |
+| 60 | M4: endpoint type comes from the headset Class of Device (`BTH_DEVICE_INFO.classOfDevice`, queried in `EvtDeviceAdd` before the ACX circuit is created): audio minor headset/hands-free/headphones -> `KSNODETYPE_HEADPHONES`, otherwise `KSNODETYPE_SPEAKER`. Device FriendlyName is `<name> [OpenA2DP]`, so the endpoint shows as `<Headphones|Speakers> (<name> [OpenA2DP])`. Build clean, CodecTests 44/44. | Validated on VM (CoD 0x240404 -> Headphones after endpoint reinstall) |
+| 61 | Crash triage of a "fatal system error" break: bugcheck 0x80 NMI_HARDWARE_FAILURE (Arg1 'TDO', Arg2 0x10), all 4 CPUs idle, OpenA2dp not on any stack: externally injected NMI (hypervisor), not a driver bug. Stale "Speakers" form factor was the Windows endpoint cache; fixed by reinstalling the device. #59 redeploy fix confirmed. | Confirmed |
+| 62 | Docs: refreshed README (status, build, known gaps) and SESSION-CONTEXT (current handoff) to the M4/M5 state; verified Debug x64 build and CodecTests 44/44; committed the working state (#48-#61). | Done |
 
 ## 15. Next Steps
 
-1. M4/M5: later, AVRCP absolute volume (headset hardware volume) with ACX volume/mute elements mapped to it.
-2. Deferred (needs hands-on testing): M5: measure end-to-end latency; check pause/resume and switching the default output away from and back to Speaker0.
-3. Deferred (needs hands-on testing): M5: exercise the send-failure path (headset out of range or BT adapter removed while streaming); confirm SUSPEND and no hang.
-4. Deferred (no Linux Bluetooth host available): M3: set up a BlueZ/PipeWire sink with `btmon` capture (Tier 3) and validate negotiation against it; use it to exercise the acceptor path (sink-initiated SET_CONFIGURATION, state 4, incoming media channel).
-5. Architecture: SBC is encoded in kernel, but section 3 plans user-mode encoding (`OpenA2dpSvc.exe`, needed for Media Foundation AAC). Decide before AAC work: keep kernel SBC and add a user-mode path for AAC only, or move all encoding to user mode.
-6. M3/M5: AAC: kernel-safe AAC IE selection (like `SbcConfig.h`), codec policy AAC > SBC, LATM packetization, encoder per the decision in step 5. Kept last by request.
-7. M6: CLI (force codec, status) and clean install/uninstall that restores `BthA2dp.sys`.
+### Active (in order)
+
+1. M5: design the driver/service boundary for AAC: device interface + IOCTLs (GET_VERSION, REGISTER_ENCODER, MAP_RINGS, WAIT_EVENT), PCM ring shared with the service, LATM frame ring back to the driver for RTP/L2CAP send; SBC path untouched.
+2. M3/M5: AAC: include `AacConfig.h` in the driver, register an AAC SEP only while the service is registered, codec policy AAC > SBC with SBC fallback; then implement `OpenA2dpSvc.exe` (MF encoder + `LatmWriter`).
+3. M5b: codec settings store: registry values per headset address (`Parameters\Devices\<addr>`) plus global defaults (codec priority, SBC rate/channel mode/blocks/subbands/allocation/bitpool range, AAC rate/channels/bitrate/VBR); read at negotiation time.
+4. M5b: preference-aware selection: `SbcConfig`/`AacConfig` `Select` take user preferences and fall back to the best headset-supported value; presets (Default, SBC HQ, SBC XQ dual-channel high bitpool) checked against media MTU; unit tests.
+5. M5b: IOCTLs GET/SET_CODEC_CONFIG and GET_STATUS; desktop configuration UI (`OpenA2dpConfig.exe`, no CLI) to pick headset, codec, preset and SBC/AAC parameters and show the active configuration; apply via AVDTP SUSPEND + RECONFIGURE + START, or reconnect when the codec changes.
+6. M5b: multi-rate ACX endpoint: offer 44.1 and 48 kHz (and mono if selected) and use the format matching the negotiated configuration, or resample; last, because it touches the validated audio path.
+7. M6: finish the configuration UI (status, force codec) and clean install/uninstall that restores `BthA2dp.sys`.
+
+### Deferred
+
+| # | Milestone | Item | Deferred because |
+|---|---|---|---|
+| D1 | M5 | Measure end-to-end latency; check pause/resume and switching the default output away from and back to Speaker0. | Needs hands-on testing |
+| D2 | M5 | Exercise the send-failure path (headset out of range or BT adapter removed while streaming); confirm SUSPEND and no hang. | Needs hands-on testing |
+| D3 | M3 | Set up a BlueZ/PipeWire sink with `btmon` capture (Tier 3) and validate negotiation against it; use it to exercise the acceptor path (sink-initiated SET_CONFIGURATION, state 4, incoming media channel). | No Linux Bluetooth host available |
+| D4 | M4/M5 | AVRCP absolute volume (headset hardware volume) with ACX volume/mute elements mapped to it. | Not needed now: Windows already applies volume/mute in software (#46); revisit after AAC |

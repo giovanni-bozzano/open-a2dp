@@ -47,6 +47,10 @@ struct DEVICE_CONTEXT
 	BTH_PROFILE_DRIVER_INTERFACE Profile;
 	BOOLEAN ProfileValid;
 	BTH_ADDR RemoteAddress;
+	// Remote device name (UTF-16) from BTHENUM, empty if unknown.
+	WCHAR RemoteName[BTH_MAX_NAME_SIZE + 1];
+	// Remote Class of Device from BTHENUM, 0 if unknown.
+	BTH_COD RemoteClass;
 
 	// AVDTP signaling channel.
 	volatile LONG SignalingState;

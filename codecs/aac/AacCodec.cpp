@@ -20,31 +20,6 @@ namespace OpenA2dp {
 
 namespace Aac {
 
-namespace {
-
-// Order of the 12-bit field, MSB (bit 11) first.
-constexpr uint32_t kFieldRates[12] = {8000, 11025, 12000, 16000, 22050, 24000,
-									  32000, 44100, 48000, 64000, 88200, 96000};
-
-bool SingleBit(uint32_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
-
-} // namespace
-
-uint16_t SampleRateMask(uint32_t sampleRate) noexcept
-{
-	for (int i = 0; i < 12; ++i) {
-		if (kFieldRates[i] == sampleRate) {
-			return static_cast<uint16_t>(1u << (11 - i));
-		}
-	}
-	return 0;
-}
-
-uint16_t ReadSampleRateField(const uint8_t* ie) noexcept
-{
-	return static_cast<uint16_t>((ie[1] << 4) | (ie[2] >> 4));
-}
-
 int SamplingFrequencyIndex(uint32_t sampleRate) noexcept
 {
 	constexpr uint32_t rates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350};
@@ -56,160 +31,38 @@ int SamplingFrequencyIndex(uint32_t sampleRate) noexcept
 	return -1;
 }
 
-void WriteIe(const Params& p, uint8_t* ie) noexcept
-{
-	const uint16_t fs = SampleRateMask(p.sampleRate);
-	ie[0] = p.objectType;
-	ie[1] = static_cast<uint8_t>(fs >> 4);
-	ie[2] = static_cast<uint8_t>(((fs & 0x0F) << 4) | (p.channels == 1 ? kChannels1 : kChannels2));
-	ie[3] = static_cast<uint8_t>((p.vbr ? 0x80 : 0x00) | ((p.bitrate >> 16) & 0x7F));
-	ie[4] = static_cast<uint8_t>(p.bitrate >> 8);
-	ie[5] = static_cast<uint8_t>(p.bitrate);
-}
-
-bool ParseConfiguredIe(const uint8_t* ie, size_t len, Params& out) noexcept
-{
-	if (len < kIeLength) {
-		return false;
-	}
-	const uint8_t object = ie[0];
-	const uint16_t fs = ReadSampleRateField(ie);
-	const uint8_t channels = ie[2] & 0x0C;
-	if (!SingleBit(object) || !SingleBit(fs) || !SingleBit(channels)) {
-		return false;
-	}
-	if (object != kObjectMpeg2Lc && object != kObjectMpeg4Lc) {
-		return false;
-	}
-	int bit = 0;
-	while (!(fs & (1u << (11 - bit)))) {
-		++bit;
-	}
-	out.objectType = object;
-	out.sampleRate = kFieldRates[bit];
-	out.channels = channels == kChannels1 ? 1 : 2;
-	out.vbr = (ie[3] & 0x80) != 0;
-	out.bitrate = (static_cast<uint32_t>(ie[3] & 0x7F) << 16) | (static_cast<uint32_t>(ie[4]) << 8) | ie[5];
-	return true;
-}
-
 } // namespace Aac
 
 using namespace Aac;
-
-namespace {
-
-bool EncoderSupportsRate(uint32_t rate) noexcept { return rate == 44100 || rate == 48000; }
-
-// Highest bitrate supported by the MF encoder that does not exceed `limit` (0 = no limit).
-uint32_t ClampBitrate(uint32_t requested, uint32_t limit) noexcept
-{
-	uint32_t chosen = 0;
-	for (uint32_t b : kSupportedBitrates) {
-		if (b <= requested && (limit == 0 || b <= limit)) {
-			chosen = b;
-		}
-	}
-	return chosen;
-}
-
-} // namespace
+using AacConfig::ClampBitrate;
+using AacConfig::EncoderSupportsRate;
 
 size_t AacCodec::BuildLocalCapabilities(uint8_t* ie, size_t capacity) const noexcept
 {
 	if (capacity < kIeLength) {
 		return 0;
 	}
-	const uint16_t fs = SampleRateMask(44100) | SampleRateMask(48000);
-	ie[0] = kObjectMpeg2Lc | kObjectMpeg4Lc;
-	ie[1] = static_cast<uint8_t>(fs >> 4);
-	ie[2] = static_cast<uint8_t>(((fs & 0x0F) << 4) | kChannels1 | kChannels2);
-	const uint32_t maxBitrate = kSupportedBitrates[std::size(kSupportedBitrates) - 1];
-	ie[3] = static_cast<uint8_t>((maxBitrate >> 16) & 0x7F); // CBR only
-	ie[4] = static_cast<uint8_t>(maxBitrate >> 8);
-	ie[5] = static_cast<uint8_t>(maxBitrate);
+	std::memcpy(ie, AacConfig::kLocalCapabilities, kIeLength);
 	return kIeLength;
 }
 
 bool AacCodec::SelectConfiguration(const uint8_t* remoteIe, size_t remoteIeLength,
 								   const CodecPreference& preference, A2dpCodecConfig& out) const noexcept
 {
-	if (remoteIeLength < kIeLength) {
+	uint8_t ie[kIeLength] = {};
+	if (!AacConfig::Select(remoteIe, remoteIeLength, preference.preferredSampleRate, preference.aacBitrate, ie)) {
 		return false;
 	}
-	Params p;
-	if (remoteIe[0] & kObjectMpeg2Lc) {
-		p.objectType = kObjectMpeg2Lc;
-	} else if (remoteIe[0] & kObjectMpeg4Lc) {
-		p.objectType = kObjectMpeg4Lc;
-	} else {
-		return false;
-	}
-
-	const uint16_t remoteFs = ReadSampleRateField(remoteIe);
-	p.sampleRate = 0;
-	if (EncoderSupportsRate(preference.preferredSampleRate) && (remoteFs & SampleRateMask(preference.preferredSampleRate))) {
-		p.sampleRate = preference.preferredSampleRate;
-	} else if (remoteFs & SampleRateMask(44100)) {
-		p.sampleRate = 44100;
-	} else if (remoteFs & SampleRateMask(48000)) {
-		p.sampleRate = 48000;
-	} else {
-		return false;
-	}
-
-	if (remoteIe[2] & kChannels2) {
-		p.channels = 2;
-	} else if (remoteIe[2] & kChannels1) {
-		p.channels = 1;
-	} else {
-		return false;
-	}
-
-	const uint32_t remoteMax = (static_cast<uint32_t>(remoteIe[3] & 0x7F) << 16) |
-							   (static_cast<uint32_t>(remoteIe[4]) << 8) | remoteIe[5];
-	p.vbr = false;
-	p.bitrate = ClampBitrate(preference.aacBitrate, remoteMax);
-	if (p.bitrate == 0) {
-		p.bitrate = kSupportedBitrates[0];
-		if (remoteMax != 0 && remoteMax < p.bitrate) {
-			return false;
-		}
-	}
-
 	out = {};
 	out.codec = CodecType::Aac;
-	WriteIe(p, out.ie);
+	std::memcpy(out.ie, ie, kIeLength);
 	out.ieLength = kIeLength;
 	return true;
 }
 
 uint8_t AacCodec::ValidateConfiguration(const uint8_t* ie, size_t ieLength) const noexcept
 {
-	if (ieLength < kIeLength) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::BadLength);
-	}
-	if (!SingleBit(ie[0])) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidObjectType);
-	}
-	if (ie[0] != kObjectMpeg2Lc && ie[0] != kObjectMpeg4Lc) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedObjectType);
-	}
-	const uint16_t fs = ReadSampleRateField(ie);
-	if (!SingleBit(fs)) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency);
-	}
-	Params p;
-	if (!ParseConfiguredIe(ie, ieLength, p)) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidChannels);
-	}
-	if (!EncoderSupportsRate(p.sampleRate)) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
-	}
-	if (p.vbr) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedBitRate);
-	}
-	return 0;
+	return AacConfig::Validate(ie, ieLength);
 }
 
 HRESULT AacCodec::CreateEncoder(const A2dpCodecConfig& config, std::unique_ptr<IA2dpEncoder>& encoder) const

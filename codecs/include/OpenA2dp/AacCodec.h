@@ -1,45 +1,34 @@
 #pragma once
 
+#include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/IA2dpCodec.h>
 
 namespace OpenA2dp {
 
 namespace Aac {
 
-constexpr size_t kIeLength = 6;
-
-// Object type (byte 0).
-constexpr uint8_t kObjectMpeg2Lc = 0x80;
-constexpr uint8_t kObjectMpeg4Lc = 0x40;
+using AacConfig::kIeLength;
+using AacConfig::kObjectMpeg2Lc;
+using AacConfig::kObjectMpeg4Lc;
 constexpr uint8_t kObjectMpeg4Ltp = 0x20;
 constexpr uint8_t kObjectMpeg4Scalable = 0x10;
-
-// Channels (byte 2, bits 3..2).
-constexpr uint8_t kChannels1 = 0x08;
-constexpr uint8_t kChannels2 = 0x04;
+using AacConfig::kChannels1;
+using AacConfig::kChannels2;
 
 constexpr uint32_t kSamplesPerFrame = 1024;
 
-// Bitrates supported by the Media Foundation AAC encoder.
-constexpr uint32_t kSupportedBitrates[] = {96000, 128000, 160000, 192000};
-
-struct Params {
-	uint8_t objectType = kObjectMpeg2Lc;
-	uint32_t sampleRate = 44100;
-	uint8_t channels = 2;
-	bool vbr = false;
-	uint32_t bitrate = 192000; // bits per second, 0 = unspecified
-};
+using AacConfig::kSupportedBitrates;
+using AacConfig::Params;
 
 // 12-bit sampling frequency field (byte1 + high nibble of byte2), bit 11 = 8000 Hz.
-uint16_t SampleRateMask(uint32_t sampleRate) noexcept;
-uint16_t ReadSampleRateField(const uint8_t* ie) noexcept;
+using AacConfig::SampleRateMask;
+using AacConfig::ReadSampleRateField;
 
 // MPEG-4 samplingFrequencyIndex, or -1.
 int SamplingFrequencyIndex(uint32_t sampleRate) noexcept;
 
-void WriteIe(const Params& p, uint8_t* ie) noexcept;
-bool ParseConfiguredIe(const uint8_t* ie, size_t len, Params& out) noexcept;
+using AacConfig::WriteIe;
+using AacConfig::ParseConfiguredIe;
 
 } // namespace Aac
 

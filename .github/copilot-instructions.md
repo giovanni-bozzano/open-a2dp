@@ -2,7 +2,7 @@
 
 ## General Guidelines
 - Project: open-source Windows 11 A2DP Source driver that replaces `BthA2dp.sys`. Read `docs/SESSION-CONTEXT.md` for prior conversation context, and `docs/A2DP-Driver-Plan.md` for the plan.
-- Record every action taken and the next steps in `docs/A2DP-Driver-Plan.md` (Action Log and Next Steps sections), and keep the milestone statuses up to date.
+- Record every action taken and the next steps in `docs/A2DP-Driver-Plan.md` (Action Log and Next Steps sections), and keep the milestone statuses up to date. When updating `docs/A2DP-Driver-Plan.md`, never truncate or cut existing content: edit whole table rows/lines with exact-match replacements (no PowerShell regex rewrites), and re-read the affected section afterward to verify every row is intact.
 
 ## Build and Configuration
 - Solution: `OpenA2dp.slnx` (modern format). Add every new project to it.

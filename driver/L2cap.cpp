@@ -317,7 +317,20 @@ NTSTATUS L2capRetrieveRemoteAddress(_In_ DEVICE_CONTEXT* ctx)
 	}
 
 	ctx->RemoteAddress = info.address;
-	OA2DP_LOG("remote device %012llX", info.address);
+	ctx->RemoteClass = (info.flags & BDIF_COD) != 0 ? info.classOfDevice : 0;
+	OA2DP_LOG("remote device %012llX, CoD 0x%06X", info.address, ctx->RemoteClass);
+
+	ctx->RemoteName[0] = L'\0';
+	if ((info.flags & BDIF_NAME) != 0)
+	{
+		info.name[BTH_MAX_NAME_SIZE - 1] = '\0';
+		ULONG nameBytes = 0;
+		if (NT_SUCCESS(RtlUTF8ToUnicodeN(ctx->RemoteName, sizeof(ctx->RemoteName) - sizeof(WCHAR), &nameBytes,
+				info.name, static_cast<ULONG>(strlen(info.name)))))
+		{
+			ctx->RemoteName[nameBytes / sizeof(WCHAR)] = L'\0';
+		}
+	}
 	return STATUS_SUCCESS;
 }
 
@@ -392,7 +405,15 @@ NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, 
 	brb.TransferFlags = ACL_TRANSFER_DIRECTION_OUT;
 	brb.BufferSize = length;
 	brb.Buffer = data;
-	return SubmitBrbSynchronously(ctx, reinterpret_cast<PBRB>(&brb), sizeof(brb));
+
+	// A stalled transfer must not block teardown forever (it holds MediaLock/SessionLock).
+	WDF_REQUEST_SEND_OPTIONS options;
+	WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+	WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_MS(1000));
+	WDF_MEMORY_DESCRIPTOR desc;
+	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&desc, &brb, sizeof(brb));
+	return WdfIoTargetSendInternalIoctlOthersSynchronously(
+		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTH_SUBMIT_BRB, &desc, nullptr, nullptr, &options, nullptr);
 }
 
 NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx)

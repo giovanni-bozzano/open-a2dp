@@ -12,6 +12,25 @@ constexpr ULONG BridgePinId = 1;
 
 DECLARE_CONST_UNICODE_STRING(RenderCircuitName, L"Speaker0");
 
+// Endpoint type (shown as "<type> (<device name>)") from the headset's Class of Device.
+const GUID* EndpointCategory(_In_ BTH_COD cod)
+{
+	if (GET_COD_MAJOR(cod) == COD_MAJOR_AUDIO)
+	{
+		switch (GET_COD_MINOR(cod))
+		{
+		case COD_AUDIO_MINOR_HEADSET:
+		case COD_AUDIO_MINOR_HANDS_FREE:
+		case COD_AUDIO_MINOR_HEADSET_HANDS_FREE:
+		case COD_AUDIO_MINOR_HEADPHONES:
+			return &KSNODETYPE_HEADPHONES;
+		default:
+			break;
+		}
+	}
+	return &KSNODETYPE_SPEAKER;
+}
+
 struct STREAM_CONTEXT
 {
 	DEVICE_CONTEXT* Device;
@@ -511,7 +530,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	ACX_PIN_CONFIG_INIT_ID(&pinConfig, BridgePinId);
 	pinConfig.Type = AcxPinTypeSource;
 	pinConfig.Communication = AcxPinCommunicationNone;
-	pinConfig.Category = &KSNODETYPE_SPEAKER;
+	pinConfig.Category = EndpointCategory(ctx->RemoteClass);
 	status = AcxPinCreate(circuit, &pinAttrs, &pinConfig, &pins[1]);
 	if (!NT_SUCCESS(status))
 	{

@@ -1,4 +1,6 @@
 #include "Driver.h"
+#include <devpkey.h>
+#include <ntstrsafe.h>
 
 extern "C" DRIVER_INITIALIZE DriverEntry;
 
@@ -13,9 +15,34 @@ EVT_WDF_DEVICE_SELF_MANAGED_IO_SUSPEND OnSelfManagedIoSuspend;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP OnDeviceCleanup;
 EVT_WDF_WORKITEM OnDisconnectWorkItem;
 
+// Names the device after the headset: "<name> [OpenA2DP]".
+void AssignFriendlyName(_In_ DEVICE_CONTEXT* ctx)
+{
+	WCHAR friendlyName[BTH_MAX_NAME_SIZE + 32];
+	NTSTATUS status = ctx->RemoteName[0] != L'\0'
+		? RtlStringCchPrintfW(friendlyName, ARRAYSIZE(friendlyName), L"%ws [OpenA2DP]", ctx->RemoteName)
+		: RtlStringCchPrintfW(friendlyName, ARRAYSIZE(friendlyName), L"%012I64X [OpenA2DP]", ctx->RemoteAddress);
+	if (!NT_SUCCESS(status))
+	{
+		return;
+	}
+
+	WDF_DEVICE_PROPERTY_DATA property;
+	WDF_DEVICE_PROPERTY_DATA_INIT(&property, &DEVPKEY_Device_FriendlyName);
+	const ULONG bytes = static_cast<ULONG>((wcslen(friendlyName) + 1) * sizeof(WCHAR));
+	status = WdfDeviceAssignProperty(ctx->Device, &property, DEVPROP_TYPE_STRING, bytes, friendlyName);
+	OA2DP_LOG("friendly name '%ws' 0x%08X", friendlyName, status);
+}
+
 NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMRESLIST)
 {
-	return L2capRetrieveRemoteAddress(GetDeviceContext(device));
+	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	NTSTATUS status = L2capRetrieveRemoteAddress(ctx);
+	if (NT_SUCCESS(status))
+	{
+		AssignFriendlyName(ctx);
+	}
+	return status;
 }
 
 NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
@@ -35,6 +62,7 @@ NTSTATUS OnSelfManagedIoRestart(_In_ WDFDEVICE device)
 NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	MediaStop(ctx);
 	L2capUnregisterServer(ctx);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
 	L2capCloseSignalingChannel(ctx);
@@ -118,6 +146,9 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	{
 		return status;
 	}
+
+	// The endpoint type depends on the headset's Class of Device; fall back to speakers if unavailable.
+	(void)L2capRetrieveRemoteAddress(ctx);
 
 	status = AudioInitialize(ctx);
 	if (!NT_SUCCESS(status))
