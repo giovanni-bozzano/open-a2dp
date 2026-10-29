@@ -10,7 +10,7 @@ Read this first in a new chat. It summarizes the project state; the authoritativ
   - Codecs: SBC and AAC-LC first, with aptX/LDAC pluggable later.
   - Test the driver safely in a VM first; ship later with EV/attestation signing.
 
-## Status (2026-10-27)
+## Status (2026-10-29)
 | Milestone | State |
 |---|---|
 | M1 codec library + tests | **Done** (commit 6fc217d; 44 tests pass) |
@@ -27,8 +27,8 @@ Read this first in a new chat. It summarizes the project state; the authoritativ
 - **`OpenA2dp.sys`:** a KMDF profile driver above `bthport`. It handles L2CAP through BRBs (PSM 0x0019), the AVDTP source state machine, the ACX audio endpoint, kernel SBC encoding and RTP media.
 - **SBC stays in the kernel** using the integer-only `SbcFixed` encoder (no FPU state, proven audible and 30+ min stable), so the mandatory codec works without any user-mode component.
 - **`OpenA2dpSvc.exe` (not yet implemented):** AAC only. It will pull PCM from a shared ring, encode with Media Foundation, and push LATM frames back for RTP/L2CAP send. Media Foundation is user-mode only, and a codec fault there cannot BSOD.
-- **Driver/service boundary (planned):** device interface plus IOCTLs GET_VERSION, REGISTER_ENCODER, MAP_RINGS, WAIT_EVENT (inverted call), GET_STATUS, SET_PREFERENCE. The driver advertises/selects AAC only while the service is registered; otherwise it falls back to SBC.
-- **`common/`** is header-only and kernel-safe (no STL or exceptions): AVDTP/RTP/ring-buffer headers and codec selectors `SbcConfig.h`, `AacConfig.h`.
+- **Driver/service boundary (designed, Action Log #65):** `common/include/OpenA2dp/Ioctl.h` holds the ABI (device interface GUID, six IOCTLs, shared-ring layout, frame record, status/event structs) and [AAC-Service-Boundary.md](AAC-Service-Boundary.md) the lifecycle rules. The interface lives on a per-device control device (SYSTEM + Administrators) so the ACX device object keeps its default security and KS request path. One non-paged block per device holds the PCM ring (driver -> service) and the frame ring (service -> driver), mapped once into the service process; file cleanup clears the registration and unmaps, which is how a crashed service is detected. `WAIT_EVENT` is tick-driven by the media timer; the service owns pacing and the driver only adds RTP headers. The driver advertises/selects AAC only while the service is registered; otherwise it falls back to SBC.
+- **`common/`** is header-only and kernel-safe (no STL or exceptions): AVDTP/RTP/ring-buffer headers, the driver/service ABI (`Ioctl.h`) and codec selectors `SbcConfig.h`, `AacConfig.h`.
 - **`codecs/`** holds `IA2dpCodec`, the SBC encoder, AAC IE/negotiation and the Media Foundation/LATM encoder used by tests and the future service.
 - Negotiation priority is AAC > SBC. A forced codec can be set; if it isn't available, negotiation falls back to the normal order.
 
@@ -69,6 +69,7 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 
 ## Key decisions and lessons
 - **Hybrid encoding decided (Action Log #48):** kernel SBC, user-mode AAC only.
+- **Service boundary (Action Log #65):** SPSC rings in one driver-allocated non-paged block, mapped once into the service process; one LATM frame per RTP packet; the service owns AAC pacing; registration is cleared by file cleanup so a crashed service cannot wedge the driver; `WAIT_EVENT` is ticked by the media timer instead of polling or sharing an event handle.
 - **SBC reference-decoder fix:** synthesis is a direct cosine-modulated filterbank over a 10-block history; synthesis gain is `-M`; measured delay is 73 samples for 8 subbands and 37 for 4; filterbank-limited SNR is about 65–67 dB.
 - **SBC round-trip SNR thresholds** were lowered for the noisy test signal (joint stereo 25 dB, stereo 48 kHz 17 dB, mono 18 dB, dual channel 20 dB, identical L/R 30 dB). They are sanity checks, not quality targets.
 - **ACX gotchas:** report a small FIFO (128 bytes, not the 64 KiB ring) or the audio engine rejects the stream; accept 1 or 2 RT packets; page-round and zero the RT buffer; the DEFAULT mode format list is not needed; stale endpoint form factor/name comes from the Windows endpoint cache and is fixed by reinstalling the device.
@@ -84,7 +85,7 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 - M5b codec settings store and UI, clean install/uninstall, system testing, release signing.
 
 ## Next steps (in order)
-1. M5: design the driver/service boundary for AAC (device interface + IOCTLs, shared PCM ring, LATM frame ring back to the driver); SBC path untouched.
+1. M5: implement the boundary designed in `docs/AAC-Service-Boundary.md` (device interface + IOCTL queue, ring allocation and per-handle mapping, registration/cleanup, `WAIT_EVENT`/`GET_STATUS`, AAC frame-ring drain in `Media.cpp`); SBC path untouched.
 2. M3/M5: include `AacConfig.h` in the driver, register an AAC SEP only while the service is registered, policy AAC > SBC with SBC fallback; then implement `OpenA2dpSvc.exe` (MF encoder + `LatmWriter`).
 3. M5b: codec settings store (per-headset registry values plus global defaults), read at negotiation time.
 4. M5b: preference-aware `SbcConfig`/`AacConfig` selection and presets, checked against media MTU; unit tests.

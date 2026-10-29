@@ -2,6 +2,7 @@
 
 #include <OpenA2dp/Avdtp.h>
 #include <OpenA2dp/IA2dpCodec.h>
+#include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/RingBuffer.h>
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcCodec.h>
@@ -10,6 +11,10 @@
 #include <vector>
 
 using namespace OpenA2dp;
+
+// The driver/service ABI must also compile in user mode (Ioctl.h is shared with the
+// driver) and a maximum-size frame must fit in one ring record.
+static_assert(Ioctl::kMaxFramePayload + sizeof(Ioctl::FrameRecordHeader) <= Ioctl::kMaxFrameRecordBytes);
 
 TEST(Rtp_WriteParse)
 {

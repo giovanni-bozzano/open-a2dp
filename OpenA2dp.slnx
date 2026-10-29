@@ -20,6 +20,7 @@
     <File Path="common/include/OpenA2dp/Avdtp.h" />
     <File Path="common/include/OpenA2dp/AvdtpSource.h" />
     <File Path="common/include/OpenA2dp/BitWriter.h" />
+    <File Path="common/include/OpenA2dp/Ioctl.h" />
     <File Path="common/include/OpenA2dp/RingBuffer.h" />
     <File Path="common/include/OpenA2dp/Rtp.h" />
   </Folder>

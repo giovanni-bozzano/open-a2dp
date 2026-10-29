@@ -58,7 +58,7 @@ AAC: audiodg -> ACX buffer -> driver -> PCM ring (shared) -> service encodes AAC
 		-> driver builds RTP packets <= L2CAP MTU -> BRB L2CA_ACL_TRANSFER -> bthport
 ```
 
-Driver <-> service IOCTLs: GET_VERSION, REGISTER_ENCODER, MAP_RINGS, WAIT_EVENT (inverted call), GET_STATUS, SET_PREFERENCE. Device interface SDDL: SYSTEM + Administrators only.
+Driver <-> service boundary (designed in [AAC-Service-Boundary.md](AAC-Service-Boundary.md), ABI in `common/include/OpenA2dp/Ioctl.h`): a per-device control device (SDDL SYSTEM + Administrators, so the ACX device object keeps its default security) exposes GET_VERSION, REGISTER_ENCODER, MAP_RINGS, WAIT_EVENT (inverted call, tick-driven), GET_STATUS, SET_PREFERENCE. One non-paged block per device holds a PCM ring (driver -> service) and a frame ring (service -> driver); it is mapped once into the service process and unmapped on file cleanup, which is also how a crashed service is detected. Each record is one LATM AudioMuxElement; the service owns pacing and the driver only adds the RTP header. Registering is what makes the AAC SEP appear.
 
 ## 3. Stack
 | Area | Choice |
@@ -249,12 +249,14 @@ Append an entry for every work session, newest last.
 | 61 | Crash triage of a "fatal system error" break: bugcheck 0x80 NMI_HARDWARE_FAILURE (Arg1 'TDO', Arg2 0x10), all 4 CPUs idle, OpenA2dp not on any stack: externally injected NMI (hypervisor), not a driver bug. Stale "Speakers" form factor was the Windows endpoint cache; fixed by reinstalling the device. #59 redeploy fix confirmed. | Confirmed |
 | 62 | Docs: refreshed README (status, build, known gaps) and SESSION-CONTEXT (current handoff) to the M4/M5 state; verified Debug x64 build and CodecTests 44/44; committed the working state (#48-#61). | Done |
 | 63 | WinDbg MCP: configured OpenCode's local `windbg` server for `DbgX.Mcp.Proxy.exe` (versioned package path; the WindowsApps alias fails `WaitNamedPipe` 121 when launched by OpenCode). Used the MCP tools on the live kernel session: `bl` and the Breakpoints pane are empty and `OpenA2dp!DriverEntry` is unpatched (`48 89 54 24 10`), so no driver-initialization breakpoint remains after the VM reboot; target resumed and still streaming. | Done |
+| 64 | `scripts/deploy-vm.ps1` rewritten into a full pipeline: build `OpenA2dp.slnx` + CodecTests, stop the VM before a snapshot revert, start and wait for VMware Tools, install through a guest PowerShell script with a transcript, restart the device, verify the installed binary hash, handle the 3010 reboot, copy the log back; certificate exported with .NET because a PS7 module earlier in `PSModulePath` breaks the PKI cmdlets under Windows PowerShell 5.1. Verified: solution builds, CodecTests 44/44, script parses with no syntax errors. | Committed (e9d7123); not yet run against the VM |
+| 65 | M5: designed the AAC driver/service boundary. `common/include/OpenA2dp/Ioctl.h`: device interface GUID, six IOCTLs, `SharedRings` layout, `FrameRecordHeader`, `WaitEventOut`/`Status`/`Preference`, ABI version and static_asserts. `docs/AAC-Service-Boundary.md`: components and IRQL, ring allocation/mapping/lifetime, record validation, `WAIT_EVENT` tick semantics, service-owned pacing, multi-SEP negotiation plan, failure table, security, v1 exclusions. `MediaMaxMtu` now comes from `Ioctl.h` (single source of truth); the header also compiles in user mode via CodecTests. The interface sits on a per-device control device (SYSTEM + Administrators) so the ACX device object keeps its default security and KS request path. | Build clean, CodecTests 44/44 |
 
 ## 15. Next Steps
 
 ### Active (in order)
 
-1. M5: design the driver/service boundary for AAC: device interface + IOCTLs (GET_VERSION, REGISTER_ENCODER, MAP_RINGS, WAIT_EVENT), PCM ring shared with the service, LATM frame ring back to the driver for RTP/L2CAP send; SBC path untouched.
+1. M5: implement the boundary designed in `docs/AAC-Service-Boundary.md`: device interface + IOCTL queue (`driver/Service.cpp`), ring allocation and per-handle user mapping, registration/cleanup, `WAIT_EVENT`/`GET_STATUS`, and the AAC frame-ring drain in `Media.cpp`; SBC path untouched.
 2. M3/M5: AAC: include `AacConfig.h` in the driver, register an AAC SEP only while the service is registered, codec policy AAC > SBC with SBC fallback; then implement `OpenA2dpSvc.exe` (MF encoder + `LatmWriter`).
 3. M5b: codec settings store: registry values per headset address (`Parameters\Devices\<addr>`) plus global defaults (codec priority, SBC rate/channel mode/blocks/subbands/allocation/bitpool range, AAC rate/channels/bitrate/VBR); read at negotiation time.
 4. M5b: preference-aware selection: `SbcConfig`/`AacConfig` `Select` take user preferences and fall back to the best headset-supported value; presets (Default, SBC HQ, SBC XQ dual-channel high bitpool) checked against media MTU; unit tests.

@@ -16,6 +16,7 @@
 #include <acx.h>
 
 #include <OpenA2dp/AvdtpSource.h>
+#include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/RingBuffer.h>
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcFixed.h>
@@ -25,7 +26,8 @@
 
 inline constexpr ULONG OpenA2dpPoolTag = 'pdAO';
 inline constexpr USHORT AvdtpPsm = 0x0019;
-inline constexpr USHORT MediaMaxMtu = 895;
+// Defined in OpenA2dp/Ioctl.h so the driver and the encoder service agree.
+inline constexpr USHORT MediaMaxMtu = static_cast<USHORT>(OpenA2dp::Ioctl::kMediaMaxMtu);
 
 // Render endpoint format: 16-bit stereo 44.1 kHz (mandatory for A2DP SBC sinks).
 inline constexpr ULONG AudioSampleRate = 44100;

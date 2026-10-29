@@ -22,7 +22,8 @@ Current implementation:
 
 - `OpenA2dp.sys`: KMDF profile driver above `bthport`. L2CAP PSM 0x19 signaling and media channels, AVDTP source (plus acceptor groundwork), ACX render endpoint, kernel fixed-point SBC encoder and RTP send.
 - The audio endpoint is named `<headset> [OpenA2DP]` and typed as headphones or speakers from the headset's Class of Device.
-- `common/include/OpenA2dp`: kernel-safe AVDTP/RTP/ring-buffer/codec-selection headers, including `SbcConfig.h` and `AacConfig.h`.
+- `common/include/OpenA2dp`: kernel-safe AVDTP/RTP/ring-buffer/codec-selection headers, including `SbcConfig.h`, `AacConfig.h` and the driver/service ABI `Ioctl.h`.
+- `docs/AAC-Service-Boundary.md`: design of the AAC driver/service boundary (rings, IOCTLs, lifecycle); implementation is the next step.
 - `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and the Media Foundation/LATM encoder used by tests and the future service.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.
 
@@ -39,6 +40,6 @@ out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ## Known gaps
 
 - SBC is still tested against our own reference decoder; external validation (ffmpeg / BlueZ `sbcdec`) and more real-device coverage are pending.
-- AAC LATM framing must be checked against captures from real sinks; the AAC encoder service is not implemented yet.
+- AAC LATM framing must be checked against captures from real sinks; the AAC encoder service is not implemented yet (the driver/service boundary is designed, see `docs/AAC-Service-Boundary.md`).
 - BlueZ/PipeWire sink validation and the sink-initiated (acceptor) path are deferred until a Linux Bluetooth host is available.
 - Codec configuration UI/store, clean install/uninstall, long-run system testing and release signing are not done.
