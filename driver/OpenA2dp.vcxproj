@@ -49,11 +49,13 @@
   </ItemGroup>
   <ItemGroup>
 	<ClInclude Include="Driver.h" />
+	<ClInclude Include="Service.h" />
 	<ClCompile Include="Driver.cpp" />
 	<ClCompile Include="L2cap.cpp" />
 	<ClCompile Include="Signaling.cpp" />
 	<ClCompile Include="Media.cpp" />
 	<ClCompile Include="Audio.cpp" />
+	<ClCompile Include="Service.cpp" />
 	<Inf Include="OpenA2dp.inf" />
 	<FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>

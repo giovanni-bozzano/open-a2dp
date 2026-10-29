@@ -83,7 +83,7 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 		else if (state == Avdtp::SessionState::Streaming)
 		{
 			OA2DP_LOG("AVDTP streaming, media MTU %u", ctx->MediaOutMtu);
-			MediaStart(ctx, ctx->Session.SelectedIe(), SbcConfig::kIeLength);
+			MediaStart(ctx, ctx->Session.SelectedCodec(), ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength());
 		}
 		else if (state == Avdtp::SessionState::Open)
 		{

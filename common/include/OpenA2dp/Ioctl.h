@@ -37,7 +37,7 @@ constexpr uint32_t kMaxFramePayload = kMediaMaxMtu - kRtpHeaderBytes;
 constexpr uint32_t kPcmRingBytes = 64 * 1024;
 constexpr uint32_t kFrameRingBytes = 64 * 1024;
 
-// A record is header + payload, padded to 8 bytes.
+// A record is header + payload; size is exact, so records are never padded.
 constexpr uint32_t kMaxFrameRecordBytes = 2048;
 
 // AAC-LC: 1024 PCM samples per raw_data_block.
@@ -122,9 +122,11 @@ struct SharedRings {
 
 // One AAC/LATM AudioMuxElement per record and per RTP packet.
 // Producer (service) writes header and payload in a single RingBuffer::Write.
+// size is the exact record length (header + payload), so the payload length is
+// size - sizeof(FrameRecordHeader).
 struct FrameRecordHeader {
 	uint16_t magic;   // kFrameRecordMagic
-	uint16_t size;    // whole record including this header, 8-byte aligned
+	uint16_t size;    // whole record including this header
 	uint32_t samples; // PCM samples covered (kAacSamplesPerFrame)
 	uint32_t flags;   // kFrameFlag*
 };

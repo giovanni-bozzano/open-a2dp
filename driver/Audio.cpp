@@ -128,7 +128,7 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 	ULONGLONG qpc;
 	const ULONGLONG position = CurrentPositionLocked(ctx, &qpc);
 	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
-	RingBufferView ring(&ctx->PcmRingHeader, ctx->PcmRingData);
+	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 
 	// Never copy more than one buffer: anything older was already overwritten.
 	ULONGLONG copied = ctx->AudioCopiedPosition;
@@ -446,7 +446,7 @@ NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeSpinLock(&ctx->AudioLock);
-	RingBufferView::Initialize(&ctx->PcmRingHeader, PcmRingBytes);
+	// The PCM ring lives in the service block and is initialized by ServiceInitialize.
 
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
@@ -555,7 +555,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 
 ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames)
 {
-	RingBufferView ring(&ctx->PcmRingHeader, ctx->PcmRingData);
+	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 	const ULONG wanted = frames * AudioBytesPerFrame;
 	ULONG available = ring.ReadableBytes();
 	available -= available % AudioBytesPerFrame;

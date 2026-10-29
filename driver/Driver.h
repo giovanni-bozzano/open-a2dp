@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ntddk.h>
+#include <ntifs.h>
 #include <wdf.h>
 #include <initguid.h>
 #include <bthdef.h>
@@ -33,8 +33,14 @@ inline constexpr USHORT MediaMaxMtu = static_cast<USHORT>(OpenA2dp::Ioctl::kMedi
 inline constexpr ULONG AudioSampleRate = 44100;
 inline constexpr USHORT AudioChannels = 2;
 inline constexpr USHORT AudioBytesPerFrame = AudioChannels * sizeof(INT16);
-// About 370 ms of PCM between the ACX stream and the SBC encoder.
-inline constexpr ULONG PcmRingBytes = 64 * 1024;
+// About 370 ms of PCM between the ACX stream and the SBC encoder; shared with the
+// encoder service (defined in OpenA2dp/Ioctl.h).
+inline constexpr ULONG PcmRingBytes = OpenA2dp::Ioctl::kPcmRingBytes;
+
+// Media modes (ctx->MediaMode).
+inline constexpr LONG MediaModeNone = 0;
+inline constexpr LONG MediaModeSbc = 1;
+inline constexpr LONG MediaModeAac = 2;
 
 inline constexpr LONG ChannelClosed = 0;
 inline constexpr LONG ChannelOpening = 1;
@@ -126,8 +132,47 @@ struct DEVICE_CONTEXT
 	ULONGLONG AudioCopiedPosition;
 	ULONGLONG AudioCompletedPackets;
 	ULONGLONG AudioDroppedBytes;
-	OpenA2dp::RingHeader PcmRingHeader;
-	UCHAR PcmRingData[PcmRingBytes];
+	OpenA2dp::RingHeader* PcmRingHeader;
+	UCHAR* PcmRingData;
+
+	// Encoder service (Service.cpp): one shared block holds the PCM ring (driver ->
+	// service) and the frame ring (service -> driver). See docs/AAC-Service-Boundary.md.
+	WDFDEVICE ControlDevice;
+	WDFMEMORY ServiceMemory;
+	PVOID ServiceRawBase;
+	UCHAR* ServiceBase;
+	ULONG ServiceBlockBytes;
+	OpenA2dp::RingHeader* FrameRingHeader;
+	UCHAR* FrameRingData;
+	OpenA2dp::Ioctl::SharedRings Rings;
+	KSPIN_LOCK WaitLock;
+	WDFREQUEST WaitRequest;
+	OpenA2dp::Ioctl::WaitEventOut WaitState;
+	uint32_t PendingEvents;
+	PMDL RingMdl;
+	PVOID RingUserVa;
+	PVOID RingProcess;
+	volatile LONG EncoderRegistered;
+	volatile LONG RingsMapped;
+	volatile LONG ServiceActive;
+	OpenA2dp::Ioctl::Preference Preference;
+
+	// Active media configuration (GET_STATUS/WAIT_EVENT) and failure counters.
+	volatile LONG MediaMode;
+	uint32_t ActiveCodec;
+	uint32_t ActiveSampleRate;
+	uint32_t ActiveChannels;
+	uint32_t ActiveBitrate;
+	uint32_t ActiveObjectType;
+	volatile LONG StreamFault;
+	volatile LONG FramesDropped;
+	volatile LONG Underruns;
+	volatile LONG SendFailures;
+	volatile LONG LastMediaError;
+	// AAC pacing: interrupt time of the last sent frame and of the last underrun log.
+	ULONGLONG AacLastFrameTime;
+	ULONGLONG AacLastUnderrunLog;
+	UCHAR FrameRecord[OpenA2dp::Ioctl::kMaxFrameRecordBytes];
 
 	WDFREQUEST ReadRequest;
 	WDFMEMORY ReadBrbMemory;
@@ -202,9 +247,11 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx);
 
-// Starts the SBC stream (endpoint PCM) for a configured SBC IE.
+// Starts the stream for the negotiated codec. SBC encodes from the endpoint PCM in
+// the kernel; AAC drains the frame ring filled by the encoder service.
 _IRQL_requires_(PASSIVE_LEVEL)
-void MediaStart(_In_ DEVICE_CONTEXT* ctx, _In_reads_bytes_(ieLength) const UCHAR* ie, _In_ SIZE_T ieLength);
+void MediaStart(_In_ DEVICE_CONTEXT* ctx, OpenA2dp::Avdtp::CodecType codec, _In_reads_bytes_(ieLength) const UCHAR* ie,
+	_In_ SIZE_T ieLength);
 
 // Stops the stream and waits for in-flight sends.
 _IRQL_requires_(PASSIVE_LEVEL)

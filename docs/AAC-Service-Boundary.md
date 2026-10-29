@@ -1,7 +1,7 @@
 # OpenA2dp — AAC driver/service boundary
 
-Status: design complete (Action Log #65); implementation starts with the driver side.
-Related: [A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2, 5 and 15; ABI in
+Status: driver side implemented (Action Log #66); `OpenA2dpSvc.exe` and the AAC SEP are
+next. Related: [A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2, 5 and 15; ABI in
 [`common/include/OpenA2dp/Ioctl.h`](../common/include/OpenA2dp/Ioctl.h).
 
 ## 1. Scope
@@ -79,24 +79,30 @@ Lifetime:
   `MmMapLockedPagesSpecifyCache(..., UserMode, ...)`) belongs to the file handle. It is
   unmapped with `MmUnmapLockedPages` and the MDL freed in `EvtFileCleanup`, which also
   clears the registration. A crashed service is therefore detected by the IO manager,
-  not by a timeout.
+  not by a timeout. The mapping keeps a reference to the process that called
+  `MAP_RINGS`; if teardown runs in a system thread, the driver attaches to that process
+  before unmapping (a user mapping must be released in its own process context) and skips
+  the unmap if the process already exited.
 - Only one handle may hold a mapping per device; a second `MAP_RINGS` returns
   `STATUS_DEVICE_BUSY`.
 - The mapping is cached and the rings are not paged, so the service may touch them at
   any time while the handle is open.
 
-At AAC stream start the driver flushes the PCM ring (`Skip(ReadableBytes())`) before it
-latches `kEventStreamStart`, so the service never starts on stale audio.
+At AAC stream start the driver flushes the frame ring before it latches
+`kEventStreamStart`, so the service never sends a stale encoded frame. The service is the
+PCM ring's consumer, so it discards buffered PCM itself when it sees the event (the
+driver, as producer, never moves the PCM tail).
 
 ## 4. Frame records
 
 The service writes variable-length records into the frame ring. A record is
-`FrameRecordHeader` followed by the LATM payload, padded to 8 bytes:
+`FrameRecordHeader` followed by the LATM payload; `size` is exact, so the payload length
+is `size - sizeof(FrameRecordHeader)` and records are never padded:
 
 | Field | Meaning |
 |---|---|
 | `magic` | `kFrameRecordMagic` |
-| `size` | whole record including the header, 8-byte aligned |
+| `size` | whole record including the header |
 | `samples` | PCM samples the payload covers (1024 for AAC-LC) |
 | `flags` | `kFrameFlagDiscontinuity` after a gap |
 
@@ -105,9 +111,10 @@ Write and read are atomic per record:
 - the service builds header + payload in a 2 KiB stack buffer and calls
   `RingBufferView::Write` once; if it does not fit, the record is dropped and counted
   (never a partial record);
-- the driver peeks the 12-byte header and validates `magic` and `size`. If
-  `size > kMaxFramePayload` the driver skips the record (`Skip(size)`) and counts it
-  (`framesDropped`); otherwise it peeks the whole record into `MediaBuffer` and sends it;
+- the driver peeks the 12-byte header and validates `magic` and `size`. If the payload
+  (`size - sizeof(FrameRecordHeader)`) is larger than `kMaxFramePayload` the driver skips
+  the record (`Skip(size)`) and counts it (`framesDropped`); otherwise it peeks the whole
+  record into its scratch buffer and sends the payload;
 - a corrupt header (bad magic or size) is not repairable from the consumer side: the
   driver stops consuming, counts an error, stops media and requests SUSPEND. The stream
   reconnects (as SBC if the service is still unhealthy); the service must reset its own
@@ -167,7 +174,7 @@ Stream start (driver, from the signaling work item):
 
 1. `AacConfig::Select` produced the configured IE and the service is registered, so the
    session reaches `Configured` with `SelectedCodec() == Aac`.
-2. `MediaStart` sets `MediaState::WaitingForEncoder`, flushes the PCM ring, latches
+2. `MediaStart` sets `MediaState::WaitingForEncoder`, flushes the frame ring, latches
    `kEventStreamStart` with the parameters, and starts the media timer.
 3. The service receives the event, configures MF (rate, channels, bitrate, object type),
    prerolls ~60 ms of PCM (same target-sample formula as SBC) and starts writing records.

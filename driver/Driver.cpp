@@ -1,4 +1,5 @@
 #include "Driver.h"
+#include "Service.h"
 #include <devpkey.h>
 #include <ntstrsafe.h>
 
@@ -49,6 +50,7 @@ NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 {
 	// Failing to register or reach the headset is not fatal; the device stays started.
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	ServiceStart(ctx);
 	(void)L2capRegisterServer(ctx);
 	(void)L2capOpenSignalingChannel(ctx);
 	return STATUS_SUCCESS;
@@ -63,6 +65,7 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	MediaStop(ctx);
+	ServiceStop(ctx);
 	L2capUnregisterServer(ctx);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
 	L2capCloseSignalingChannel(ctx);
@@ -77,6 +80,7 @@ void OnDisconnectWorkItem(_In_ WDFWORKITEM workItem)
 void OnDeviceCleanup(_In_ WDFOBJECT object)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(object);
+	ServiceCleanup(ctx);
 	if (ctx->ProfileValid)
 	{
 		ctx->Profile.Interface.InterfaceDereference(ctx->Profile.Interface.Context);
@@ -142,6 +146,13 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	}
 
 	status = MediaInitialize(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	// Allocates the shared PCM/frame block; must precede AudioInitialize.
+	status = ServiceInitialize(ctx);
 	if (!NT_SUCCESS(status))
 	{
 		return status;
