@@ -248,6 +248,7 @@ Append an entry for every work session, newest last.
 | 60 | M4: endpoint type comes from the headset Class of Device (`BTH_DEVICE_INFO.classOfDevice`, queried in `EvtDeviceAdd` before the ACX circuit is created): audio minor headset/hands-free/headphones -> `KSNODETYPE_HEADPHONES`, otherwise `KSNODETYPE_SPEAKER`. Device FriendlyName is `<name> [OpenA2DP]`, so the endpoint shows as `<Headphones|Speakers> (<name> [OpenA2DP])`. Build clean, CodecTests 44/44. | Validated on VM (CoD 0x240404 -> Headphones after endpoint reinstall) |
 | 61 | Crash triage of a "fatal system error" break: bugcheck 0x80 NMI_HARDWARE_FAILURE (Arg1 'TDO', Arg2 0x10), all 4 CPUs idle, OpenA2dp not on any stack: externally injected NMI (hypervisor), not a driver bug. Stale "Speakers" form factor was the Windows endpoint cache; fixed by reinstalling the device. #59 redeploy fix confirmed. | Confirmed |
 | 62 | Docs: refreshed README (status, build, known gaps) and SESSION-CONTEXT (current handoff) to the M4/M5 state; verified Debug x64 build and CodecTests 44/44; committed the working state (#48-#61). | Done |
+| 63 | WinDbg MCP: configured OpenCode's local `windbg` server for `DbgX.Mcp.Proxy.exe` (versioned package path; the WindowsApps alias fails `WaitNamedPipe` 121 when launched by OpenCode). Used the MCP tools on the live kernel session: `bl` and the Breakpoints pane are empty and `OpenA2dp!DriverEntry` is unpatched (`48 89 54 24 10`), so no driver-initialization breakpoint remains after the VM reboot; target resumed and still streaming. | Done |
 
 ## 15. Next Steps
 
