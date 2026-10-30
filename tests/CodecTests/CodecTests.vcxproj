@@ -26,6 +26,7 @@
 	<ClCompile Include="AacTests.cpp" />
 	<ClCompile Include="CommonTests.cpp" />
 	<ClCompile Include="AvdtpSourceTests.cpp" />
+	<ClCompile Include="FrameRecordTests.cpp" />
 	<ClCompile Include="SbcFixedTests.cpp" />
   </ItemGroup>
   <ItemGroup>

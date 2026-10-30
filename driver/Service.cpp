@@ -2,6 +2,7 @@
 
 #include <ntstrsafe.h>
 #include <OpenA2dp/AacConfig.h>
+#include <OpenA2dp/FrameRecord.h>
 
 using namespace OpenA2dp;
 
@@ -709,39 +710,30 @@ ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _O
 	}
 
 	RingBufferView frames(ctx->FrameRingHeader, ctx->FrameRingData);
-	Ioctl::FrameRecordHeader header = {};
-	if (!frames.Peek(&header, sizeof(header)))
-	{
-		return 0;
-	}
-
-	if (header.magic != Ioctl::kFrameRecordMagic || header.size <= sizeof(header) ||
-		header.size > Ioctl::kMaxFrameRecordBytes)
+	FrameRecord::Record record;
+	const FrameRecord::ReadResult result = FrameRecord::Read(frames, ctx->FrameRecord, sizeof(ctx->FrameRecord), record);
+	if (result == FrameRecord::ReadResult::Corrupt)
 	{
 		// Not repairable from the consumer side: stop consuming and let media stop.
-		OA2DP_LOG("service: corrupt frame record (magic 0x%04X size %u)", header.magic, header.size);
+		OA2DP_LOG("service: corrupt frame record");
 		InterlockedExchange(&ctx->LastMediaError, STATUS_DATA_ERROR);
 		InterlockedExchange(&ctx->StreamFault, 1);
 		return 0;
 	}
-
-	if (!frames.Peek(ctx->FrameRecord, header.size))
-	{
-		return 0;
-	}
-	frames.Skip(header.size);
-
-	const ULONG payloadBytes = header.size - static_cast<ULONG>(sizeof(header));
-	if (payloadBytes > Ioctl::kMaxFramePayload || header.samples == 0 || header.samples > 4096)
+	if (result == FrameRecord::ReadResult::Dropped)
 	{
 		InterlockedIncrement(&ctx->FramesDropped);
 		return 0;
 	}
+	if (result != FrameRecord::ReadResult::Record)
+	{
+		return 0;
+	}
 
-	*payload = ctx->FrameRecord + sizeof(header);
-	*samples = header.samples;
-	*flags = header.flags;
-	return payloadBytes;
+	*payload = record.payload;
+	*samples = record.samples;
+	*flags = record.flags;
+	return record.payloadLength;
 }
 
 void ServiceFlushRings(_In_ DEVICE_CONTEXT* ctx)
