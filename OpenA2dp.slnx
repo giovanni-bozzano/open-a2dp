@@ -37,4 +37,7 @@
   <Folder Name="/tools/">
     <Project Path="tools/OpenA2dpCtl/OpenA2dpCtl.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1004" />
   </Folder>
+  <Folder Name="/service/">
+    <Project Path="service/OpenA2dpSvc.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1006" />
+  </Folder>
 </Solution>

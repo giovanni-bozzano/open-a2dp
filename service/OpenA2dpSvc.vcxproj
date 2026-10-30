@@ -1,0 +1,31 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup Label="Globals">
+	<ProjectGuid>{6B1E3C2A-4F1D-4C7E-9A11-2D0F6E7A1005}</ProjectGuid>
+	<RootNamespace>OpenA2dpSvc</RootNamespace>
+	<ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+	<Link>
+	  <SubSystem>Console</SubSystem>
+	  <AdditionalDependencies>mfplat.lib;mfuuid.lib;mf.lib;wmcodecdspuuid.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	</Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+	<ClCompile Include="main.cpp" />
+	<ClCompile Include="..\codecs\CodecFactory.cpp" />
+	<ClCompile Include="..\codecs\aac\AacCodec.cpp" />
+	<ClCompile Include="..\codecs\aac\AacStreamEncoder.cpp" />
+	<ClCompile Include="..\codecs\aac\LatmWriter.cpp" />
+	<ClCompile Include="..\codecs\sbc\SbcCodec.cpp" />
+	<ClCompile Include="..\codecs\sbc\SbcEncoder.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+	<ClInclude Include="..\codecs\include\OpenA2dp\IA2dpCodec.h" />
+	<ClInclude Include="..\codecs\include\OpenA2dp\AacCodec.h" />
+	<ClInclude Include="..\codecs\include\OpenA2dp\AacStreamEncoder.h" />
+	<ClInclude Include="..\codecs\include\OpenA2dp\SbcCodec.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
