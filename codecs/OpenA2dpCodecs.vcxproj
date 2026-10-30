@@ -10,6 +10,7 @@
 	<ClInclude Include="include\OpenA2dp\IA2dpCodec.h" />
 	<ClInclude Include="include\OpenA2dp\SbcCodec.h" />
 	<ClInclude Include="include\OpenA2dp\AacCodec.h" />
+	<ClInclude Include="include\OpenA2dp\AacStreamEncoder.h" />
 	<ClInclude Include="sbc\SbcTables.h" />
 	<ClInclude Include="aac\LatmWriter.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\Avdtp.h" />
@@ -26,6 +27,7 @@
 	<ClCompile Include="sbc\SbcCodec.cpp" />
 	<ClCompile Include="sbc\SbcEncoder.cpp" />
 	<ClCompile Include="aac\AacCodec.cpp" />
+	<ClCompile Include="aac\AacStreamEncoder.cpp" />
 	<ClCompile Include="aac\LatmWriter.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
