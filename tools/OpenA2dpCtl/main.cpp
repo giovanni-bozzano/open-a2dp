@@ -339,10 +339,6 @@ const char* MediaStateName(uint32_t state)
 
 const char* CodecName(uint32_t codec)
 {
-	if (codec == 0)
-	{
-		return "none";
-	}
 	if (codec == Ioctl::kCodecSbc)
 	{
 		return "SBC";
@@ -351,7 +347,7 @@ const char* CodecName(uint32_t codec)
 	{
 		return "AAC";
 	}
-	return "unknown";
+	return "none";
 }
 
 template <typename T>
@@ -391,7 +387,11 @@ void PrintStatus(const Device& device, const Ioctl::Status& status)
 	std::printf("%s\n", DeviceLabel(device).c_str());
 	std::printf("  AVDTP           %s\n", AvdtpStateName(status.avdtpState));
 	std::printf("  media           %s\n", MediaStateName(static_cast<uint32_t>(status.mediaState)));
-	if (status.codec != 0)
+	if (status.mediaState == Ioctl::MediaState::Streaming && status.codec == 0)
+	{
+		std::printf("  codec           SBC, %u Hz, %u ch\n", status.sampleRate, status.channels);
+	}
+	else if (status.codec != 0)
 	{
 		std::printf("  codec           %s, %u Hz, %u ch, %u bps\n", CodecName(status.codec), status.sampleRate,
 					status.channels, status.bitrate);
@@ -488,7 +488,11 @@ int CommandList(const std::vector<Device>& devices)
 			if (ReadStatus(handle, status, error))
 			{
 				state = AvdtpStateName(status.avdtpState);
-				if (status.codec != 0)
+				if (status.mediaState == Ioctl::MediaState::Streaming && status.codec == 0)
+				{
+					codec = "SBC";
+				}
+				else if (status.codec != 0)
 				{
 					codec = CodecName(status.codec);
 				}
