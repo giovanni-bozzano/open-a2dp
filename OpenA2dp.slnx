@@ -34,4 +34,7 @@
       <BuildDependency Project="codecs/OpenA2dpCodecs.vcxproj" />
     </Project>
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/OpenA2dpCtl/OpenA2dpCtl.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1004" />
+  </Folder>
 </Solution>

@@ -17,13 +17,16 @@
 
 namespace OpenA2dp::Ioctl {
 
-constexpr uint32_t kAbiVersion = 1;
+// 2: Status carries the negotiated codec and the current preference.
+constexpr uint32_t kAbiVersion = 2;
 
-// Device interface exposed by every OpenA2dp device instance (one per headset).
-// SDDL: SYSTEM + Administrators only, so the rings cannot be mapped by other users.
-// {7F0C4E6A-2B91-4E7D-9C1F-5A3D8B0E6C21}
-inline constexpr GUID DeviceInterfaceClass = {
-	0x7F0C4E6A, 0x2B91, 0x4E7D, {0x9C, 0x1F, 0x5A, 0x3D, 0x8B, 0x0E, 0x6C, 0x21}};
+// Every OpenA2dp device instance (one per headset) exposes a control device.
+// The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
+// mapped by other users. The device is named \Device\OpenA2dpCtl<address> and
+// has the symbolic link \DosDevices\OpenA2dpCtl-<address>; the CLI and the
+// service enumerate the links with QueryDosDevice and open \\.\<link>.
+constexpr wchar_t kControlLinkPrefix[] = L"OpenA2dpCtl-";
+constexpr uint32_t kControlAddressChars = 12;
 
 // A2DP media channel MTU (L2CAP out MTU used by the driver) and the largest
 // AAC/LATM payload that fits in one RTP packet. Keep the MTU in sync with
@@ -161,7 +164,11 @@ struct Status {
 	uint32_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
 	uint32_t sendFailures;
 	uint32_t lastError; // NTSTATUS of the last media failure, 0 if none
-	uint32_t reserved[3];
+	// Codec chosen by the last AVDTP negotiation (0 = none yet). It is valid
+	// before streaming starts, unlike `codec`, which is set by MediaStart.
+	uint32_t negotiatedCodec;
+	uint32_t preferenceFlags; // kPreference*
+	uint32_t preferenceCodec; // kCodec*
 };
 
 struct Preference {
@@ -175,6 +182,7 @@ struct Preference {
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
+static_assert(sizeof(Status) == 84, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

@@ -389,7 +389,14 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 		}
 		*out = {};
 		out->abiVersion = Ioctl::kAbiVersion;
+		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
 		out->avdtpState = static_cast<uint32_t>(ctx->Session.State());
+		out->negotiatedCodec = ctx->Session.SelectedIeLength() != 0
+			? static_cast<uint32_t>(ctx->Session.SelectedCodec())
+			: 0;
+		out->preferenceFlags = ctx->Preference.flags;
+		out->preferenceCodec = ctx->Preference.codec;
+		WdfWaitLockRelease(ctx->SessionLock);
 		const LONG mode = InterlockedCompareExchange(&ctx->MediaMode, 0, 0);
 		if (InterlockedCompareExchange(&ctx->StreamFault, 0, 0) != 0)
 		{
@@ -447,7 +454,15 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 			Complete(request, STATUS_REVISION_MISMATCH);
 			return;
 		}
+		if ((in->flags & Ioctl::kPreferenceForceCodec) != 0 && in->codec != Ioctl::kCodecSbc &&
+			in->codec != Ioctl::kCodecAac)
+		{
+			Complete(request, STATUS_INVALID_PARAMETER);
+			return;
+		}
+		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
 		ctx->Preference = *in;
+		WdfWaitLockRelease(ctx->SessionLock);
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;
 	}
@@ -568,22 +583,59 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&fileAttrs, SERVICE_FILE_CONTEXT);
 	WdfDeviceInitSetFileObjectConfig(init, &fileConfig, &fileAttrs);
 
+	// The address names the control device and its symbolic link. Device
+	// interfaces are not supported on control devices, so the CLI and the
+	// service enumerate the symbolic links (QueryDosDevice) instead.
+	WCHAR address[16];
+	NTSTATUS status = RtlStringCchPrintfW(address, ARRAYSIZE(address), L"%012I64X", ctx->RemoteAddress);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_LOG("service: address format failed 0x%08X", status);
+		WdfDeviceInitFree(init);
+		return;
+	}
+
+	WCHAR deviceName[48];
+	UNICODE_STRING deviceNameString;
+	status = RtlStringCchPrintfW(deviceName, ARRAYSIZE(deviceName), L"\\Device\\OpenA2dpCtl%ws", address);
+	if (NT_SUCCESS(status))
+	{
+		RtlInitUnicodeString(&deviceNameString, deviceName);
+		status = WdfDeviceInitAssignName(init, &deviceNameString);
+	}
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_LOG("service: control device name failed 0x%08X", status);
+		WdfDeviceInitFree(init);
+		return;
+	}
+
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attrs, CONTROL_DEVICE_CONTEXT);
-	attrs.ParentObject = ctx->Device;
+	// A device object's parent must stay the driver object (WdfDeviceCreate
+	// rejects ParentObject); ServiceStop deletes the control device explicitly.
 	attrs.EvtCleanupCallback = OnControlDeviceCleanup;
+	// GET_STATUS takes SessionLock, and a parked WAIT_EVENT must not block the
+	// control queue, so the IOCTL callbacks run at PASSIVE_LEVEL in parallel.
+	attrs.ExecutionLevel = WdfExecutionLevelPassive;
 
 	WDFDEVICE control = nullptr;
-	NTSTATUS status = WdfDeviceCreate(&init, &attrs, &control);
+	status = WdfDeviceCreate(&init, &attrs, &control);
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_LOG("service: control device create failed 0x%08X", status);
+		if (init != nullptr)
+		{
+			WdfDeviceInitFree(init);
+		}
 		return;
 	}
 	GetControlDeviceContext(control)->Device = ctx;
 
 	WDF_IO_QUEUE_CONFIG queueConfig;
-	WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
+	// Parallel: a parked WAIT_EVENT (the service's tick source) must not stop the
+	// CLI or the service from issuing GET_STATUS/SET_PREFERENCE on the same device.
+	WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);
 	queueConfig.EvtIoDeviceControl = OnDeviceControl;
 	status = WdfIoQueueCreate(control, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
 	if (!NT_SUCCESS(status))
@@ -593,27 +645,27 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	WCHAR reference[16];
-	UNICODE_STRING referenceString;
-	PWSTR referenceText = nullptr;
-	status = RtlStringCchPrintfW(reference, ARRAYSIZE(reference), L"%012I64X", ctx->RemoteAddress);
+	WCHAR linkName[48];
+	UNICODE_STRING linkNameString;
+	status = RtlStringCchPrintfW(linkName, ARRAYSIZE(linkName), L"\\DosDevices\\OpenA2dpCtl-%ws", address);
 	if (NT_SUCCESS(status))
 	{
-		RtlInitUnicodeString(&referenceString, reference);
-		referenceText = reference;
+		RtlInitUnicodeString(&linkNameString, linkName);
+		status = WdfDeviceCreateSymbolicLink(control, &linkNameString);
 	}
-	status = WdfDeviceCreateDeviceInterface(
-		control, &Ioctl::DeviceInterfaceClass, referenceText != nullptr ? &referenceString : nullptr);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: interface create failed 0x%08X", status);
+		OA2DP_LOG("service: symbolic link failed 0x%08X", status);
 		WdfObjectDelete(control);
 		return;
 	}
 
+	// The system does not deliver I/O to a control device before this call.
+	WdfControlFinishInitializing(control);
+
 	ctx->ControlDevice = control;
 	InterlockedExchange(&ctx->ServiceActive, 1);
-	OA2DP_LOG("service: control device ready for %ws", referenceText != nullptr ? reference : L"");
+	OA2DP_LOG("service: control device ready at %ws", linkName);
 }
 
 void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
@@ -631,6 +683,10 @@ void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
 	UnmapRings(ctx);
 	InterlockedExchange(&ctx->EncoderRegistered, 0);
 
+	// The control device's parent is the driver object, so it can outlive this
+	// FDO's context. Detach it before deleting so the cleanup callback cannot
+	// dereference a freed DEVICE_CONTEXT.
+	GetControlDeviceContext(control)->Device = nullptr;
 	WdfObjectDelete(control);
 	OA2DP_LOG("service: control device removed");
 }

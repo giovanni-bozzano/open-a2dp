@@ -12,7 +12,8 @@
 	  1. optionally builds the solution and runs CodecTests;
 	  2. optionally reverts a snapshot (stopping a running VM first);
 	  3. starts the VM if needed (-Start) and waits for VMware Tools;
-	  4. copies the package and test certificate;
+	  4. copies the package, the OpenA2dpCtl.exe diagnostic CLI and the test
+	     certificate;
 	  5. trusts the certificate, installs the package, restarts the OpenA2dp device
 	     and verifies the installed binary in the guest;
 	  6. copies back and prints the guest install log.
@@ -172,6 +173,10 @@ $catalog = Get-ChildItem $package -Filter '*.cat' | Select-Object -First 1
 if (-not $catalog) {
 	throw "No catalog in $package; build first."
 }
+$ctl = Join-Path $root "out\x64\$Configuration\OpenA2dpCtl.exe"
+if (-not (Test-Path $ctl)) {
+	throw "OpenA2dpCtl.exe not found: $ctl; build first."
+}
 $driverVer = (Select-String -Path (Join-Path $package 'OpenA2dp.inf') -Pattern '^DriverVer\s*=' | Select-Object -First 1).Line
 Write-Host "Package: $package"
 if ($driverVer) {
@@ -219,7 +224,7 @@ Wait-VmTools
 # createDirectoryInGuest fails harmlessly when the directory already exists.
 & $vmrun @auth createDirectoryInGuest $config.vmx 'C:\OpenA2dp' 2>&1 | Out-Null
 
-foreach ($file in (Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) + (Get-Item $cer)) {
+foreach ($file in (Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) + (Get-Item $cer) + (Get-Item $ctl)) {
 	Write-Host "Copying $($file.Name)"
 	Invoke-VmRun "Copying $($file.Name)" ($auth + @('CopyFileFromHostToGuest', $config.vmx, $file.FullName, "C:\OpenA2dp\$($file.Name)"))
 }
@@ -356,3 +361,4 @@ while ($true) {
 }
 
 Write-Host "`nDeployment complete. The package is installed and the device was restarted and verified when present."
+Write-Host 'CLI: C:\OpenA2dp\OpenA2dpCtl.exe (run it elevated in the guest; "OpenA2dpCtl help" for usage).'

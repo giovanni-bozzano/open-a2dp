@@ -1,7 +1,8 @@
 # OpenA2dp — AAC driver/service boundary
 
-Status: driver side implemented (Action Log #66) and the AAC SEP plus codec fallback are
-implemented (Action Log #67); `OpenA2dpSvc.exe` is next. Related:
+Status: driver side implemented (Action Log #66), the AAC SEP plus codec fallback are
+implemented (Action Log #67) and `OpenA2dpCtl.exe` provides the manual codec switch and
+status (Action Log #68); `OpenA2dpSvc.exe` is next. Related:
 [A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2, 5 and 15; ABI in
 [`common/include/OpenA2dp/Ioctl.h`](../common/include/OpenA2dp/Ioctl.h).
 
@@ -137,8 +138,14 @@ struct.
 | `REGISTER_ENCODER` | `RegisterEncoderIn` | `RegisterEncoderOut` | One registration per device; `STATUS_DEVICE_BUSY` if taken, `STATUS_REVISION_MISMATCH` on ABI mismatch |
 | `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
-| `GET_STATUS` | – | `Status` | Always available; used by the config UI (M5b) and for diagnostics |
-| `SET_PREFERENCE` | `Preference` | – | Volatile in v1; the registry store is M5b step 3 |
+| `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference and the counters |
+| `SET_PREFERENCE` | `Preference` | – | Volatile in v1; the registry store is M5b step 3. A forced codec must be SBC or AAC |
+
+The control queue is parallel, so a parked `WAIT_EVENT` does not block
+`GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
+`Status` (ABI 2) carries `negotiatedCodec` (valid before streaming starts),
+`preferenceFlags` and `preferenceCodec`; `GET_STATUS` reads the session and the preference
+under `SessionLock`.
 
 `REGISTER_ENCODER` sets the device flag that makes the AVDTP layer advertise the AAC SEP.
 It is intentionally a separate call from `MAP_RINGS`: a service that can register but
@@ -162,10 +169,12 @@ bitrate whose frames do not fit and reduce it, or report the failure to the user
 
 ## 6. Lifecycle
 
-Service start (once per device interface):
+Service start (once per control device; device interfaces are not supported on
+control devices, so each one is named `\Device\OpenA2dpCtl<address>` with the
+symbolic link `\DosDevices\OpenA2dpCtl-<address>`):
 
-1. `CM_Get_Device_Interfaces` / `CM_Register_Notification` for `DeviceInterfaceClass`.
-2. `CreateFile` on the interface path.
+1. `QueryDosDevice(NULL, ...)` to enumerate the `OpenA2dpCtl-<12 hex address>` links.
+2. `CreateFile` on `\\.\OpenA2dpCtl-<address>`.
 3. `GET_VERSION`; refuse to continue on an ABI mismatch.
 4. `REGISTER_ENCODER` (codec AAC, service frame limit).
 5. `MAP_RINGS`; build the two `RingBufferView`s.

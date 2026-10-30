@@ -12,7 +12,7 @@ See [docs/A2DP-Driver-Plan.md](docs/A2DP-Driver-Plan.md) for the architecture, p
 | M2 Driver skeleton + L2CAP | Done (signaling channel opens to a real headset in the VM) |
 | M3 AVDTP negotiation | In progress (SBC stream reaches Streaming; BlueZ sink and sink-initiated configuration not yet validated) |
 | M4 ACX endpoint + rings | Done (Speaker0 endpoint; Windows audio plays through the headset) |
-| M5 Encoder service + streaming | In progress (audible SBC; AAC SEP + AAC/SBC fallback and the driver side of the service boundary done; `OpenA2dpSvc.exe` pending) |
+| M5 Encoder service + streaming | In progress (audible SBC; AAC SEP + AAC/SBC fallback, the driver side of the service boundary and the `OpenA2dpCtl` diagnostic CLI done; `OpenA2dpSvc.exe` pending) |
 | M5b Codec configuration | Not started |
 | M6 Config UI + install/uninstall | Not started |
 | M7 System testing | Not started |
@@ -27,6 +27,7 @@ Current implementation:
 - `docs/AAC-Service-Boundary.md`: design of the AAC driver/service boundary (rings, IOCTLs, lifecycle); the driver side is implemented, the service is next.
 - `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and the Media Foundation/LATM encoder used by tests and the future service.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.
+- `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC; deployed to the test VM by `scripts/deploy-vm.ps1`.
 
 ## Build
 
@@ -34,7 +35,7 @@ Requires Visual Studio 2026 (v145 toolset) and the WDK NuGet packages pinned in 
 
 ```
 & "D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
-out\x64\Debug\CodecTests.exe            # 51 tests
+out\x64\Debug\CodecTests.exe            # 60 tests
 out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ```
 
