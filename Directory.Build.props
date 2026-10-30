@@ -57,4 +57,13 @@
 		  <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
 		</Link>
 	  </ItemDefinitionGroup>
+	  <!-- The CLI, the encoder service and the tests are copied to the test VM, which has
+	       no Visual C++ debug runtime, so every user-mode binary links the CRT statically.
+	       The static library uses the same runtime to keep one CRT in each process. -->
+	  <ItemDefinitionGroup Condition="'$(ConfigurationType)' != 'Driver'">
+		<ClCompile>
+		  <RuntimeLibrary Condition="'$(Configuration)' == 'Debug'">MultiThreadedDebug</RuntimeLibrary>
+		  <RuntimeLibrary Condition="'$(Configuration)' == 'Release'">MultiThreaded</RuntimeLibrary>
+		</ClCompile>
+	  </ItemDefinitionGroup>
 </Project>

@@ -39,6 +39,8 @@ out\x64\Debug\CodecTests.exe            # 60 tests
 out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ```
 
+User-mode binaries (`CodecTests.exe`, `OpenA2dpCtl.exe`, the future service) link the CRT statically, so they also run in the test VM without the Visual C++ debug runtime.
+
 ## Known gaps
 
 - SBC is still tested against our own reference decoder; external validation (ffmpeg / BlueZ `sbcdec`) and more real-device coverage are pending.

@@ -49,7 +49,7 @@ out\x64\Debug\CodecTests.exe          # 60 tests
 out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 ```
 
-Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is test-signed at build time. `out\x64\Debug\OpenA2dpCtl.exe` is the diagnostic CLI. Deploy with `scripts/deploy-vm.ps1` (vmrun: optional snapshot revert, copy package, CLI and exported cert, trust cert, `pnputil /add-driver ... /install`).
+Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is test-signed at build time. `out\x64\Debug\OpenA2dpCtl.exe` is the diagnostic CLI. Deploy with `scripts/deploy-vm.ps1` (vmrun: optional snapshot revert, copy package, CLI and exported cert, trust cert, `pnputil /add-driver ... /install`). Every non-driver project links the CRT statically (`Directory.Build.props`), because the test VM has no Visual C++ debug runtime: `OpenA2dpCtl.exe` then depends only on `KERNEL32.dll` and starts in the guest.
 
 ## Driver implementation notes
 - **`Driver.cpp`:** `EvtDeviceAdd` queries BTHENUM device info early for the Class of Device (endpoint type) and creates the ACX circuit; `OnPrepareHardware` retrieves the address/name again and sets `DEVPKEY_Device_FriendlyName` to `<name> [OpenA2DP]` (address if no name). Self-managed IO init registers the L2CAP server and opens the signaling channel. Suspend calls `MediaStop` first, then unregisters the server, flushes the disconnect work item and closes signaling.
@@ -83,7 +83,7 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 ## Open validation gaps
 - BlueZ/PipeWire sink and the sink-initiated acceptor path (deferred D3; no Linux Bluetooth host).
 - AAC service: LATM framing against real captures, and AAC SEP registration/fallback validated end-to-end on a real sink.
-- The diagnostic CLI and its deploy step are built and run locally (`help`, `list` with no device) but have not been exercised in the VM against a bound headset yet.
+- The diagnostic CLI is deployed and starts in the VM (`help`, `list`/`status` reporting no device while the headset is disconnected); it has not yet been exercised against a bound headset.
 - End-to-end latency, pause/resume, switching the default output away from and back to Speaker0 (deferred D1).
 - Send-failure path: headset out of range or adapter removed while streaming; confirm SUSPEND and no hang (deferred D2).
 - SBC decode with an external decoder (ffmpeg / BlueZ `sbcdec`).
