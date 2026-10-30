@@ -1,5 +1,7 @@
 #include "Driver.h"
+#include "Service.h"
 
+#include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/SbcConfig.h>
 
 using namespace OpenA2dp;
@@ -14,21 +16,65 @@ EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;
 EVT_WDF_REQUEST_COMPLETION_ROUTINE OnReadComplete;
 
-uint32_t SelectConfig(void*, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
+// Scores each sink SEP: SBC 1, AAC 2, so AAC wins when both sides support it.
+// Returns 0 for a codec we cannot configure (or that the user forced away from).
+uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 	uint8_t* configIe, size_t& configIeLength)
 {
-	if (codec != Avdtp::CodecType::Sbc || !SbcConfig::Select(remoteIe, remoteIeLength, 0, SbcMaxBitpool, configIe))
+	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
+	const bool forceCodec = (ctx->Preference.flags & Ioctl::kPreferenceForceCodec) != 0;
+
+	if (codec == Avdtp::CodecType::Sbc)
 	{
-		return 0;
+		if (forceCodec && ctx->Preference.codec != Ioctl::kCodecSbc)
+		{
+			return 0;
+		}
+		if (!SbcConfig::Select(remoteIe, remoteIeLength, 0, SbcMaxBitpool, configIe))
+		{
+			return 0;
+		}
+		configIeLength = SbcConfig::kIeLength;
+		return 1;
 	}
-	configIeLength = SbcConfig::kIeLength;
-	return 1;
+
+	if (codec == Avdtp::CodecType::Aac)
+	{
+		// AAC exists only while an encoder service is registered for this device.
+		if (!ServiceRegistered(ctx) || (forceCodec && ctx->Preference.codec != Ioctl::kCodecAac))
+		{
+			return 0;
+		}
+		if (!AacConfig::Select(remoteIe, remoteIeLength, AudioSampleRate, 0, configIe))
+		{
+			return 0;
+		}
+		configIeLength = AacConfig::kIeLength;
+		return 2;
+	}
+
+	return 0;
+}
+
+// Sink-proposed configurations for non-SBC codecs; returns 0 or an AVDTP error.
+uint8_t ValidateConfig(void*, Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
+{
+	if (codec != Avdtp::CodecType::Aac)
+	{
+		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
+	}
+	return AacConfig::Validate(ie, ieLength);
 }
 
 void ResetSession(DEVICE_CONTEXT* ctx)
 {
 	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, SbcConfig::kLocalCapabilities,
-		SbcConfig::kIeLength, &SelectConfig, ctx);
+		SbcConfig::kIeLength, &SelectConfig, ctx, &ValidateConfig);
+	if (ServiceRegistered(ctx))
+	{
+		ctx->Session.SetLocalSep(Avdtp::kLocalAacSeid, Avdtp::CodecType::Aac, AacConfig::kLocalCapabilities,
+			AacConfig::kIeLength);
+	}
 	ctx->LoggedState = Avdtp::SessionState::Idle;
 }
 

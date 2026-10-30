@@ -1,7 +1,8 @@
 # OpenA2dp — AAC driver/service boundary
 
-Status: driver side implemented (Action Log #66); `OpenA2dpSvc.exe` and the AAC SEP are
-next. Related: [A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2, 5 and 15; ABI in
+Status: driver side implemented (Action Log #66) and the AAC SEP plus codec fallback are
+implemented (Action Log #67); `OpenA2dpSvc.exe` is next. Related:
+[A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2, 5 and 15; ABI in
 [`common/include/OpenA2dp/Ioctl.h`](../common/include/OpenA2dp/Ioctl.h).
 
 ## 1. Scope
@@ -205,24 +206,24 @@ Consequences:
 - latency is roughly one encode tick plus the driver tick (10-20 ms), on top of the
   existing ~60 ms preroll.
 
-## 8. Negotiation changes (step 2)
+## 8. Negotiation changes (implemented, Action Log #67)
 
-`Avdtp::SourceSession` currently models one local SEP (SEID 1, one codec). AAC needs a
-second SEP:
+`Avdtp::SourceSession` now holds a small array of local SEPs:
 
 - SEID 1: SBC, always present (mandatory fallback);
-- SEID 2: AAC, present only while an encoder is registered.
+- SEID 2: AAC, present only while an encoder is registered (`SetLocalSep`).
 
-Required changes: construct the session with a small array of local SEPs (seid, codec,
-IE); answer DISCOVER/GET_CAPABILITIES per SEID; validate `acpSeid` against the matching
-local codec; score both codecs in the selector; keep the sink-initiated
-`SET_CONFIGURATION` check working for either codec.
+The session answers DISCOVER with every local SEP, answers GET_CAPABILITIES per SEID,
+validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
+`SET_CONFIGURATION` check working for either codec (SBC is checked inside the session,
+other codecs through the `ConfigValidator` callback).
 
-Policy: forced codec (if available) > AAC > SBC. `Signaling.cpp`'s `SelectConfig` gains
-the AAC branch (`AacConfig::Select`), and the score must express the policy so that a
-sink offering both codecs gets AAC. A sink that rejects the AAC `SET_CONFIGURATION`
-currently fails the session; step 2 adds one retry with the SBC configuration for the
-same sink SEP, plus a test for the fallback.
+Policy: forced codec (if available) > AAC > SBC. `Signaling.cpp`'s `SelectConfig` has
+the AAC branch (`AacConfig::Select`, 44.1 kHz, highest bitrate the sink accepts) and
+scores AAC 2 / SBC 1. Every scored sink SEP is kept as a candidate in descending order;
+when the sink rejects a `SET_CONFIGURATION`, the session configures the next candidate
+for the same sink SEP, so an AAC-capable sink that refuses AAC falls back to SBC in the
+same connection. `AvdtpSourceTests` covers the fallback and the all-rejected failure.
 
 `MediaStart` dispatches on `SelectedCodec()`: SBC keeps the current kernel encoder;
 AAC validates the IE with `AacConfig::ParseConfiguredIe`, rejects a bitrate whose frames

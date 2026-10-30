@@ -12,7 +12,11 @@ namespace OpenA2dp::Avdtp {
 constexpr size_t kMaxSignalPacket = 128;
 constexpr size_t kMaxSinkSeps = 8;
 constexpr size_t kMaxCodecIe = 32;
+constexpr size_t kMaxLocalSeps = 2;
+// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC, advertised only while
+// the encoder service is registered.
 constexpr uint8_t kLocalSeid = 1;
+constexpr uint8_t kLocalAacSeid = 2;
 
 enum class SessionState : uint8_t {
 	Idle,
@@ -35,21 +39,57 @@ enum class SessionState : uint8_t {
 using ConfigSelector = uint32_t (*)(void* context, CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 									uint8_t* configIe, size_t& configIeLength);
 
+// Checks a configuration IE the sink proposed for one of our SEPs. Only used for
+// codecs other than SBC (the session validates SBC itself); returns 0 or an
+// AVDTP ErrorCode.
+using ConfigValidator = uint8_t (*)(void* context, CodecType codec, const uint8_t* ie, size_t ieLength);
+
 class SourceSession {
 public:
 	// localCodecIe: capabilities advertised for our SEP when the sink queries us.
 	SourceSession(CodecType localCodec, const uint8_t* localCodecIe, size_t localCodecIeLength,
-				  ConfigSelector selector, void* selectorContext) noexcept
-		: localCodec_(localCodec), selector_(selector), selectorContext_(selectorContext)
+				  ConfigSelector selector, void* selectorContext, ConfigValidator validator = nullptr) noexcept
+		: selector_(selector), selectorContext_(selectorContext), validator_(validator)
 	{
-		localIeLength_ = localCodecIeLength <= kMaxCodecIe ? localCodecIeLength : kMaxCodecIe;
-		for (size_t i = 0; i < localIeLength_; ++i) {
-			localIe_[i] = localCodecIe[i];
+		localSeps_[0].seid = kLocalSeid;
+		localSeps_[0].codec = localCodec;
+		localSeps_[0].ieLength = localCodecIeLength <= kMaxCodecIe ? localCodecIeLength : kMaxCodecIe;
+		for (size_t i = 0; i < localSeps_[0].ieLength; ++i) {
+			localSeps_[0].ie[i] = localCodecIe[i];
+		}
+		localSepCount_ = 1;
+	}
+
+	// Adds or replaces an extra local SEP (SEID 2 = AAC). Ignored for SEID 1.
+	void SetLocalSep(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
+	{
+		if (seid == kLocalSeid || ieLength > kMaxCodecIe) {
+			return;
+		}
+		LocalSep* sep = nullptr;
+		for (size_t i = 0; i < localSepCount_; ++i) {
+			if (localSeps_[i].seid == seid) {
+				sep = &localSeps_[i];
+			}
+		}
+		if (sep == nullptr) {
+			if (localSepCount_ >= kMaxLocalSeps) {
+				return;
+			}
+			sep = &localSeps_[localSepCount_++];
+		}
+		sep->seid = seid;
+		sep->codec = codec;
+		sep->ieLength = ieLength;
+		for (size_t i = 0; i < ieLength; ++i) {
+			sep->ie[i] = ie[i];
 		}
 	}
 
 	SessionState State() const noexcept { return state_; }
 	uint8_t RemoteSeid() const noexcept { return remoteSeid_; }
+	// Local SEP the sink is (or was) configured against; 0 before configuration.
+	uint8_t LocalSeid() const noexcept { return localSeid_; }
 	CodecType SelectedCodec() const noexcept { return selectedCodec_; }
 	const uint8_t* SelectedIe() const noexcept { return selectedIe_; }
 	size_t SelectedIeLength() const noexcept { return selectedIeLength_; }
@@ -65,8 +105,10 @@ public:
 		}
 		sinkCount_ = 0;
 		capsIndex_ = 0;
-		bestScore_ = 0;
+		candidateCount_ = 0;
+		candidateIndex_ = 0;
 		remoteSeid_ = 0;
+		localSeid_ = 0;
 		selectedIeLength_ = 0;
 		acceptor_ = false;
 		state_ = SessionState::Discovering;
@@ -124,8 +166,26 @@ public:
 	}
 
 private:
+	struct LocalSep {
+		uint8_t seid;
+		CodecType codec;
+		uint8_t ie[kMaxCodecIe] = {};
+		size_t ieLength;
+	};
+
 	struct SinkSep {
 		uint8_t seid;
+	};
+
+	// One sink SEP we could configure, best score first. Kept after the selection
+	// so a rejected SET_CONFIGURATION can fall back to the next candidate (AAC -> SBC).
+	struct Candidate {
+		uint32_t score;
+		uint8_t remoteSeid;
+		uint8_t localSeid;
+		CodecType codec;
+		uint8_t ie[kMaxCodecIe] = {};
+		size_t ieLength;
 	};
 
 	size_t Command(Signal signal, const uint8_t* payload, size_t payloadLength, uint8_t* out, size_t cap) noexcept
@@ -167,21 +227,62 @@ private:
 		return 2 + payloadLength;
 	}
 
+	const LocalSep* FindLocalSep(uint8_t seid) const noexcept
+	{
+		for (size_t i = 0; i < localSepCount_; ++i) {
+			if (localSeps_[i].seid == seid) {
+				return &localSeps_[i];
+			}
+		}
+		return nullptr;
+	}
+
+	uint8_t LocalSeidForCodec(CodecType codec) const noexcept
+	{
+		for (size_t i = 0; i < localSepCount_; ++i) {
+			if (localSeps_[i].codec == codec) {
+				return localSeps_[i].seid;
+			}
+		}
+		return 0;
+	}
+
+	bool LocalSepInUse(uint8_t seid) const noexcept
+	{
+		return state_ >= SessionState::Configuring && state_ < SessionState::Failed && localSeid_ == seid;
+	}
+
 	size_t SendNextCapabilities(uint8_t* out, size_t cap) noexcept
 	{
 		if (capsIndex_ < sinkCount_) {
 			const uint8_t seid = static_cast<uint8_t>(sinks_[capsIndex_].seid << 2);
 			return Command(Signal::GetCapabilities, &seid, 1, out, cap);
 		}
-		if (bestScore_ == 0) {
+		if (candidateCount_ == 0) {
 			state_ = SessionState::Failed;
 			return 0;
 		}
 		state_ = SessionState::Configuring;
+		candidateIndex_ = 0;
+		return SendConfiguration(out, cap);
+	}
+
+	// Configures the current candidate and remembers it as the selected stream.
+	size_t SendConfiguration(uint8_t* out, size_t cap) noexcept
+	{
+		const Candidate& c = candidates_[candidateIndex_];
+		selectedCodec_ = c.codec;
+		localSeid_ = c.localSeid;
+		remoteSeid_ = c.remoteSeid;
+		selectedIeLength_ = c.ieLength;
+		for (size_t i = 0; i < c.ieLength; ++i) {
+			selectedIe_[i] = c.ie[i];
+		}
+
 		uint8_t payload[8 + kMaxCodecIe];
 		size_t n = 0;
 		payload[n++] = static_cast<uint8_t>(remoteSeid_ << 2);
-		payload[n++] = static_cast<uint8_t>(kLocalSeid << 2);
+		payload[n++] = static_cast<uint8_t>(localSeid_ << 2);
 		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaTransport);
 		payload[n++] = 0;
 		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaCodec);
@@ -224,10 +325,18 @@ private:
 			return SendNextCapabilities(out, cap);
 
 		case Signal::SetConfiguration:
-			if (!accepted || state_ != SessionState::Configuring) {
+			if (state_ != SessionState::Configuring) {
 				break;
 			}
-			return SeidCommand(SessionState::Configuring, SessionState::Opening, Signal::Open, out, cap);
+			if (accepted) {
+				return SeidCommand(SessionState::Configuring, SessionState::Opening, Signal::Open, out, cap);
+			}
+			// The sink refused this codec; try the next-best candidate (AAC -> SBC).
+			if (candidateIndex_ + 1 < candidateCount_) {
+				++candidateIndex_;
+				return SendConfiguration(out, cap);
+			}
+			break;
 
 		case Signal::Open:
 			if (!accepted || state_ != SessionState::Opening) {
@@ -255,6 +364,8 @@ private:
 			if (state_ == SessionState::Closing || state_ == SessionState::Aborting) {
 				state_ = SessionState::Idle;
 				remoteSeid_ = 0;
+				localSeid_ = 0;
+				acceptor_ = false;
 				return 0;
 			}
 			break;
@@ -274,19 +385,40 @@ private:
 		if (ie == nullptr || selector_ == nullptr) {
 			return;
 		}
+		const uint8_t localSeid = LocalSeidForCodec(codec);
+		if (localSeid == 0) {
+			return;
+		}
 		uint8_t config[kMaxCodecIe];
 		size_t configLength = 0;
 		const uint32_t score = selector_(selectorContext_, codec, ie, ieLength, config, configLength);
-		if (score <= bestScore_ || configLength == 0 || configLength > kMaxCodecIe) {
+		if (score == 0 || configLength == 0 || configLength > kMaxCodecIe) {
 			return;
 		}
-		bestScore_ = score;
-		remoteSeid_ = seid;
-		selectedCodec_ = codec;
-		selectedIeLength_ = configLength;
-		for (size_t i = 0; i < configLength; ++i) {
-			selectedIe_[i] = config[i];
+
+		if (candidateCount_ >= kMaxSinkSeps) {
+			if (score <= candidates_[candidateCount_ - 1].score) {
+				return;
+			}
+			--candidateCount_;
 		}
+
+		// Insert in descending score order; equal scores keep the earlier SEP.
+		size_t pos = candidateCount_;
+		while (pos > 0 && candidates_[pos - 1].score < score) {
+			candidates_[pos] = candidates_[pos - 1];
+			--pos;
+		}
+		Candidate& c = candidates_[pos];
+		c.score = score;
+		c.remoteSeid = seid;
+		c.localSeid = localSeid;
+		c.codec = codec;
+		c.ieLength = configLength;
+		for (size_t i = 0; i < configLength; ++i) {
+			c.ie[i] = config[i];
+		}
+		++candidateCount_;
 	}
 
 	// Commands initiated by the sink.
@@ -295,15 +427,20 @@ private:
 		const uint8_t acpSeid = len >= 1 ? static_cast<uint8_t>(p[0] >> 2) : 0;
 		switch (h.signal) {
 		case Signal::Discover: {
-			uint8_t info[2];
-			WriteSepInfo({kLocalSeid, state_ >= SessionState::Configuring && state_ < SessionState::Failed,
-						  MediaType::Audio, SepType::Source}, info);
-			return Reply(h, MessageType::ResponseAccept, info, 2, out, cap);
+			uint8_t info[2 * kMaxLocalSeps];
+			size_t n = 0;
+			for (size_t i = 0; i < localSepCount_; ++i) {
+				WriteSepInfo({localSeps_[i].seid, LocalSepInUse(localSeps_[i].seid), MediaType::Audio, SepType::Source},
+							 info + n);
+				n += 2;
+			}
+			return Reply(h, MessageType::ResponseAccept, info, n, out, cap);
 		}
 
 		case Signal::GetCapabilities:
 		case Signal::GetAllCapabilities: {
-			if (acpSeid != kLocalSeid) {
+			const LocalSep* sep = FindLocalSep(acpSeid);
+			if (sep == nullptr) {
 				return Reject(h, ErrorCode::BadAcpSeid, out, cap);
 			}
 			uint8_t caps[6 + kMaxCodecIe];
@@ -311,41 +448,47 @@ private:
 			caps[n++] = static_cast<uint8_t>(ServiceCategory::MediaTransport);
 			caps[n++] = 0;
 			caps[n++] = static_cast<uint8_t>(ServiceCategory::MediaCodec);
-			caps[n++] = static_cast<uint8_t>(2 + localIeLength_);
+			caps[n++] = static_cast<uint8_t>(2 + sep->ieLength);
 			caps[n++] = static_cast<uint8_t>(static_cast<uint8_t>(MediaType::Audio) << 4);
-			caps[n++] = static_cast<uint8_t>(localCodec_);
-			for (size_t i = 0; i < localIeLength_; ++i) {
-				caps[n++] = localIe_[i];
+			caps[n++] = static_cast<uint8_t>(sep->codec);
+			for (size_t i = 0; i < sep->ieLength; ++i) {
+				caps[n++] = sep->ie[i];
 			}
 			return Reply(h, MessageType::ResponseAccept, caps, n, out, cap);
 		}
 
 		case Signal::Start:
-			if (acpSeid != kLocalSeid || state_ != SessionState::Open) {
-				return Reject(h, acpSeid != kLocalSeid ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
+			if (acpSeid != localSeid_ || state_ != SessionState::Open) {
+				return Reject(h, acpSeid != localSeid_ ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap,
+							  static_cast<ServiceCategory>(0), acpSeid);
 			}
 			state_ = SessionState::Streaming;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
 
 		case Signal::Suspend:
-			if (acpSeid != kLocalSeid || state_ != SessionState::Streaming) {
-				return Reject(h, acpSeid != kLocalSeid ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
+			if (acpSeid != localSeid_ || state_ != SessionState::Streaming) {
+				return Reject(h, acpSeid != localSeid_ ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap,
+							  static_cast<ServiceCategory>(0), acpSeid);
 			}
 			state_ = SessionState::Open;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
 
 		case Signal::Close:
-			if (acpSeid != kLocalSeid || (state_ != SessionState::Open && state_ != SessionState::Streaming)) {
-				return Reject(h, acpSeid != kLocalSeid ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
+			if (acpSeid != localSeid_ || (state_ != SessionState::Open && state_ != SessionState::Streaming)) {
+				return Reject(h, acpSeid != localSeid_ ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
 			}
 			state_ = SessionState::Idle;
 			remoteSeid_ = 0;
+			localSeid_ = 0;
+			acceptor_ = false;
 			pending_ = false;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
 
 		case Signal::Abort:
 			state_ = SessionState::Idle;
 			remoteSeid_ = 0;
+			localSeid_ = 0;
+			acceptor_ = false;
 			pending_ = false;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
 
@@ -353,7 +496,7 @@ private:
 			return OnSetConfiguration(h, p, len, out, cap);
 
 		case Signal::GetConfiguration: {
-			if (acpSeid != kLocalSeid) {
+			if (acpSeid != localSeid_) {
 				return Reject(h, ErrorCode::BadAcpSeid, out, cap);
 			}
 			if (selectedIeLength_ == 0 || state_ < SessionState::Configured || state_ == SessionState::Failed) {
@@ -374,8 +517,8 @@ private:
 		}
 
 		case Signal::Open:
-			if (acpSeid != kLocalSeid || state_ != SessionState::Configured) {
-				return Reject(h, acpSeid != kLocalSeid ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
+			if (acpSeid != localSeid_ || state_ != SessionState::Configured) {
+				return Reject(h, acpSeid != localSeid_ ? ErrorCode::BadAcpSeid : ErrorCode::BadState, out, cap);
 			}
 			state_ = SessionState::Open;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
@@ -397,7 +540,9 @@ private:
 		if (len < 2) {
 			return Reject(h, ErrorCode::BadLength, out, cap);
 		}
-		if (static_cast<uint8_t>(p[0] >> 2) != kLocalSeid) {
+		const uint8_t acpSeid = static_cast<uint8_t>(p[0] >> 2);
+		const LocalSep* sep = FindLocalSep(acpSeid);
+		if (sep == nullptr) {
 			return Reject(h, ErrorCode::BadAcpSeid, out, cap);
 		}
 		if (state_ != SessionState::Idle && state_ != SessionState::Failed &&
@@ -410,19 +555,27 @@ private:
 		if (ie == nullptr) {
 			return Reject(h, ErrorCode::BadPayloadFormat, out, cap, ServiceCategory::MediaCodec);
 		}
-		if (codec != localCodec_) {
+		if (codec != sep->codec) {
 			return Reject(h, ErrorCode::NotSupportedCodecType, out, cap, ServiceCategory::MediaCodec);
 		}
-		if (ieLength != localIeLength_ || !IsSubsetOfLocal(ie, ieLength)) {
-			return Reject(h, ErrorCode::UnsupportedConfiguration, out, cap, ServiceCategory::MediaCodec);
+		if (sep->codec == CodecType::Sbc) {
+			if (!IsSubsetOfLocal(*sep, ie, ieLength)) {
+				return Reject(h, ErrorCode::UnsupportedConfiguration, out, cap, ServiceCategory::MediaCodec);
+			}
+		} else {
+			const uint8_t error = validator_ != nullptr ? validator_(selectorContext_, codec, ie, ieLength) : 0;
+			if (error != 0) {
+				return Reject(h, static_cast<ErrorCode>(error), out, cap, ServiceCategory::MediaCodec);
+			}
 		}
 
 		pending_ = false;
 		acceptor_ = true;
 		remoteSeid_ = static_cast<uint8_t>(p[1] >> 2);
+		localSeid_ = acpSeid;
 		selectedCodec_ = codec;
-		selectedIeLength_ = ieLength;
-		for (size_t i = 0; i < ieLength; ++i) {
+		selectedIeLength_ = ieLength <= kMaxCodecIe ? ieLength : kMaxCodecIe;
+		for (size_t i = 0; i < selectedIeLength_; ++i) {
 			selectedIe_[i] = ie[i];
 		}
 		state_ = SessionState::Configured;
@@ -431,14 +584,17 @@ private:
 
 	// SBC-style IE check: the bit fields must be offered locally; for SBC the
 	// bitpool range (bytes 2..3) must lie inside the local range.
-	bool IsSubsetOfLocal(const uint8_t* ie, size_t len) const noexcept
+	static bool IsSubsetOfLocal(const LocalSep& sep, const uint8_t* ie, size_t len) noexcept
 	{
-		if (localCodec_ == CodecType::Sbc && len == 4) {
-			return (ie[0] & ~localIe_[0]) == 0 && (ie[1] & ~localIe_[1]) == 0 &&
-				   ie[2] >= localIe_[2] && ie[3] <= localIe_[3] && ie[2] <= ie[3];
+		if (sep.codec == CodecType::Sbc && sep.ieLength == 4 && len == 4) {
+			return (ie[0] & ~sep.ie[0]) == 0 && (ie[1] & ~sep.ie[1]) == 0 &&
+				   ie[2] >= sep.ie[2] && ie[3] <= sep.ie[3] && ie[2] <= ie[3];
+		}
+		if (len != sep.ieLength) {
+			return false;
 		}
 		for (size_t i = 0; i < len; ++i) {
-			if ((ie[i] & ~localIe_[i]) != 0) {
+			if ((ie[i] & ~sep.ie[i]) != 0) {
 				return false;
 			}
 		}
@@ -447,24 +603,25 @@ private:
 
 	// Reject payload layout depends on the signal (AVDTP 8.x).
 	static size_t Reject(const SignalHeader& h, ErrorCode error, uint8_t* out, size_t cap,
-						 ServiceCategory category = static_cast<ServiceCategory>(0)) noexcept
+						 ServiceCategory category = static_cast<ServiceCategory>(0),
+						 uint8_t seid = kLocalSeid) noexcept
 	{
 		uint8_t payload[2];
 		size_t n = 0;
 		if (h.signal == Signal::SetConfiguration || h.signal == Signal::Reconfigure) {
 			payload[n++] = static_cast<uint8_t>(category);
 		} else if (h.signal == Signal::Start || h.signal == Signal::Suspend) {
-			payload[n++] = static_cast<uint8_t>(kLocalSeid << 2);
+			payload[n++] = static_cast<uint8_t>(seid << 2);
 		}
 		payload[n++] = static_cast<uint8_t>(error);
 		return Reply(h, MessageType::ResponseReject, payload, n, out, cap);
 	}
 
-	CodecType localCodec_;
-	uint8_t localIe_[kMaxCodecIe] = {};
-	size_t localIeLength_ = 0;
+	LocalSep localSeps_[kMaxLocalSeps] = {};
+	size_t localSepCount_ = 0;
 	ConfigSelector selector_;
 	void* selectorContext_;
+	ConfigValidator validator_;
 
 	SessionState state_ = SessionState::Idle;
 	uint8_t label_ = 0;
@@ -474,9 +631,12 @@ private:
 	SinkSep sinks_[kMaxSinkSeps] = {};
 	size_t sinkCount_ = 0;
 	size_t capsIndex_ = 0;
-	uint32_t bestScore_ = 0;
+	Candidate candidates_[kMaxSinkSeps] = {};
+	size_t candidateCount_ = 0;
+	size_t candidateIndex_ = 0;
 
 	uint8_t remoteSeid_ = 0;
+	uint8_t localSeid_ = 0;
 	CodecType selectedCodec_ = CodecType::Sbc;
 	uint8_t selectedIe_[kMaxCodecIe] = {};
 	size_t selectedIeLength_ = 0;

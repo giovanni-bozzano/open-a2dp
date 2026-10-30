@@ -13,11 +13,11 @@ Read this first in a new chat. It summarizes the project state; the authoritativ
 ## Status (2026-10-29)
 | Milestone | State |
 |---|---|
-| M1 codec library + tests | **Done** (commit 6fc217d; 44 tests pass) |
+| M1 codec library + tests | **Done** (commit 6fc217d; 51 tests pass) |
 | M2 driver skeleton + L2CAP | **Done** (signaling channel opens to a real headset in the VM) |
 | M3 AVDTP negotiation | **In progress** (SBC stream reaches Streaming with a real headset; BlueZ sink and sink-initiated configuration not yet validated) |
 | M4 ACX endpoint + rings | **Done** (Speaker0 endpoint; Windows audio plays through the headset) |
-| M5 encoder service + streaming | **In progress** (audible SBC, 30+ min stable; AAC selector and the driver side of the service boundary done; AAC SEP + `OpenA2dpSvc.exe` pending) |
+| M5 encoder service + streaming | **In progress** (audible SBC, 30+ min stable; AAC SEP + AAC/SBC fallback and the driver side of the service boundary done; `OpenA2dpSvc.exe` pending) |
 | M5b codec configuration | Not started |
 | M6 config UI + install/uninstall | Not started |
 | M7 system testing | Not started |
@@ -30,7 +30,7 @@ Read this first in a new chat. It summarizes the project state; the authoritativ
 - **Driver/service boundary (implemented in the driver, Action Log #66):** `common/include/OpenA2dp/Ioctl.h` holds the ABI (device interface GUID, six IOCTLs, shared-ring layout, frame record, status/event structs), [AAC-Service-Boundary.md](AAC-Service-Boundary.md) the lifecycle rules and `driver/Service.cpp` the driver side. The interface lives on a per-device control device (SYSTEM + Administrators) so the ACX device object keeps its default security and KS request path. One non-paged block per device holds the PCM ring (driver -> service) and the frame ring (service -> driver), mapped once into the service process; file cleanup clears the registration and unmaps, which is how a crashed service is detected. `WAIT_EVENT` is tick-driven by the media timer; the service owns pacing and the driver only adds RTP headers. The driver advertises/selects AAC only while the service is registered; otherwise it falls back to SBC.
 - **`common/`** is header-only and kernel-safe (no STL or exceptions): AVDTP/RTP/ring-buffer headers, the driver/service ABI (`Ioctl.h`) and codec selectors `SbcConfig.h`, `AacConfig.h`.
 - **`codecs/`** holds `IA2dpCodec`, the SBC encoder, AAC IE/negotiation and the Media Foundation/LATM encoder used by tests and the future service.
-- Negotiation priority is AAC > SBC. A forced codec can be set; if it isn't available, negotiation falls back to the normal order.
+- Negotiation priority is AAC > SBC. The source advertises SEID 1 (SBC) always and SEID 2 (AAC) only while a service is registered; the session keeps the scored candidates and retries SBC when the sink rejects the AAC configuration. A forced codec can be set; if it isn't available, negotiation falls back to the normal order.
 
 ## Environment
 - Visual Studio Community 2026 18.11.1 at `D:\Program Files\Microsoft Visual Studio\18\Community`, toolset v145, C++20, x64.
@@ -45,7 +45,7 @@ Use the **64-bit** MSBuild (the 32-bit one fails with TRK0005 `stampinf.exe` bec
 
 ```
 & "D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
-out\x64\Debug\CodecTests.exe          # 44 tests
+out\x64\Debug\CodecTests.exe          # 51 tests
 out\x64\Debug\CodecTests.exe Sbc_     # name-prefix filter
 ```
 
@@ -54,7 +54,7 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 ## Driver implementation notes
 - **`Driver.cpp`:** `EvtDeviceAdd` queries BTHENUM device info early for the Class of Device (endpoint type) and creates the ACX circuit; `OnPrepareHardware` retrieves the address/name again and sets `DEVPKEY_Device_FriendlyName` to `<name> [OpenA2DP]` (address if no name). Self-managed IO init registers the L2CAP server and opens the signaling channel. Suspend calls `MediaStop` first, then unregisters the server, flushes the disconnect work item and closes signaling.
 - **`L2cap.cpp`:** queries `BTH_PROFILE_DRIVER_INTERFACE` (v0x0200); opens PSM 0x19 asynchronously with a preallocated request and BRB; signaling MTU 672, media MTU 895. Registers a server for headset-initiated connections (accepts signaling through the shared open request, refuses other channels through a separate preallocated request). Media sends use a 1 s timeout so a stalled ACL transfer cannot block teardown while holding `MediaLock`/`SessionLock`.
-- **`Signaling.cpp`:** L2CAP ACL read loop, PASSIVE work item under `SessionLock`, 3 s WDF response timer, SBC selector. Drives `Avdtp::SourceSession` through DISCOVER, GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START/SUSPEND/CLOSE; opens the media channel and sends START; requests SUSPEND after a media send failure.
+- **`Signaling.cpp`:** L2CAP ACL read loop, PASSIVE work item under `SessionLock`, 3 s WDF response timer, SBC/AAC selector (SBC 1, AAC 2; AAC only while a service is registered) and `AacConfig::Validate` for sink-proposed AAC. Drives `Avdtp::SourceSession` through DISCOVER, GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START/SUSPEND/CLOSE; retries SBC if the sink rejects AAC; opens the media channel and sends START; requests SUSPEND after a media send failure.
 - **`Media.cpp`:** 10 ms timer plus work item while Streaming. SBC: reads endpoint PCM, encodes in the kernel, builds RTP packets within the media MTU, 60 ms preroll. AAC: drains the frame ring (one record = one RTP packet, timestamp from the record's `samples`), completes `WAIT_EVENT` every tick, counts an underrun after 200 ms and stops/SUSPENDs after 2 s or on a corrupt record. Stops/requests SUSPEND on send failure in both modes.
 - **`Service.cpp`:** per-device control device with the service SDDL and its own sequential queue; `REGISTER_ENCODER`/`MAP_RINGS`/`WAIT_EVENT`/`GET_STATUS`/`SET_PREFERENCE`/`GET_VERSION`; one non-paged block with both rings mapped once per handle (process referenced so teardown can attach and unmap in the right context); `WAIT_EVENT` parks one request and is completed by stream events or the media tick, with the cancel race handled.
 - **`Audio.cpp`:** ACX 1.1 render circuit `Speaker0`, fixed 44.1 kHz/16-bit/stereo; accepts 1 or 2 RT packets; reports a 128-byte FIFO to the audio engine; RT buffer is page-rounded and zeroed. Endpoint category comes from the headset Class of Device: headset/hands-free/headphones -> `KSNODETYPE_HEADPHONES`, otherwise `KSNODETYPE_SPEAKER`. No ACX volume/mute elements: Windows already applies volume and mute in software (revisit only with AVRCP absolute volume).
@@ -71,6 +71,7 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 ## Key decisions and lessons
 - **Hybrid encoding decided (Action Log #48):** kernel SBC, user-mode AAC only.
 - **Service boundary (Action Log #65/#66):** SPSC rings in one driver-allocated non-paged block, mapped once into the service process; one LATM frame per RTP packet; the service owns AAC pacing; registration is cleared by file cleanup so a crashed service cannot wedge the driver; `WAIT_EVENT` is ticked by the media timer instead of polling or sharing an event handle. A frame record's `size` is exact (no padding) so the payload length is unambiguous, and only the frame ring is flushed by the driver because the service owns the PCM consumer index.
+- **Multi-SEP negotiation (Action Log #67):** SEID 1 is SBC and always present; SEID 2 is AAC and only advertised while the service is registered. The session scores every sink SEP, keeps the candidates in descending order, and on a rejected SET_CONFIGURATION configures the next one, so an AAC-capable sink that refuses AAC still gets SBC without a reconnect.
 - **SBC reference-decoder fix:** synthesis is a direct cosine-modulated filterbank over a 10-block history; synthesis gain is `-M`; measured delay is 73 samples for 8 subbands and 37 for 4; filterbank-limited SNR is about 65–67 dB.
 - **SBC round-trip SNR thresholds** were lowered for the noisy test signal (joint stereo 25 dB, stereo 48 kHz 17 dB, mono 18 dB, dual channel 20 dB, identical L/R 30 dB). They are sanity checks, not quality targets.
 - **ACX gotchas:** report a small FIFO (128 bytes, not the 64 KiB ring) or the audio engine rejects the stream; accept 1 or 2 RT packets; page-round and zero the RT buffer; the DEFAULT mode format list is not needed; stale endpoint form factor/name comes from the Windows endpoint cache and is fixed by reinstalling the device.
@@ -79,17 +80,16 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 
 ## Open validation gaps
 - BlueZ/PipeWire sink and the sink-initiated acceptor path (deferred D3; no Linux Bluetooth host).
-- AAC service, AAC SEP registration/fallback, LATM framing against real captures.
+- AAC service: LATM framing against real captures, and AAC SEP registration/fallback validated end-to-end on a real sink.
 - End-to-end latency, pause/resume, switching the default output away from and back to Speaker0 (deferred D1).
 - Send-failure path: headset out of range or adapter removed while streaming; confirm SUSPEND and no hang (deferred D2).
 - SBC decode with an external decoder (ffmpeg / BlueZ `sbcdec`).
 - M5b codec settings store and UI, clean install/uninstall, system testing, release signing.
 
 ## Next steps (in order)
-1. M5: AAC SEP registration in `AvdtpSource.h` (SEID 1 SBC always, SEID 2 AAC only while the service is registered) and the AAC branch of `SelectConfig`, policy AAC > SBC with one SBC retry when the sink rejects the AAC configuration.
-2. M5: `OpenA2dpSvc.exe`: Media Foundation AAC-LC encoder + `LatmWriter`, PCM/frame ring I/O from `SharedRings`, `WAIT_EVENT` loop with a 500 ms timeout; user-mode tests for the frame-record reader.
-3. M5b: codec settings store (per-headset registry values plus global defaults), read at negotiation time.
-4. M5b: preference-aware `SbcConfig`/`AacConfig` selection and presets, checked against media MTU; unit tests.
-5. M5b: GET/SET_CODEC_CONFIG and GET_STATUS IOCTLs; desktop configuration UI; apply via SUSPEND + RECONFIGURE + START or reconnect.
-6. M5b: multi-rate ACX endpoint (44.1/48 kHz, mono if selected), last because it touches the validated audio path.
-7. M6: finish the configuration UI (status, force codec) and clean install/uninstall that restores `BthA2dp.sys`.
+1. M5: `OpenA2dpSvc.exe`: Media Foundation AAC-LC encoder + `LatmWriter`, PCM/frame ring I/O from `SharedRings`, `WAIT_EVENT` loop with a 500 ms timeout; user-mode tests for the frame-record reader.
+2. M5b: codec settings store (per-headset registry values plus global defaults), read at negotiation time.
+3. M5b: preference-aware `SbcConfig`/`AacConfig` selection and presets, checked against media MTU; unit tests.
+4. M5b: GET/SET_CODEC_CONFIG and GET_STATUS IOCTLs; desktop configuration UI; apply via SUSPEND + RECONFIGURE + START or reconnect.
+5. M5b: multi-rate ACX endpoint (44.1/48 kHz, mono if selected), last because it touches the validated audio path.
+6. M6: finish the configuration UI (status, force codec) and clean install/uninstall that restores `BthA2dp.sys`.
