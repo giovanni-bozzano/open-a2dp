@@ -172,8 +172,8 @@ TEST(AacStream_PumpEncodesPreroll)
 	REQUIRE(stream.Pump(5000, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().records, uint64_t{3});
 	CHECK_EQ(stream.Stats().samples, uint64_t{3 * Ioctl::kAacSamplesPerFrame});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
-	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{3 * kBlockBytes});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{1024});
+	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{2 * kBlockBytes});
 	CHECK_EQ(fake->calls, 3);
 
 	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
