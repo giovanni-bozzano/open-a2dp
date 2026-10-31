@@ -398,8 +398,14 @@ void SignalingOnChannelOpen(_In_ DEVICE_CONTEXT* ctx)
 
 void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 {
+	LARGE_INTEGER timeout;
+	timeout.QuadPart = -50000000LL; // 5 s
+
 	WdfRequestCancelSentRequest(ctx->ReadRequest);
-	KeWaitForSingleObject(&ctx->ReadIdle, Executive, KernelMode, FALSE, nullptr);
+	if (KeWaitForSingleObject(&ctx->ReadIdle, Executive, KernelMode, FALSE, &timeout) != STATUS_SUCCESS)
+	{
+		OA2DP_LOG("signaling stop: read did not complete within 5 s");
+	}
 	WdfTimerStop(ctx->ResponseTimer, TRUE);
 	if (!ctx->InSignalingWorkItem)
 	{
@@ -407,5 +413,9 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 	}
 	// A read may have been resubmitted by the work item before it saw the state change.
 	WdfRequestCancelSentRequest(ctx->ReadRequest);
-	KeWaitForSingleObject(&ctx->ReadIdle, Executive, KernelMode, FALSE, nullptr);
+	timeout.QuadPart = -50000000LL;
+	if (KeWaitForSingleObject(&ctx->ReadIdle, Executive, KernelMode, FALSE, &timeout) != STATUS_SUCCESS)
+	{
+		OA2DP_LOG("signaling stop: read did not complete within 5 s (2nd)");
+	}
 }
