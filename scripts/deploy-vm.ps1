@@ -237,6 +237,28 @@ $ErrorActionPreference = 'Stop'
 $log = 'C:\OpenA2dp\install.log'
 Start-Transcript -Path $log -Force -ErrorAction SilentlyContinue | Out-Null
 $exitCode = 0
+
+# Unloads and reloads the driver for one device so a staged update becomes active.
+# /restart-device is refused on some builds while a package update is pending
+# ("Device is pending system reboot"); disable/enable goes through PnP instead.
+function Restart-DriverDevice([string]$InstanceId) {
+    # Diagnostics go to Write-Host: anything written to the output stream would be
+    # captured by the caller's `if (-not (...))` and hide the return value.
+    Write-Host "Restarting $InstanceId"
+    try {
+        pnputil.exe /restart-device $InstanceId | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $true }
+        Write-Host "restart-device exit=$LASTEXITCODE; falling back to disable/enable."
+        Disable-PnpDevice -InstanceId $InstanceId -Confirm:$false -ErrorAction Stop
+        Start-Sleep -Seconds 2
+        Enable-PnpDevice -InstanceId $InstanceId -Confirm:$false -ErrorAction Stop
+        return $true
+    } catch {
+        Write-Host "restart failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 try {
     Set-Location 'C:\OpenA2dp'
 
@@ -249,53 +271,90 @@ try {
     pnputil.exe /add-driver OpenA2dp.inf /install
     $pnputilExit = $LASTEXITCODE
     "pnputil exit=$pnputilExit"
-    if ($pnputilExit -ne 0 -and $pnputilExit -ne 3010) { throw "pnputil failed ($pnputilExit)" }
+    # 259 (ERROR_NO_MORE_ITEMS) means the package is already installed and up to
+    # date, which is a normal redeploy, not a failure.
+    if ($pnputilExit -ne 0 -and $pnputilExit -ne 3010 -and $pnputilExit -ne 259) { throw "pnputil failed ($pnputilExit)" }
+    $alreadyCurrent = ($pnputilExit -eq 259)
 
-    if ($pnputilExit -eq 3010) {
-        'Reboot required to complete the driver installation.'
-        $exitCode = 3010
+    # 3010 means the package was staged, not that the update failed: the new image
+    # only becomes active once the device is restarted. Try that before asking for
+    # a reboot, which is the expensive path on a test VM.
+    $devices = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Service -eq 'OpenA2dp' })
+    if ($devices.Count -eq 0) {
+        'No present OpenA2dp device found; the package is installed but not bound.'
+        if ($pnputilExit -eq 3010) {
+            'Reboot required to complete the driver installation.'
+            $exitCode = 3010
+        }
     } else {
-        $devices = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Service -eq 'OpenA2dp' })
-        if ($devices.Count -eq 0) {
-            'No present OpenA2dp device found; the package is installed but not bound.'
+        $activated = ($pnputilExit -eq 0 -or $alreadyCurrent)
+        if ($NoRestart) {
+            'Skipping device restart (-NoRestart).'
         } else {
-            if (-not $NoRestart) {
-                foreach ($device in $devices) {
-                    "Restarting $($device.InstanceId)"
-                    pnputil.exe /restart-device $device.InstanceId
-                    $restartExit = $LASTEXITCODE
-                    if ($restartExit -ne 0 -and $restartExit -ne 3010) { throw "restart-device failed ($restartExit)" }
-                }
-
-                $deadline = (Get-Date).AddSeconds(60)
-                do {
-                    Start-Sleep -Seconds 2
-                    $devices = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Service -eq 'OpenA2dp' })
-                    $notOk = @($devices | Where-Object { $_.Status -ne 'OK' })
-                } while ($notOk.Count -gt 0 -and (Get-Date) -lt $deadline)
-                if ($notOk.Count -gt 0) { throw "Device not OK after restart: $($notOk.InstanceId -join ', ')" }
-            } else {
-                'Skipping device restart (-NoRestart).'
+            $activated = $true
+            foreach ($device in $devices) {
+                if (-not (Restart-DriverDevice $device.InstanceId)) { $activated = $false }
             }
 
-            if ($devices.Count -gt 0) {
-                $driverVersion = (Get-PnpDeviceProperty -InstanceId $devices[0].InstanceId -KeyName 'DEVPKEY_Device_DriverVersion' -ErrorAction SilentlyContinue).Data
-                if ($driverVersion) { "driver version: $driverVersion" }
+            $deadline = (Get-Date).AddSeconds(60)
+            do {
+                Start-Sleep -Seconds 2
+                $devices = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Service -eq 'OpenA2dp' })
+                $notOk = @($devices | Where-Object { $_.Status -ne 'OK' })
+            } while ($notOk.Count -gt 0 -and (Get-Date) -lt $deadline)
+            if ($notOk.Count -gt 0) { throw "Device not OK after restart: $($notOk.InstanceId -join ', ')" }
+            if ($devices.Count -eq 0) {
+                'warning: no OpenA2dp device is present after the restart; the headset may need to reconnect.'
             }
         }
 
-        $source = 'C:\OpenA2dp\OpenA2dp.sys'
-        $installed = 'C:\Windows\System32\drivers\OpenA2dp.sys'
-        if (Test-Path $installed) {
-            $sourceHash = (Get-FileHash $source -Algorithm SHA256).Hash
-            $installedHash = (Get-FileHash $installed -Algorithm SHA256).Hash
-            "binary hash: source=$sourceHash installed=$installedHash"
-            if ($sourceHash -ne $installedHash) { throw 'Installed driver binary does not match the deployed package.' }
-        } else {
-            "warning: $installed not found; binary verification skipped."
+        # Verify what the device is actually bound to. The published INF (oemNN.inf)
+        # is a copy of the package INF, and its DriverVer identifies the DriverStore
+        # folder the device loads from. System32\drivers only exists for old-style
+        # installs, so the previous check silently skipped verification.
+        function Get-InfDriverVer([string]$Path) {
+            if (-not (Test-Path $Path)) { return $null }
+            $line = Select-String -Path $Path -Pattern '^\s*DriverVer\s*=' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $line) { return $null }
+            return ($line.Line -replace '^\s*DriverVer\s*=\s*', '').Trim()
         }
 
-        'Install completed successfully.'
+        $infPath = $null
+        if ($devices.Count -gt 0) {
+            $infPath = (Get-PnpDeviceProperty -InstanceId $devices[0].InstanceId -KeyName 'DEVPKEY_Device_DriverInfPath' -ErrorAction SilentlyContinue).Data
+        }
+
+        $sourceHash = (Get-FileHash 'C:\OpenA2dp\OpenA2dp.sys' -Algorithm SHA256).Hash
+        $sourceVer = Get-InfDriverVer 'C:\OpenA2dp\OpenA2dp.inf'
+        $boundVer = $null
+        if ($infPath) { $boundVer = Get-InfDriverVer "C:\Windows\INF\$infPath" }
+        "driver version: bound=$boundVer package=$sourceVer"
+        if ($boundVer -and $sourceVer -and $boundVer -ne $sourceVer) {
+            throw "The device is bound to a different driver version ($boundVer) than the deployed package ($sourceVer)."
+        }
+
+        $bound = $null
+        if ($boundVer) {
+            $bound = Get-ChildItem 'C:\Windows\System32\DriverStore\FileRepository' -Directory -Filter 'opena2dp.inf_*' -ErrorAction SilentlyContinue |
+                Where-Object { (Get-InfDriverVer (Join-Path $_.FullName 'opena2dp.inf')) -eq $boundVer } |
+                Select-Object -First 1
+        }
+        if ($bound) {
+            $installedHash = (Get-FileHash (Join-Path $bound.FullName 'OpenA2dp.sys') -Algorithm SHA256).Hash
+            "binary hash: package=$sourceHash bound=$installedHash ($($bound.Name))"
+            if ($sourceHash -ne $installedHash) { throw 'Bound driver binary does not match the deployed package.' }
+        } else {
+            "warning: could not resolve the DriverStore folder for '$infPath'; binary verification skipped."
+        }
+
+        # Activation is the only thing that makes a staged update real: if the device
+        # could not be restarted, a reboot is required no matter what pnputil said.
+        if (-not $activated) {
+            'Reboot required to complete the driver installation.'
+            $exitCode = 3010
+        } else {
+            'Install completed successfully.'
+        }
     }
 } catch {
     "ERROR: $($_.Exception.Message)"
@@ -357,8 +416,15 @@ while ($true) {
 		continue
 	}
 
+	if ($installExit -eq 3010) {
+		throw "The driver package was staged but the running driver could not be restarted, so the guest is still on the previous image. Reboot the guest to activate it (or rerun without -NoReboot). See $logPath."
+	}
 	throw "Guest installation failed (exit $installExit); see $logPath."
 }
 
-Write-Host "`nDeployment complete. The package is installed and the device was restarted and verified when present."
+if ($NoRestart) {
+	Write-Host "`nDeployment complete. The package is installed; the device was not restarted (-NoRestart)."
+} else {
+	Write-Host "`nDeployment complete. The package is installed and the device was restarted and verified when present."
+}
 Write-Host 'CLI: C:\OpenA2dp\OpenA2dpCtl.exe (run it elevated in the guest; "OpenA2dpCtl help" for usage).'
