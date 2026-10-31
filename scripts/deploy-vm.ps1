@@ -177,6 +177,10 @@ $ctl = Join-Path $root "out\x64\$Configuration\OpenA2dpCtl.exe"
 if (-not (Test-Path $ctl)) {
 	throw "OpenA2dpCtl.exe not found: $ctl; build first."
 }
+$svc = Join-Path $root "out\x64\$Configuration\OpenA2dpSvc.exe"
+if (-not (Test-Path $svc)) {
+	throw "OpenA2dpSvc.exe not found: $svc; build first."
+}
 $driverVer = (Select-String -Path (Join-Path $package 'OpenA2dp.inf') -Pattern '^DriverVer\s*=' | Select-Object -First 1).Line
 Write-Host "Package: $package"
 if ($driverVer) {
@@ -221,10 +225,17 @@ Wait-VmRunning -Running $true
 Write-Host 'Waiting for VMware Tools...'
 Wait-VmTools
 
+# The encoder service keeps its own binary open; stop it before replacing the
+# file. A non-zero exit is expected on the first deploy (service not installed).
+& $vmrun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\sc.exe' 'stop' 'OpenA2dpSvc' 2>&1 | Out-Null
+# Also clear an instance started by hand for debugging (svc-stdout.txt runs).
+& $vmrun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\taskkill.exe' '/F' '/IM' 'OpenA2dpSvc.exe' 2>&1 | Out-Null
+Start-Sleep -Seconds 3
+
 # createDirectoryInGuest fails harmlessly when the directory already exists.
 & $vmrun @auth createDirectoryInGuest $config.vmx 'C:\OpenA2dp' 2>&1 | Out-Null
 
-foreach ($file in (Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) + (Get-Item $cer) + (Get-Item $ctl)) {
+foreach ($file in (Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) + (Get-Item $cer) + (Get-Item $ctl) + (Get-Item $svc)) {
 	Write-Host "Copying $($file.Name)"
 	Invoke-VmRun "Copying $($file.Name)" ($auth + @('CopyFileFromHostToGuest', $config.vmx, $file.FullName, "C:\OpenA2dp\$($file.Name)"))
 }
@@ -262,14 +273,25 @@ function Restart-DriverDevice([string]$InstanceId) {
 try {
     Set-Location 'C:\OpenA2dp'
 
+    # The host prints "Installing certificate and driver package..." before this
+    # script starts, so a slow run needs phase timings to be diagnosable at all.
+    $scriptStart = Get-Date
+    function Step([string]$Name) {
+        Write-Host ("{0:HH:mm:ss.fff} +{1,6:N1}s {2}" -f (Get-Date), ((Get-Date) - $scriptStart).TotalSeconds, $Name)
+    }
+    Step 'start'
+
     certutil.exe -f -addstore Root OpenA2dpTest.cer
     if ($LASTEXITCODE -ne 0) { throw "certutil Root failed ($LASTEXITCODE)" }
+    Step 'root certificate trusted'
 
     certutil.exe -f -addstore TrustedPublisher OpenA2dpTest.cer
     if ($LASTEXITCODE -ne 0) { throw "certutil TrustedPublisher failed ($LASTEXITCODE)" }
+    Step 'publisher certificate trusted'
 
     pnputil.exe /add-driver OpenA2dp.inf /install
     $pnputilExit = $LASTEXITCODE
+    Step "pnputil finished (exit $pnputilExit)"
     "pnputil exit=$pnputilExit"
     # 259 (ERROR_NO_MORE_ITEMS) means the package is already installed and up to
     # date, which is a normal redeploy, not a failure.
@@ -295,6 +317,7 @@ try {
             foreach ($device in $devices) {
                 if (-not (Restart-DriverDevice $device.InstanceId)) { $activated = $false }
             }
+            Step 'device restart issued'
 
             $deadline = (Get-Date).AddSeconds(60)
             do {
@@ -303,6 +326,7 @@ try {
                 $notOk = @($devices | Where-Object { $_.Status -ne 'OK' })
             } while ($notOk.Count -gt 0 -and (Get-Date) -lt $deadline)
             if ($notOk.Count -gt 0) { throw "Device not OK after restart: $($notOk.InstanceId -join ', ')" }
+            Step 'device is OK'
             if ($devices.Count -eq 0) {
                 'warning: no OpenA2dp device is present after the restart; the headset may need to reconnect.'
             }
@@ -346,6 +370,34 @@ try {
         } else {
             "warning: could not resolve the DriverStore folder for '$infPath'; binary verification skipped."
         }
+        Step 'binding verified'
+
+        # Install or refresh the encoder service. It runs as LocalSystem (the control
+        # device grants access to SYSTEM and Administrators only) and must be
+        # registered before a headset connects: AAC is offered per negotiation.
+        $svcExe = 'C:\OpenA2dp\OpenA2dpSvc.exe'
+        if (Test-Path $svcExe) {
+            & sc.exe query OpenA2dpSvc > $null 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                'installing OpenA2dpSvc'
+                & sc.exe create OpenA2dpSvc binPath= $svcExe start= auto DisplayName= 'OpenA2dp AAC encoder' > $null
+                if ($LASTEXITCODE -ne 0) { throw "sc create failed ($LASTEXITCODE)" }
+            }
+            & sc.exe config OpenA2dpSvc binPath= $svcExe start= auto > $null
+            if ($LASTEXITCODE -ne 0) { throw "sc config failed ($LASTEXITCODE)" }
+            & sc.exe description OpenA2dpSvc 'AAC-LC encoder for the OpenA2dp A2DP source driver.' > $null
+            # Restart on failure: 5 s, then 5 s, then 5 s, counter reset daily.
+            & sc.exe failure OpenA2dpSvc reset= 86400 actions= restart/5000/restart/5000/restart/5000 > $null
+            & sc.exe stop OpenA2dpSvc > $null 2>&1
+            Start-Sleep -Seconds 2
+            & sc.exe start OpenA2dpSvc > $null
+            $svcExit = $LASTEXITCODE
+            if ($svcExit -ne 0 -and $svcExit -ne 1056) { throw "sc start failed ($svcExit)" }
+            (& sc.exe query OpenA2dpSvc | Select-String 'STATE' | Select-Object -First 1).Line.Trim()
+            Step 'service started'
+        } else {
+            'warning: OpenA2dpSvc.exe is not in C:\OpenA2dp; the encoder service was not installed.'
+        }
 
         # Activation is the only thing that makes a staged update real: if the device
         # could not be restarted, a reboot is required no matter what pnputil said.
@@ -354,6 +406,7 @@ try {
             $exitCode = 3010
         } else {
             'Install completed successfully.'
+            Step 'done'
         }
     }
 } catch {
@@ -387,8 +440,10 @@ $rebooted = $false
 while ($true) {
 	Write-Host 'Installing certificate and driver package...'
 	$installArgs = $auth + @('runProgramInGuest', $config.vmx, 'C:\Windows\System32\cmd.exe', '/c C:\OpenA2dp\install.cmd')
+	$installStart = Get-Date
 	& $vmrun @installArgs
 	$installExit = $LASTEXITCODE
+	Write-Host ("guest installer returned $installExit after {0:N1}s" -f ((Get-Date) - $installStart).TotalSeconds)
 
 	try {
 		Invoke-VmRun 'Copying the install log' ($auth + @('CopyFileFromGuestToHost', $config.vmx, 'C:\OpenA2dp\install.log', $logPath))

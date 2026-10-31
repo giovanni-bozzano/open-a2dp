@@ -11,6 +11,10 @@ namespace
 
 constexpr LONGLONG ResponseTimeoutMs = 3000;
 constexpr uint8_t SbcMaxBitpool = 53;
+// Bounded wait for a service that is installed but has not attached yet. The
+// service polls for the control device every 250 ms.
+constexpr unsigned kConnectWaitSteps = 8;
+constexpr LONGLONG kConnectWaitMs = 100;
 
 EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;
@@ -23,6 +27,11 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 {
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
 	const bool forceCodec = (ctx->Preference.flags & Ioctl::kPreferenceForceCodec) != 0;
+
+	// Which codecs the sink actually advertises is otherwise invisible in the log,
+	// and "AAC never wins" looks the same whether the sink lacks it or we skipped it.
+	OA2DP_LOG("AVDTP sink offers codec %u (%u IE bytes)", static_cast<unsigned>(codec),
+		static_cast<unsigned>(remoteIeLength));
 
 	if (codec == Avdtp::CodecType::Sbc)
 	{
@@ -131,9 +140,47 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 					InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
 				}
 			}
-			else if (NT_SUCCESS(L2capOpenMediaChannel(ctx)))
+			else
 			{
-				Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+				// The sink sometimes refuses the first media channel (L2CAP response 4,
+				// "no resources") because a previous session has not fully released it.
+				// Retry a few times before giving up; the sink usually frees the channel
+				// within a couple of hundred milliseconds.
+				NTSTATUS mediaStatus = STATUS_UNSUCCESSFUL;
+				for (int attempt = 0; attempt < 3; ++attempt)
+				{
+					if (attempt != 0)
+					{
+						LARGE_INTEGER delay;
+						delay.QuadPart = -10000LL * 200;
+						WdfWaitLockRelease(ctx->SessionLock);
+						KeDelayExecutionThread(KernelMode, FALSE, &delay);
+						WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+						// The channel may have closed while we waited.
+						if (ctx->SignalingState != ChannelOpen)
+						{
+							return;
+						}
+					}
+					mediaStatus = L2capOpenMediaChannel(ctx);
+					if (NT_SUCCESS(mediaStatus))
+					{
+						break;
+					}
+					OA2DP_LOG("media channel open attempt %d failed 0x%08X", attempt + 1, mediaStatus);
+				}
+				if (NT_SUCCESS(mediaStatus))
+				{
+					Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+				}
+				else
+				{
+					OA2DP_LOG("media channel open failed after retries; tearing down the signaling channel");
+					// Tear the session down so the sink releases its resources and can
+					// be reconnected cleanly instead of leaving a half-open AVDTP
+					// session that never reaches Streaming.
+					L2capCloseSignalingChannel(ctx);
+				}
 			}
 		}
 		else if (state == Avdtp::SessionState::Streaming)
@@ -225,9 +272,37 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{
-		ResetSession(ctx);
-		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-		SubmitRead(ctx);
+		// The control device appears when the headset connects and the encoder service
+		// polls for it every 250 ms, so the service normally registers after discovery
+		// has already run and AAC is lost for the whole connection. Wait for it briefly,
+		// but only when the service is installed: a machine without it must connect
+		// exactly as fast as before. The wait is bounded and the channel can close
+		// underneath us, so re-check both after every step.
+		if (!ServiceRegistered(ctx) && ServiceInstalled())
+		{
+			OA2DP_LOG("signaling: waiting up to %u ms for the encoder service", kConnectWaitSteps * kConnectWaitMs);
+			for (unsigned step = 0; step < kConnectWaitSteps; ++step)
+			{
+				WdfWaitLockRelease(ctx->SessionLock);
+				LARGE_INTEGER interval;
+				interval.QuadPart = -10000LL * kConnectWaitMs;
+				KeDelayExecutionThread(KernelMode, FALSE, &interval);
+				WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+				if (ServiceRegistered(ctx) || ctx->SignalingState != ChannelOpen)
+				{
+					break;
+				}
+			}
+			OA2DP_LOG("signaling: service %s after the wait",
+				ServiceRegistered(ctx) ? "registered" : "absent");
+		}
+
+		if (ctx->SignalingState == ChannelOpen)
+		{
+			ResetSession(ctx);
+			Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+			SubmitRead(ctx);
+		}
 	}
 
 	if (InterlockedExchange(&ctx->ReadCompleted, 0) != 0)

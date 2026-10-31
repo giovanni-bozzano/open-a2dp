@@ -748,6 +748,24 @@ bool ServiceRegistered(_In_ DEVICE_CONTEXT* ctx)
 	return InterlockedCompareExchange(&ctx->EncoderRegistered, 0, 0) != 0;
 }
 
+bool ServiceInstalled()
+{
+	UNICODE_STRING name;
+	RtlInitUnicodeString(&name, L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\OpenA2dpSvc");
+
+	OBJECT_ATTRIBUTES attributes;
+	InitializeObjectAttributes(&attributes, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
+
+	HANDLE key = nullptr;
+	const NTSTATUS status = ZwOpenKey(&key, KEY_READ, &attributes);
+	if (!NT_SUCCESS(status))
+	{
+		return false;
+	}
+	ZwClose(key);
+	return true;
+}
+
 void ServiceStreamStart(_In_ DEVICE_CONTEXT* ctx)
 {
 	KIRQL irql;
