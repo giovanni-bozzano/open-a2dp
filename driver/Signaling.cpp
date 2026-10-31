@@ -159,6 +159,8 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 						// The channel may have closed while we waited.
 						if (ctx->SignalingState != ChannelOpen)
 						{
+							WdfWaitLockRelease(ctx->SessionLock);
+							ctx->InSignalingWorkItem = FALSE;
 							return;
 						}
 					}
@@ -268,6 +270,7 @@ void OnResponseTimeout(_In_ WDFTIMER timer)
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	ctx->InSignalingWorkItem = TRUE;
 	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
 
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
@@ -331,8 +334,8 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	}
 
 	WdfWaitLockRelease(ctx->SessionLock);
+	ctx->InSignalingWorkItem = FALSE;
 }
-
 } // namespace
 
 NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
@@ -398,7 +401,10 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 	WdfRequestCancelSentRequest(ctx->ReadRequest);
 	KeWaitForSingleObject(&ctx->ReadIdle, Executive, KernelMode, FALSE, nullptr);
 	WdfTimerStop(ctx->ResponseTimer, TRUE);
-	WdfWorkItemFlush(ctx->SignalingWorkItem);
+	if (!ctx->InSignalingWorkItem)
+	{
+		WdfWorkItemFlush(ctx->SignalingWorkItem);
+	}
 	// A read may have been resubmitted by the work item before it saw the state change.
 	WdfRequestCancelSentRequest(ctx->ReadRequest);
 	KeWaitForSingleObject(&ctx->ReadIdle, Executive, KernelMode, FALSE, nullptr);

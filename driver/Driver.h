@@ -98,6 +98,10 @@ struct DEVICE_CONTEXT
 	volatile LONG ReadCompleted;
 	volatile LONG TimeoutPending;
 	volatile LONG SuspendPending;
+	// Set while OnSignalingWorkItem is on the stack, so SignalingStop (called
+	// from within it via the media-open failure path) does not WdfWorkItemFlush
+	// its own work item and deadlock.
+	BOOLEAN InSignalingWorkItem;
 
 	// Media transport channel, opened from the signaling work item.
 	L2CAP_CHANNEL_HANDLE MediaChannel;
