@@ -380,10 +380,10 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 		WdfRequestCancelSentRequest(ctx->OpenRequest);
 	}
 	LARGE_INTEGER openTimeout;
-	openTimeout.QuadPart = -50000000LL;
+	openTimeout.QuadPart = -10000000LL;
 	if (KeWaitForSingleObject(&ctx->OpenIdle, Executive, KernelMode, FALSE, &openTimeout) != STATUS_SUCCESS)
 	{
-		OA2DP_LOG("close signaling: open did not complete within 5 s");
+		OA2DP_LOG("close signaling: open did not complete within 1 s");
 	}
 	if (InterlockedCompareExchange(&ctx->SignalingState, ChannelClosing, ChannelOpen) != ChannelOpen)
 	{
