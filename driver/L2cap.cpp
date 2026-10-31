@@ -7,8 +7,13 @@ NTSTATUS SubmitBrbSynchronously(_In_ DEVICE_CONTEXT* ctx, _Inout_ PBRB brb, _In_
 {
 	WDF_MEMORY_DESCRIPTOR desc;
 	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&desc, brb, size);
+
+	WDF_REQUEST_SEND_OPTIONS options;
+	WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+	WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_MS(5000));
+
 	return WdfIoTargetSendInternalIoctlOthersSynchronously(
-		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTH_SUBMIT_BRB, &desc, nullptr, nullptr, nullptr, nullptr);
+		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTH_SUBMIT_BRB, &desc, nullptr, nullptr, &options, nullptr);
 }
 
 void OnIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication, _In_ PINDICATION_PARAMETERS parameters)

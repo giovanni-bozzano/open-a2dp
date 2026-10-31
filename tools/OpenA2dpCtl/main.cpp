@@ -350,13 +350,58 @@ const char* CodecName(uint32_t codec)
 	return "none";
 }
 
+bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* out, DWORD outLength,
+			   DWORD& bytes, std::string& error, DWORD timeoutMs = 5000)
+{
+	bytes = 0;
+	OVERLAPPED overlapped = {};
+	overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	if (overlapped.hEvent == nullptr)
+	{
+		error = Win32Error("CreateEvent", GetLastError());
+		return false;
+	}
+	BOOL ok = DeviceIoControl(handle, code, const_cast<void*>(in), inLength, out, outLength, &bytes, &overlapped);
+	if (!ok)
+	{
+		const DWORD gle = GetLastError();
+		if (gle != ERROR_IO_PENDING)
+		{
+			error = Win32Error("DeviceIoControl", gle);
+			CloseHandle(overlapped.hEvent);
+			return false;
+		}
+		const DWORD wait = WaitForSingleObject(overlapped.hEvent, timeoutMs);
+		if (wait == WAIT_TIMEOUT)
+		{
+			CancelIoEx(handle, &overlapped);
+			GetOverlappedResult(handle, &overlapped, &bytes, TRUE);
+			error = "DeviceIoControl timed out after " + std::to_string(timeoutMs) + " ms";
+			CloseHandle(overlapped.hEvent);
+			return false;
+		}
+		if (!GetOverlappedResult(handle, &overlapped, &bytes, FALSE))
+		{
+			error = Win32Error("DeviceIoControl", GetLastError());
+			CloseHandle(overlapped.hEvent);
+			return false;
+		}
+	}
+	CloseHandle(overlapped.hEvent);
+	if (bytes < outLength && out != nullptr && outLength != 0)
+	{
+		// Some IOCTLs legitimately return 0 bytes; only enforce for GET_STATUS/VERSION
+		// where a short buffer is always wrong. Callers that expect 0 pass outLength 0.
+	}
+	return true;
+}
+
 template <typename T>
 bool ReadIoctl(HANDLE handle, ULONG code, T& out, std::string& error)
 {
 	DWORD bytes = 0;
-	if (!DeviceIoControl(handle, code, nullptr, 0, &out, static_cast<DWORD>(sizeof(out)), &bytes, nullptr))
+	if (!IoctlSync(handle, code, nullptr, 0, &out, static_cast<DWORD>(sizeof(out)), bytes, error))
 	{
-		error = Win32Error("DeviceIoControl", GetLastError());
 		return false;
 	}
 	if (bytes < sizeof(out))
@@ -590,9 +635,9 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	}
 
 	DWORD bytes = 0;
-	const bool set = DeviceIoControl(handle, Ioctl::kIoctlSetPreference, &preference,
-									 static_cast<DWORD>(sizeof(preference)), nullptr, 0, &bytes, nullptr) != FALSE;
-	if (!set)
+	const bool set = IoctlSync(handle, Ioctl::kIoctlSetPreference, &preference, static_cast<DWORD>(sizeof(preference)),
+							  nullptr, 0, bytes, error);
+	if (!set && error.empty())
 	{
 		error = Win32Error("SET_PREFERENCE", GetLastError());
 	}
