@@ -42,7 +42,8 @@ uint8_t TestValidator(void*, CodecType codec, const uint8_t* ie, size_t ieLength
 	return AacConfig::Validate(ie, ieLength);
 }
 
-// SEID 1 = SBC always; SEID 2 = AAC while the encoder service is registered.
+// SEID 1 = SBC always; SEID 2 = AAC. The driver always registers both SEPs and
+// lets the selector decide whether AAC is usable for the current negotiation.
 SourceSession MakeSession()
 {
 	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), TestSelector, nullptr, TestValidator);
@@ -85,6 +86,24 @@ size_t CodecCaps(CodecType codec, const uint8_t* ie, size_t ieLength, uint8_t* o
 	out[n++] = static_cast<uint8_t>(codec);
 	std::memcpy(out + n, ie, ieLength);
 	return n + ieLength;
+}
+
+// One sink SEP advertising several codecs in a single capabilities payload.
+size_t MultiCodecCaps(uint8_t* out, const CodecType* codecs, const uint8_t* const* ies, const size_t* lengths,
+					  size_t count)
+{
+	size_t n = 0;
+	out[n++] = 0x01;
+	out[n++] = 0x00;
+	for (size_t i = 0; i < count; ++i) {
+		out[n++] = 0x07;
+		out[n++] = static_cast<uint8_t>(2 + lengths[i]);
+		out[n++] = 0x00;
+		out[n++] = static_cast<uint8_t>(codecs[i]);
+		std::memcpy(out + n, ies[i], lengths[i]);
+		n += lengths[i];
+	}
+	return n;
 }
 
 // Drives DISCOVER + GET_CAPABILITIES until the session emits SET_CONFIGURATION.
@@ -173,6 +192,38 @@ TEST(AvdtpSource_SelectsSbcWhenSinkHasOnlySbc)
 	CHECK(Header(cmd).signal == Signal::Open);
 	REQUIRE(s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket) == 0);
 	CHECK(s.State() == SessionState::Open);
+}
+
+TEST(AvdtpSource_SelectsAacFromSingleSepAdvertisingBothCodecs)
+{
+	// Some sinks advertise every codec on one SEP instead of one SEP per codec.
+	// Only the first Media Codec entry used to be evaluated, which silently lost
+	// AAC whenever the sink listed SBC first.
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+
+	REQUIRE(s.Connect(cmd, kMaxSignalPacket) == 2);
+	CHECK(Header(cmd).signal == Signal::Discover);
+
+	uint8_t seps[2];
+	WriteSepInfo({3, false, MediaType::Audio, SepType::Sink}, seps);
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, seps, sizeof(seps), rsp), cmd, kMaxSignalPacket) == 3);
+	CHECK(Header(cmd).signal == Signal::GetCapabilities);
+	CHECK_EQ(cmd[2], uint8_t{3 << 2});
+
+	const CodecType codecs[2] = {CodecType::Sbc, CodecType::Aac};
+	const uint8_t* ies[2] = {kSbcRemoteCaps, kAacRemoteCaps};
+	const size_t lengths[2] = {sizeof(kSbcRemoteCaps), sizeof(kAacRemoteCaps)};
+	const size_t capsLength = MultiCodecCaps(payload, codecs, ies, lengths, 2);
+
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, payload, capsLength, rsp), cmd, kMaxSignalPacket) != 0);
+	REQUIRE(Header(cmd).signal == Signal::SetConfiguration);
+	CHECK_EQ(cmd[2], uint8_t{3 << 2});
+	CHECK_EQ(cmd[3], uint8_t{kLocalAacSeid << 2});
+	CHECK_EQ(cmd[9], uint8_t{static_cast<uint8_t>(CodecType::Aac)});
+	CHECK(s.SelectedCodec() == CodecType::Aac);
 }
 
 TEST(AvdtpSource_FallsBackToSbcWhenAacRejected)

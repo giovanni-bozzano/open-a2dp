@@ -13,8 +13,10 @@ constexpr size_t kMaxSignalPacket = 128;
 constexpr size_t kMaxSinkSeps = 8;
 constexpr size_t kMaxCodecIe = 32;
 constexpr size_t kMaxLocalSeps = 2;
-// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC, advertised only while
-// the encoder service is registered.
+// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC. Both are always
+// advertised: whether AAC may actually be selected is decided per negotiation by
+// the selector, because the encoder service can register after the session was
+// created (and can disappear again).
 constexpr uint8_t kLocalSeid = 1;
 constexpr uint8_t kLocalAacSeid = 2;
 
@@ -377,11 +379,26 @@ private:
 		return 0;
 	}
 
+	// A sink SEP may advertise more than one media codec, so evaluate every Media
+	// Codec entry instead of stopping at the first one. Missing a second entry
+	// silently drops a codec the sink supports (AAC listed after SBC, for example).
 	void EvaluateCapabilities(uint8_t seid, const uint8_t* caps, size_t len) noexcept
 	{
-		CodecType codec{};
-		size_t ieLength = 0;
-		const uint8_t* ie = FindMediaCodec(caps, len, codec, ieLength);
+		size_t pos = 0;
+		while (pos + 2 <= len) {
+			const size_t losc = caps[pos + 1];
+			if (pos + 2 + losc > len) {
+				return;
+			}
+			if (static_cast<ServiceCategory>(caps[pos]) == ServiceCategory::MediaCodec && losc >= 2) {
+				EvaluateCodec(seid, static_cast<CodecType>(caps[pos + 3]), caps + pos + 4, losc - 2);
+			}
+			pos += 2 + losc;
+		}
+	}
+
+	void EvaluateCodec(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
+	{
 		if (ie == nullptr || selector_ == nullptr) {
 			return;
 		}

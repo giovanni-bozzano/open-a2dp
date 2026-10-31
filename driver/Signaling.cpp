@@ -57,9 +57,16 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 }
 
 // Sink-proposed configurations for non-SBC codecs; returns 0 or an AVDTP error.
-uint8_t ValidateConfig(void*, Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
+uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
 {
 	if (codec != Avdtp::CodecType::Aac)
+	{
+		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
+	}
+	// The AAC SEP is always advertised, so a sink can propose an AAC configuration
+	// even while no encoder exists. Refusing it here keeps the stream from opening
+	// into a codec the driver has nothing to encode with.
+	if (!ServiceRegistered(static_cast<DEVICE_CONTEXT*>(context)))
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
 	}
@@ -70,11 +77,14 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 {
 	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, SbcConfig::kLocalCapabilities,
 		SbcConfig::kIeLength, &SelectConfig, ctx, &ValidateConfig);
-	if (ServiceRegistered(ctx))
-	{
-		ctx->Session.SetLocalSep(Avdtp::kLocalAacSeid, Avdtp::CodecType::Aac, AacConfig::kLocalCapabilities,
-			AacConfig::kIeLength);
-	}
+	// Always advertise AAC. Registering the SEP only when the service happens to be
+	// up already loses a race it usually loses: the headset opens the signaling
+	// channel first, ResetSession runs with EncoderRegistered == 0, and the codec
+	// would then be missing for the whole connection. Whether AAC may be selected is
+	// decided per negotiation in SelectConfig, which is the state that actually
+	// matters at that moment.
+	ctx->Session.SetLocalSep(Avdtp::kLocalAacSeid, Avdtp::CodecType::Aac, AacConfig::kLocalCapabilities,
+		AacConfig::kIeLength);
 	ctx->LoggedState = Avdtp::SessionState::Idle;
 }
 

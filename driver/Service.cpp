@@ -322,6 +322,12 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 		out->pcmSampleRate = AudioSampleRate;
 		out->pcmChannels = AudioChannels;
 		OA2DP_LOG("service: encoder registered (max frame %u bytes)", out->maxFramePayload);
+		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeSbc)
+		{
+			// The stream was negotiated before the service came up, so AAC was not
+			// offered for it. Say so: otherwise this looks like AAC silently failing.
+			OA2DP_LOG("service: stream is already SBC; reconnect the headset to negotiate AAC");
+		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::RegisterEncoderOut));
 		return;
 	}
