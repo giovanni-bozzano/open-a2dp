@@ -375,7 +375,7 @@ bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* 
 		if (wait == WAIT_TIMEOUT)
 		{
 			CancelIoEx(handle, &overlapped);
-			GetOverlappedResult(handle, &overlapped, &bytes, TRUE);
+			GetOverlappedResult(handle, &overlapped, &bytes, FALSE);
 			error = "DeviceIoControl timed out after " + std::to_string(timeoutMs) + " ms";
 			CloseHandle(overlapped.hEvent);
 			return false;
