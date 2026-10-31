@@ -36,23 +36,29 @@ static uint64_t ClockUs()
 std::vector<std::wstring> EnumerateControlDevices()
 {
 	std::vector<std::wstring> result;
-	// QueryDosDevice with nullptr prefix lists all DOS devices.
-	DWORD size = 32768;
-	std::vector<wchar_t> buffer(size);
-	DWORD len = QueryDosDeviceW(nullptr, buffer.data(), size);
-	if (len == 0) {
+	// QueryDosDevice with a null prefix lists every DOS device. The list changes
+	// while devices come and go, so grow the buffer instead of giving up once.
+	std::vector<wchar_t> buffer(32768);
+	for (;;) {
+		const DWORD len = QueryDosDeviceW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+		if (len == 0) {
+			if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+				return result;
+			}
+			buffer.resize(buffer.size() * 2);
+			continue;
+		}
+
+		const wchar_t* p = buffer.data();
+		while (*p != L'\0') {
+			std::wstring name(p);
+			if (name.rfind(Ioctl::kControlLinkPrefix, 0) == 0) {
+				result.push_back(name);
+			}
+			p += name.size() + 1;
+		}
 		return result;
 	}
-
-	const wchar_t* p = buffer.data();
-	while (*p != L'\0') {
-		std::wstring name(p);
-		if (name.rfind(Ioctl::kControlLinkPrefix, 0) == 0) {
-			result.push_back(name);
-		}
-		p += name.size() + 1;
-	}
-	return result;
 }
 
 std::string WstrToUtf8(const std::wstring& w)
@@ -66,7 +72,7 @@ std::string WstrToUtf8(const std::wstring& w)
 }
 
 // Build an AAC IE from WaitEventOut params.
-bool BuildIe(uint32_t sampleRate, uint32_t channels, uint32_t bitrate, uint32_t objectType, uint8_t ie[6])
+void BuildIe(uint32_t sampleRate, uint32_t channels, uint32_t bitrate, uint32_t objectType, uint8_t ie[6])
 {
 	AacConfig::Params p;
 	p.sampleRate = sampleRate;
@@ -75,7 +81,6 @@ bool BuildIe(uint32_t sampleRate, uint32_t channels, uint32_t bitrate, uint32_t 
 	p.objectType = static_cast<uint8_t>(objectType);
 	p.vbr = false;
 	AacConfig::WriteIe(p, ie);
-	return true;
 }
 
 // One device's event loop.
@@ -143,7 +148,6 @@ void DeviceLoop(const std::wstring& linkName)
 	fflush(stdout);
 
 	AacStreamEncoder streamEncoder;
-	std::unique_ptr<IA2dpEncoder> currentEncoder;
 
 	// Main event loop.
 	for (;;) {
@@ -158,10 +162,15 @@ void DeviceLoop(const std::wstring& linkName)
 
 		if (ev.events & Ioctl::kEventDeviceGone) {
 			printf("[svc] device gone (events=0x%08X)\n", ev.events);
+			fflush(stdout);
 			break;
 		}
-		printf("[svc] event: 0x%08X state=%u codec=%u\n", ev.events, (unsigned)ev.state, ev.codec);
-		fflush(stdout);
+		// Ticks arrive every 10 ms; logging them would grow the redirected stdout
+		// without bound, so only lifecycle changes are printed.
+		if ((ev.events & ~Ioctl::kEventTick) != 0) {
+			printf("[svc] event: 0x%08X state=%u codec=%u\n", ev.events, (unsigned)ev.state, ev.codec);
+			fflush(stdout);
+		}
 
 		if (ev.events & Ioctl::kEventStreamStart) {
 			printf("[svc] stream start: %u Hz, %u ch, %u bps, obj 0x%02X\n",
@@ -197,7 +206,6 @@ void DeviceLoop(const std::wstring& linkName)
 				fflush(stdout);
 				continue;
 			}
-			currentEncoder = nullptr; // owned by streamEncoder now
 		}
 
 		if (ev.events & Ioctl::kEventTick) {

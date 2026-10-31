@@ -86,6 +86,34 @@ void LatchEvents(DEVICE_CONTEXT* ctx, uint32_t events)
 	}
 }
 
+// Completes a parked WAIT_EVENT without latching the events for later.
+// A handle closing only concerns the waiter of that handle: leaving the event
+// pending would hand it to the next registration, which is how a stale
+// kEventDeviceGone used to keep every new service session from ever waiting.
+void ReleaseWait(DEVICE_CONTEXT* ctx, uint32_t events)
+{
+	WDFREQUEST request = nullptr;
+	Ioctl::WaitEventOut state = {};
+	uint32_t deliver = 0;
+
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->WaitLock, &irql);
+	request = ctx->WaitRequest;
+	if (request != nullptr)
+	{
+		ctx->WaitRequest = nullptr;
+		deliver = ctx->PendingEvents | events;
+		ctx->PendingEvents = 0;
+		state = ctx->WaitState;
+	}
+	KeReleaseSpinLock(&ctx->WaitLock, irql);
+
+	if (request != nullptr)
+	{
+		CompleteWait(request, state, deliver);
+	}
+}
+
 void OnWaitCancel(WDFREQUEST request)
 {
 	WDFFILEOBJECT fileObject = WdfRequestGetFileObject(request);
@@ -277,6 +305,16 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 			return;
 		}
 		file->Registered = TRUE;
+		// A new service session starts with no latched events. Anything left over
+		// belongs to the previous handle (for example kEventDeviceGone latched when
+		// it closed) and must not be delivered to this one.
+		{
+			KIRQL irql;
+			KeAcquireSpinLock(&ctx->WaitLock, &irql);
+			ctx->PendingEvents = 0;
+			ctx->WaitState = {};
+			KeReleaseSpinLock(&ctx->WaitLock, irql);
+		}
 		*out = {};
 		out->abiVersion = Ioctl::kAbiVersion;
 		out->codec = Ioctl::kCodecAac;
@@ -491,9 +529,10 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 
 	// Release a parked WAIT_EVENT first: the closing thread must not block on it.
 	// Only the registered handle owns the wait; closing another handle is unrelated.
+	// The event is not latched: it belongs to the handle that is going away.
 	if (file->Registered)
 	{
-		LatchEvents(ctx, Ioctl::kEventDeviceGone);
+		ReleaseWait(ctx, Ioctl::kEventDeviceGone);
 		file->Registered = FALSE;
 		InterlockedExchange(&ctx->EncoderRegistered, 0);
 		// During device teardown ServiceStop has already stopped media and latched
