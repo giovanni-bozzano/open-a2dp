@@ -230,6 +230,8 @@ Wait-VmTools
 & $vmrun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\sc.exe' 'stop' 'OpenA2dpSvc' 2>&1 | Out-Null
 # Also clear an instance started by hand for debugging (svc-stdout.txt runs).
 & $vmrun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\taskkill.exe' '/F' '/IM' 'OpenA2dpSvc.exe' 2>&1 | Out-Null
+# A CLI left running (for example a hung console session) keeps OpenA2dpCtl.exe locked.
+& $vmrun @auth runProgramInGuest $config.vmx 'C:\Windows\System32\taskkill.exe' '/F' '/IM' 'OpenA2dpCtl.exe' 2>&1 | Out-Null
 Start-Sleep -Seconds 3
 
 # createDirectoryInGuest fails harmlessly when the directory already exists.
