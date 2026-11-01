@@ -469,6 +469,38 @@ TEST(AvdtpSource_AcceptsSinkConfiguration)
 	CHECK_EQ(out[2], uint8_t{2 << 2});
 }
 
+TEST(AvdtpSource_RejectsSinkConfigurationOutsideAdvertisedRates)
+{
+	// Mirrors the driver: only 44.1 kHz (with the stereo-capable modes) is advertised,
+	// because the endpoint cannot play anything else. A headset that still configures
+	// 48 kHz must be refused instead of being let into a stream MediaStart would drop.
+	const uint8_t localIe[4] = {0x27, 0xFF, 0x02, 0xFA};
+	SourceSession s(CodecType::Sbc, localIe, sizeof(localIe), TestSelector, nullptr, TestValidator);
+	uint8_t in[kMaxSignalPacket];
+	uint8_t out[kMaxSignalPacket];
+
+	const uint8_t at48k[4] = {0x11, 0x15, 0x02, 0x35};
+	WriteSignalHeader({1, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	in[3] = 2 << 2;
+	size_t n = 4 + CodecCaps(CodecType::Sbc, at48k, 4, in + 4);
+	REQUIRE(s.OnPacket(in, n, out, sizeof(out)) == 4);
+	CHECK(Header(out).messageType == MessageType::ResponseReject);
+	CHECK_EQ(out[2], uint8_t{static_cast<uint8_t>(ServiceCategory::MediaCodec)});
+	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::UnsupportedConfiguration)});
+	CHECK(s.State() == SessionState::Idle);
+
+	const uint8_t at44k[4] = {0x21, 0x15, 0x02, 0x35};
+	WriteSignalHeader({2, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	in[3] = 2 << 2;
+	n = 4 + CodecCaps(CodecType::Sbc, at44k, 4, in + 4);
+	REQUIRE(s.OnPacket(in, n, out, sizeof(out)) == 2);
+	CHECK(Header(out).messageType == MessageType::ResponseAccept);
+	CHECK(s.State() == SessionState::Configured);
+	CHECK(s.IsAcceptor());
+}
+
 TEST(AvdtpSource_AcceptsSinkAacConfiguration)
 {
 	SourceSession s = MakeSession();

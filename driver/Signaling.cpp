@@ -11,6 +11,15 @@ namespace
 
 constexpr LONGLONG ResponseTimeoutMs = 3000;
 constexpr uint8_t SbcMaxBitpool = 53;
+// What the driver can actually play. The endpoint is fixed at 44.1 kHz stereo and
+// MediaStart refuses anything else, so advertising 16/32/48 kHz or mono only invites
+// a headset to configure a stream we then cannot start (PANTONE asked for 48 kHz).
+// Byte 0: 44.1 kHz (0x20) | dual channel (0x04) | stereo (0x02) | joint stereo (0x01).
+constexpr uint8_t kSbcDriverCapabilities[SbcConfig::kIeLength] = {
+	0x27, 0xFF, SbcConfig::kMinBitpool, SbcConfig::kMaxBitpool};
+// How long a headset-initiated connection gets to configure the stream itself
+// before we start discovery.
+constexpr LONGLONG kIncomingConnectDelayMs = 700;
 // Bounded wait for a service that is installed but has not attached yet. The
 // service polls for the control device every 250 ms.
 constexpr unsigned kConnectWaitSteps = 8;
@@ -18,6 +27,7 @@ constexpr LONGLONG kConnectWaitMs = 100;
 
 EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;
+EVT_WDF_TIMER OnConnectDelay;
 EVT_WDF_REQUEST_COMPLETION_ROUTINE OnReadComplete;
 
 // Scores each sink SEP: SBC 1, AAC 2, so AAC wins when both sides support it.
@@ -39,7 +49,19 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		{
 			return 0;
 		}
-		if (!SbcConfig::Select(remoteIe, remoteIeLength, 0, SbcMaxBitpool, configIe))
+		// Offer the selector only what we can play, so it never picks a rate or
+		// channel mode the media path would refuse.
+		if (remoteIeLength < SbcConfig::kIeLength)
+		{
+			return 0;
+		}
+		uint8_t playable[SbcConfig::kIeLength];
+		for (size_t i = 0; i < SbcConfig::kIeLength; ++i)
+		{
+			playable[i] = remoteIe[i];
+		}
+		playable[0] &= kSbcDriverCapabilities[0];
+		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, 0, SbcMaxBitpool, configIe))
 		{
 			return 0;
 		}
@@ -84,7 +106,7 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 
 void ResetSession(DEVICE_CONTEXT* ctx)
 {
-	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, SbcConfig::kLocalCapabilities,
+	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, kSbcDriverCapabilities,
 		SbcConfig::kIeLength, &SelectConfig, ctx, &ValidateConfig);
 	// Always advertise AAC. Registering the SEP only when the service happens to be
 	// up already loses a race it usually loses: the headset opens the signaling
@@ -159,8 +181,8 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 						// The channel may have closed while we waited.
 						if (ctx->SignalingState != ChannelOpen)
 						{
+							ctx->SignalingWorkItemThread = nullptr;
 							WdfWaitLockRelease(ctx->SessionLock);
-							ctx->InSignalingWorkItem = FALSE;
 							return;
 						}
 					}
@@ -267,11 +289,18 @@ void OnResponseTimeout(_In_ WDFTIMER timer)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+void OnConnectDelay(_In_ WDFTIMER timer)
+{
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
+	InterlockedExchange(&ctx->DeferredConnectPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
-	ctx->InSignalingWorkItem = TRUE;
 	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+	ctx->SignalingWorkItemThread = KeGetCurrentThread();
 
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{
@@ -303,9 +332,32 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		if (ctx->SignalingState == ChannelOpen)
 		{
 			ResetSession(ctx);
-			Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-			SubmitRead(ctx);
+			if (InterlockedCompareExchange(&ctx->SignalingIncoming, 0, 0) != 0)
+			{
+				// The headset connected to us and normally starts its own AVDTP
+				// discovery and configuration at once. Starting ours too makes both
+				// sides configure the same stream: PANTONE then got its own
+				// SET_CONFIGURATION rejected (SEP in use) and refused the media
+				// channel with "no resources". Listen first; the library accepts the
+				// headset's configuration, and we only discover if it stays silent.
+				OA2DP_LOG("signaling: headset-initiated; waiting up to %u ms for it to configure the stream",
+					static_cast<unsigned>(kIncomingConnectDelayMs));
+				SubmitRead(ctx);
+				WdfTimerStart(ctx->ConnectDelayTimer, WDF_REL_TIMEOUT_IN_MS(kIncomingConnectDelayMs));
+			}
+			else
+			{
+				Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+				SubmitRead(ctx);
+			}
 		}
+	}
+
+	if (InterlockedExchange(&ctx->DeferredConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
+		ctx->Session.State() == Avdtp::SessionState::Idle)
+	{
+		OA2DP_LOG("signaling: headset did not configure the stream; starting discovery");
+		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	}
 
 	if (InterlockedExchange(&ctx->ReadCompleted, 0) != 0)
@@ -334,7 +386,7 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	}
 
 	WdfWaitLockRelease(ctx->SessionLock);
-	ctx->InSignalingWorkItem = FALSE;
+	ctx->SignalingWorkItemThread = nullptr;
 }
 } // namespace
 
@@ -369,6 +421,14 @@ NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
+	WDF_TIMER_CONFIG delayConfig;
+	WDF_TIMER_CONFIG_INIT(&delayConfig, OnConnectDelay);
+	status = WdfTimerCreate(&delayConfig, &attrs, &ctx->ConnectDelayTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
 	status = WdfRequestCreate(&attrs, ctx->IoTarget, &ctx->ReadRequest);
 	if (!NT_SUCCESS(status))
 	{
@@ -396,6 +456,25 @@ void SignalingOnChannelOpen(_In_ DEVICE_CONTEXT* ctx)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+void SignalingResetSession(_In_ DEVICE_CONTEXT* ctx)
+{
+	// Called after the signaling channel closed. The session is otherwise left in
+	// whatever state the link died in (Open, Streaming), which both misreports the
+	// connection and refuses a fresh SET_CONFIGURATION on reconnect. The signaling
+	// work item reaches here through the media-open failure teardown while it holds
+	// SessionLock, so only take the lock when this thread is not that work item.
+	const bool lockHeld = ctx->SignalingWorkItemThread == KeGetCurrentThread();
+	if (!lockHeld)
+	{
+		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+	}
+	ResetSession(ctx);
+	if (!lockHeld)
+	{
+		WdfWaitLockRelease(ctx->SessionLock);
+	}
+}
+
 void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 {
 	LARGE_INTEGER timeout;
@@ -407,7 +486,9 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_LOG("signaling stop: read did not complete within 1 s");
 	}
 	WdfTimerStop(ctx->ResponseTimer, TRUE);
-	if (!ctx->InSignalingWorkItem)
+	WdfTimerStop(ctx->ConnectDelayTimer, TRUE);
+	InterlockedExchange(&ctx->DeferredConnectPending, 0);
+	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
 	{
 		WdfWorkItemFlush(ctx->SignalingWorkItem);
 	}

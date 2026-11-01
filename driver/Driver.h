@@ -98,10 +98,20 @@ struct DEVICE_CONTEXT
 	volatile LONG ReadCompleted;
 	volatile LONG TimeoutPending;
 	volatile LONG SuspendPending;
-	// Set while OnSignalingWorkItem is on the stack, so SignalingStop (called
-	// from within it via the media-open failure path) does not WdfWorkItemFlush
-	// its own work item and deadlock.
-	BOOLEAN InSignalingWorkItem;
+	// The thread currently running OnSignalingWorkItem (it holds SessionLock then).
+	// Code reached from inside the work item, such as the media-open failure
+	// teardown, must neither flush that work item nor take SessionLock again; a
+	// thread identity answers that reliably, where a plain flag would also fire
+	// for other threads.
+	PKTHREAD SignalingWorkItemThread;
+
+	// True when the headset opened the signaling channel, false when we did. A
+	// headset that connects to us usually starts its own AVDTP discovery and
+	// configuration at the same moment, so we let it go first (see
+	// OnSignalingWorkItem) instead of racing it.
+	volatile LONG SignalingIncoming;
+	WDFTIMER ConnectDelayTimer;
+	volatile LONG DeferredConnectPending;
 
 	// Media transport channel, opened from the signaling work item.
 	L2CAP_CHANNEL_HANDLE MediaChannel;
@@ -224,6 +234,12 @@ NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx);
 // Called when the signaling channel opened; starts discovery.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnChannelOpen(_In_ DEVICE_CONTEXT* ctx);
+
+// Forgets the AVDTP session after the signaling channel closed, so status and the
+// next connection start from Idle instead of the stale Open/Streaming state. Safe to
+// call from inside the signaling work item (which already holds SessionLock).
+_IRQL_requires_(PASSIVE_LEVEL)
+void SignalingResetSession(_In_ DEVICE_CONTEXT* ctx);
 
 // Called when the headset opened the media channel (acceptor role); sends START if needed.
 _IRQL_requires_max_(DISPATCH_LEVEL)

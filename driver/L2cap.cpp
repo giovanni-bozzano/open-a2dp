@@ -198,6 +198,7 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 	}
 
 	OA2DP_LOG("incoming signaling connection");
+	InterlockedExchange(&ctx->SignalingIncoming, 1);
 	KeClearEvent(&ctx->OpenIdle);
 
 	WDF_REQUEST_REUSE_PARAMS reuse;
@@ -347,6 +348,7 @@ NTSTATUS L2capOpenSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	}
 
 	KeClearEvent(&ctx->OpenIdle);
+	InterlockedExchange(&ctx->SignalingIncoming, 0);
 
 	WDF_REQUEST_REUSE_PARAMS reuse;
 	WDF_REQUEST_REUSE_PARAMS_INIT(&reuse, WDF_REQUEST_REUSE_NO_FLAGS, STATUS_SUCCESS);
@@ -403,6 +405,7 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 
 	ctx->SignalingChannel = nullptr;
 	InterlockedExchange(&ctx->SignalingState, ChannelClosed);
+	SignalingResetSession(ctx);
 }
 
 NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, _In_reads_bytes_(length) PVOID data, _In_ ULONG length)
