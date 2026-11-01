@@ -96,7 +96,6 @@ Driver output: `out\x64\Debug\OpenA2dp\` (`.sys`, `.inf`, `.cat`); the driver is
 - M5b codec settings store and UI, clean install/uninstall, system testing, release signing.
 
 ## Next steps (in order)
-0. Endpoint fix (#77, deployed as 1.26.1101.1120): power-cycle or disconnect a headset and confirm its Windows output endpoint shows as unplugged. Then reconnect and confirm it shows as plugged. Report which one happens.
 1. M5: validate AAC end to end. `OpenA2dpSvc.exe` is implemented and stable; deploy the #72 negotiation fix (needs a reboot to activate), start the service before the headset connects, and confirm `AVDTP configured codec 2`, `media: AAC ...`, audible output and `OpenA2dpCtl status` counters. Then re-check that SBC still negotiates with the service stopped.
 2. M5b: codec settings store (per-headset registry values plus global defaults), read at negotiation time.
 3. M5b: preference-aware `SbcConfig`/`AacConfig` selection and presets, checked against media MTU; unit tests.
