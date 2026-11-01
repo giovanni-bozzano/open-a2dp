@@ -449,11 +449,11 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 	config.Description.ConnectionType = AcxConnTypeUnknown;
 	config.Description.GeoLocation = AcxGeoLocNotApplicable;
 	config.Description.GenLocation = AcxGenLocSeparate;
-	config.Description.PortConnection = AcxPortConnUnknown;
+	config.Description.PortConnection = AcxPortConnJack;
 
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attrs, SINK_JACK_CONTEXT);
-	attrs.ParentObject = ctx->Device;
+	attrs.ParentObject = pin;
 	NTSTATUS status = AcxJackCreate(pin, &attrs, &config, &ctx->SinkJack);
 	if (!NT_SUCCESS(status))
 	{
@@ -468,14 +468,6 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 		OA2DP_LOG("audio: AcxPinAddJacks 0x%08X", status);
 	}
 	return status;
-}
-
-void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
-{
-	if (ctx->SinkJack != nullptr)
-	{
-		AcxJackChangeStateNotification(ctx->SinkJack);
-	}
 }
 
 NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin)
@@ -593,11 +585,6 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return status;
 	}
-	status = AddSinkJack(ctx, pins[0]);
-	if (!NT_SUCCESS(status))
-	{
-		return status;
-	}
 
 	ACX_PIN_CONFIG_INIT_ID(&pinConfig, BridgePinId);
 	pinConfig.Type = AcxPinTypeSource;
@@ -614,6 +601,12 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_LOG("audio: AcxCircuitAddPins 0x%08X", status);
+		return status;
+	}
+
+	status = AddSinkJack(ctx, pins[1]);
+	if (!NT_SUCCESS(status))
+	{
 		return status;
 	}
 
