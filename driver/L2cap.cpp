@@ -429,6 +429,23 @@ NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, 
 		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTH_SUBMIT_BRB, &desc, nullptr, nullptr, &options, nullptr);
 }
 
+bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status)
+{
+	switch (status)
+	{
+	case STATUS_DEVICE_OFF_LINE:
+	case STATUS_DEVICE_NOT_CONNECTED:
+	case STATUS_CONNECTION_DISCONNECTED:
+	case STATUS_CONNECTION_RESET:
+	case STATUS_CANCELLED:
+		return true;
+	default:
+		break;
+	}
+	// Any failure while the signaling link is closing or closed is part of the teardown.
+	return InterlockedCompareExchange(&ctx->SignalingState, ChannelOpen, ChannelOpen) != ChannelOpen;
+}
+
 NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 {
 	if (ctx->MediaChannel != nullptr)

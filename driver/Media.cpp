@@ -110,9 +110,16 @@ void TickSbc(DEVICE_CONTEXT* ctx)
 		const NTSTATUS status = L2capSend(ctx, ctx->MediaChannel, ctx->MediaBuffer, length);
 		if (!NT_SUCCESS(status))
 		{
-			OA2DP_LOG("media send failed 0x%08X after %u packets", status, ctx->RtpSequence);
-			InterlockedIncrement(&ctx->SendFailures);
-			InterlockedExchange(&ctx->LastMediaError, status);
+			if (IsLinkLoss(ctx, status))
+			{
+				OA2DP_LOG("media: stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+			}
+			else
+			{
+				OA2DP_LOG("media send failed 0x%08X after %u packets", status, ctx->RtpSequence);
+				InterlockedIncrement(&ctx->SendFailures);
+				InterlockedExchange(&ctx->LastMediaError, status);
+			}
 			ctx->MediaActive = FALSE;
 			SignalingRequestSuspend(ctx);
 			return;
@@ -141,9 +148,16 @@ void TickAac(DEVICE_CONTEXT* ctx)
 		const NTSTATUS status = L2capSend(ctx, ctx->MediaChannel, ctx->MediaBuffer, length);
 		if (!NT_SUCCESS(status))
 		{
-			OA2DP_LOG("media: AAC send failed 0x%08X after %u packets", status, ctx->RtpSequence);
-			InterlockedIncrement(&ctx->SendFailures);
-			InterlockedExchange(&ctx->LastMediaError, status);
+			if (IsLinkLoss(ctx, status))
+			{
+				OA2DP_LOG("media: AAC stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+			}
+			else
+			{
+				OA2DP_LOG("media: AAC send failed 0x%08X after %u packets", status, ctx->RtpSequence);
+				InterlockedIncrement(&ctx->SendFailures);
+				InterlockedExchange(&ctx->LastMediaError, status);
+			}
 			ctx->MediaActive = FALSE;
 			SignalingRequestSuspend(ctx);
 			return;

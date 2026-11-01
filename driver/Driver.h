@@ -223,6 +223,9 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, _In_reads_bytes_(length) PVOID data, _In_ ULONG length);
 
+// True when a failed send means the headset went away, not a driver fault.
+bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status);
+
 // Media transport channel (L2cap.cpp)
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx);

@@ -129,7 +129,14 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 		NTSTATUS status = L2capSend(ctx, ctx->SignalingChannel, ctx->WriteBuffer, static_cast<ULONG>(length));
 		if (!NT_SUCCESS(status))
 		{
-			OA2DP_LOG("signaling send failed 0x%08X", status);
+			if (IsLinkLoss(ctx, status))
+			{
+				OA2DP_LOG("signaling: send stopped, headset link is down (0x%08X)", status);
+			}
+			else
+			{
+				OA2DP_LOG("signaling send failed 0x%08X", status);
+			}
 		}
 	}
 
