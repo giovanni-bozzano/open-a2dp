@@ -37,6 +37,12 @@ struct STREAM_CONTEXT
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(STREAM_CONTEXT, GetStreamContext)
 
+struct SINK_JACK_CONTEXT
+{
+	DEVICE_CONTEXT* Device;
+};
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SINK_JACK_CONTEXT, GetSinkJackContext)
+
 struct RENDER_FORMAT
 {
 	KSDATAFORMAT DataFormat;
@@ -70,6 +76,7 @@ RENDER_FORMAT RenderFormat = {
 };
 
 EVT_ACX_CIRCUIT_CREATE_STREAM OnCreateStream;
+EVT_ACX_JACK_RETRIEVE_PRESENCE_STATE OnRetrieveJackPresence;
 EVT_ACX_STREAM_PREPARE_HARDWARE OnStreamPrepareHardware;
 EVT_ACX_STREAM_RELEASE_HARDWARE OnStreamReleaseHardware;
 EVT_ACX_STREAM_RUN OnStreamRun;
@@ -419,6 +426,58 @@ NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG posit
 	return STATUS_SUCCESS;
 }
 
+NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected)
+{
+	*isConnected = GetSinkJackContext(jack)->Device->SignalingState == ChannelOpen ? TRUE : FALSE;
+	return STATUS_SUCCESS;
+}
+
+// The jack is what Windows uses to show the endpoint as plugged or unplugged. The
+// endpoint itself lives as long as the device, so without this it stays listed as
+// available after the headset disconnects.
+NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
+{
+	ACX_JACK_CALLBACKS callbacks;
+	ACX_JACK_CALLBACKS_INIT(&callbacks);
+	callbacks.EvtAcxJackRetrievePresenceState = OnRetrieveJackPresence;
+
+	ACX_JACK_CONFIG config;
+	ACX_JACK_CONFIG_INIT(&config);
+	config.Flags = AcxJackConfigJackDetection;
+	config.Callbacks = &callbacks;
+	config.Description.ChannelMapping = KSAUDIO_SPEAKER_STEREO;
+	config.Description.ConnectionType = AcxConnTypeUnknown;
+	config.Description.GeoLocation = AcxGeoLocNotApplicable;
+	config.Description.GenLocation = AcxGenLocSeparate;
+	config.Description.PortConnection = AcxPortConnUnknown;
+
+	WDF_OBJECT_ATTRIBUTES attrs;
+	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attrs, SINK_JACK_CONTEXT);
+	attrs.ParentObject = ctx->Device;
+	NTSTATUS status = AcxJackCreate(pin, &attrs, &config, &ctx->SinkJack);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_LOG("audio: AcxJackCreate 0x%08X", status);
+		return status;
+	}
+	GetSinkJackContext(ctx->SinkJack)->Device = ctx;
+
+	status = AcxPinAddJacks(pin, &ctx->SinkJack, 1);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_LOG("audio: AcxPinAddJacks 0x%08X", status);
+	}
+	return status;
+}
+
+void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
+{
+	if (ctx->SinkJack != nullptr)
+	{
+		AcxJackChangeStateNotification(ctx->SinkJack);
+	}
+}
+
 NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin)
 {
 	ACX_DATAFORMAT_CONFIG config;
@@ -442,6 +501,14 @@ NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin)
 }
 
 } // namespace
+
+void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
+{
+	if (ctx->SinkJack != nullptr)
+	{
+		AcxJackChangeStateNotification(ctx->SinkJack);
+	}
+}
 
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
@@ -522,6 +589,11 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 	status = AddFormat(ctx->Device, pins[0]);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	status = AddSinkJack(ctx, pins[0]);
 	if (!NT_SUCCESS(status))
 	{
 		return status;

@@ -406,6 +406,7 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	ctx->SignalingChannel = nullptr;
 	InterlockedExchange(&ctx->SignalingState, ChannelClosed);
 	SignalingResetSession(ctx);
+	AudioNotifyLinkState(ctx);
 }
 
 NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, _In_reads_bytes_(length) PVOID data, _In_ ULONG length)

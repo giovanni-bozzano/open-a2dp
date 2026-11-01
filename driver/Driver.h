@@ -136,6 +136,9 @@ struct DEVICE_CONTEXT
 	KSPIN_LOCK AudioLock;
 	WDFTIMER AudioTimer;
 	ACXSTREAM AudioStream;
+	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
+	// while the headset link is down (AudioNotifyLinkState).
+	ACXJACK SinkJack;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
@@ -254,6 +257,9 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
 
 // Audio.cpp
+// Reports the headset link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.
+void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx);
+
 // Creates the ACX render circuit (speaker endpoint) for this device.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx);
