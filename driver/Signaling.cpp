@@ -314,7 +314,10 @@ void OnReadComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLET
 		KeSetEvent(&ctx->ReadIdle, IO_NO_INCREMENT, FALSE);
 		return;
 	}
+	// The transport is done with the request; the work item re-arms it. Idle must be
+	// signaled here too, or SubmitRead's pending-read guard refuses every re-arm.
 	InterlockedExchange(&ctx->ReadCompleted, 1);
+	KeSetEvent(&ctx->ReadIdle, IO_NO_INCREMENT, FALSE);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 

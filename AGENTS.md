@@ -1,4 +1,4 @@
-# Copilot instructions
+# Agent instructions
 
 ## General Guidelines
 - Project: open-source Windows 11 A2DP Source driver that replaces `BthA2dp.sys`. Read `docs/SESSION-CONTEXT.md` for prior conversation context, and `docs/A2DP-Driver-Plan.md` for the plan.
