@@ -78,6 +78,12 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 	L2capUnregisterServer(ctx);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
 	L2capCloseSignalingChannel(ctx);
+	// Completions that arrived during the close (a late accept, a remote disconnect)
+	// may have queued work; let it run out now, against a closed session, so nothing
+	// of ours runs after suspend returns. Neither work item waits on this thread.
+	WdfWorkItemFlush(ctx->SignalingWorkItem);
+	WdfWorkItemFlush(ctx->DisconnectWorkItem);
+	MediaStop(ctx);
 	return STATUS_SUCCESS;
 }
 

@@ -230,7 +230,13 @@ void OnOpenComplete(
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
 	NTSTATUS status = params->IoStatus.Status;
 
-	if (NT_SUCCESS(status))
+	if (NT_SUCCESS(status) && KeReadStateEvent(&ctx->StopEvent) != 0)
+	{
+		// Teardown gave up waiting for this open; nobody will use the channel.
+		InterlockedExchange(&ctx->SignalingState, ChannelClosed);
+		CloseOrphanedChannel(ctx, ctx->OpenBrb.ChannelHandle);
+	}
+	else if (NT_SUCCESS(status))
 	{
 		ctx->SignalingChannel = ctx->OpenBrb.ChannelHandle;
 		ctx->SignalingOutMtu = ctx->OpenBrb.OutResults.Params.Mtu;
@@ -290,6 +296,7 @@ NTSTATUS SendOpenRequest(_In_ DEVICE_CONTEXT* ctx)
 void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context)
 {
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
+	const bool accepted = ctx->RejectBrb.Response == CONNECT_RSP_RESULT_SUCCESS;
 	if (InterlockedExchange(&ctx->MediaAcceptPending, 0) != 0)
 	{
 		if (NT_SUCCESS(params->IoStatus.Status))
@@ -302,7 +309,15 @@ void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPL
 			return;
 		}
 		OA2DP_LOG("incoming media accept failed 0x%08X", params->IoStatus.Status);
-		InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
+		if (ctx->SignalingState == ChannelOpen)
+		{
+			InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
+		}
+	}
+	else if (accepted && NT_SUCCESS(params->IoStatus.Status))
+	{
+		// The media channel was closed (teardown) while this accept was in flight.
+		CloseOrphanedChannel(ctx, ctx->RejectBrb.ChannelHandle);
 	}
 	else
 	{
@@ -368,6 +383,12 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
 	if (ctx == nullptr || indication != IndicationRemoteConnect)
 	{
+		return;
+	}
+
+	if (KeReadStateEvent(&ctx->StopEvent) != 0)
+	{
+		RespondIncoming(ctx, parameters->ConnectionHandle, parameters->BtAddress, false);
 		return;
 	}
 
@@ -532,8 +553,11 @@ NTSTATUS L2capRetrieveRemoteAddress(_In_ DEVICE_CONTEXT* ctx)
 	WDF_MEMORY_DESCRIPTOR out;
 	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&out, &info, sizeof(info));
 
+	WDF_REQUEST_SEND_OPTIONS options;
+	WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+	WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_MS(BrbControlTimeoutMs));
 	NTSTATUS status = WdfIoTargetSendInternalIoctlSynchronously(
-		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTHENUM_GET_DEVINFO, nullptr, &out, nullptr, nullptr);
+		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTHENUM_GET_DEVINFO, nullptr, &out, &options, nullptr);
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_LOG("get device info failed 0x%08X", status);
@@ -600,10 +624,10 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 		WdfRequestCancelSentRequest(ctx->OpenRequest);
 	}
 	LARGE_INTEGER openTimeout;
-	openTimeout.QuadPart = -10000000LL;
+	openTimeout.QuadPart = -static_cast<LONGLONG>(BrbControlTimeoutMs) * 10000;
 	if (KeWaitForSingleObject(&ctx->OpenIdle, Executive, KernelMode, FALSE, &openTimeout) != STATUS_SUCCESS)
 	{
-		OA2DP_LOG("close signaling: open did not complete within 1 s");
+		OA2DP_LOG("close signaling: open did not complete within %u ms", BrbControlTimeoutMs);
 	}
 	if (InterlockedCompareExchange(&ctx->SignalingState, ChannelClosing, ChannelOpen) != ChannelOpen)
 	{
@@ -774,6 +798,16 @@ void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->MediaAcceptAllowed, 0);
 	MediaStop(ctx);
+	// An accept still in flight would otherwise set MediaChannel after the close below.
+	// Revoke it (a late success then closes the channel itself) and give the completion
+	// a bounded moment so it is not halfway through adopting the channel.
+	InterlockedExchange(&ctx->MediaAcceptPending, 0);
+	for (int i = 0; i < 100 && InterlockedCompareExchange(&ctx->RejectBusy, 0, 0) != 0; ++i)
+	{
+		LARGE_INTEGER delay;
+		delay.QuadPart = -100000LL; // 10 ms
+		KeDelayExecutionThread(KernelMode, FALSE, &delay);
+	}
 	if (ctx->MediaChannel == nullptr)
 	{
 		return;

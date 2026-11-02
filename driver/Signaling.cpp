@@ -253,6 +253,13 @@ void SubmitRead(DEVICE_CONTEXT* ctx)
 		KeSetEvent(&ctx->ReadIdle, IO_NO_INCREMENT, FALSE);
 		return;
 	}
+	// A read whose cancel the transport never completed still owns the request and
+	// the buffer; reusing it would hand the transport a request it already holds.
+	if (KeReadStateEvent(&ctx->ReadIdle) == 0)
+	{
+		OA2DP_LOG("signaling read still pending in the transport; not re-arming");
+		return;
+	}
 
 	KeClearEvent(&ctx->ReadIdle);
 
@@ -628,17 +635,25 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx)
 	}
 	WdfWaitLockRelease(ctx->SessionLock);
 
-	// Give the headset up to 1 s to answer, so the command takes effect before the channel closes.
-	// The read work item applies the response; this thread only polls the session state.
-	for (int attempt = 0; attempt < 100; ++attempt)
+	// Give the headset up to 1 s in total to answer, so the command takes effect before the
+	// channel closes. The read work item applies the response; this thread only polls the
+	// session state. Every lock wait is limited to what is left of the second.
+	const ULONGLONG deadline = KeQueryInterruptTime() + 1000ull * 10000ull;
+	for (;;)
 	{
-		if (WdfWaitLockAcquire(ctx->SessionLock, &lockTimeout) != STATUS_SUCCESS)
+		const ULONGLONG now = KeQueryInterruptTime();
+		if (now >= deadline)
+		{
+			break;
+		}
+		LONGLONG remaining = -static_cast<LONGLONG>(deadline - now);
+		if (WdfWaitLockAcquire(ctx->SessionLock, &remaining) != STATUS_SUCCESS)
 		{
 			OA2DP_LOG("AVDTP teardown: session is busy, not waiting for the response");
 			return true;
 		}
-		const auto now = ctx->Session.State();
-		const bool waiting = now == Avdtp::SessionState::Aborting || now == Avdtp::SessionState::Closing;
+		const auto sessionState = ctx->Session.State();
+		const bool waiting = sessionState == Avdtp::SessionState::Aborting || sessionState == Avdtp::SessionState::Closing;
 		WdfWaitLockRelease(ctx->SessionLock);
 		if (!waiting)
 		{
