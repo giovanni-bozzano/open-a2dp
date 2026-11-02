@@ -24,6 +24,8 @@ namespace {
 
 constexpr wchar_t kServiceName[] = L"OpenA2dpSvc";
 constexpr DWORD kIdlePollMs = 250;
+// How long a service stop waits for the per-device workers before abandoning them.
+constexpr DWORD kWorkerStopWaitMs = 3000;
 
 // Set when the service (or Ctrl+C in console mode) asks the loop to stop.
 HANDLE g_stopEvent = nullptr;
@@ -97,9 +99,11 @@ void OpenLog()
 
 // Synchronous IOCTL on an overlapped handle: the handle is opened with
 // FILE_FLAG_OVERLAPPED so WAIT_EVENT can be cancelled, which makes every other
-// call need an OVERLAPPED as well.
+// call need an OVERLAPPED as well. The wait is bounded: a driver that stops
+// answering must not take the service thread (and with it the service stop) along.
 bool IoctlSync(HANDLE device, DWORD code, void* in, DWORD inLength, void* out, DWORD outLength, DWORD* bytes)
 {
+	constexpr DWORD kIoctlTimeoutMs = 5000;
 	OVERLAPPED ov = {};
 	ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	if (ov.hEvent == nullptr) {
@@ -108,12 +112,21 @@ bool IoctlSync(HANDLE device, DWORD code, void* in, DWORD inLength, void* out, D
 	DWORD returned = 0;
 	BOOL ok = DeviceIoControl(device, code, in, inLength, out, outLength, &returned, &ov);
 	if (!ok && GetLastError() == ERROR_IO_PENDING) {
-		ok = GetOverlappedResult(device, &ov, &returned, TRUE);
+		if (WaitForSingleObject(ov.hEvent, kIoctlTimeoutMs) == WAIT_OBJECT_0) {
+			ok = GetOverlappedResult(device, &ov, &returned, FALSE);
+		} else {
+			CancelIoEx(device, &ov);
+			WaitForSingleObject(ov.hEvent, 2000);
+			SetLastError(ERROR_TIMEOUT);
+			ok = FALSE;
+		}
 	}
+	const DWORD error = GetLastError();
 	CloseHandle(ov.hEvent);
 	if (bytes != nullptr) {
 		*bytes = returned;
 	}
+	SetLastError(error);
 	return ok != FALSE;
 }
 
@@ -141,7 +154,8 @@ WaitResult WaitForEvent(HANDLE device, Ioctl::WaitEventOut& ev)
 		const DWORD which = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
 		if (which == WAIT_OBJECT_0) {
 			CancelIoEx(device, &ov);
-			GetOverlappedResult(device, &ov, &bytes, TRUE);
+			// Bounded: the caller closes the handle next, which cancels whatever is left.
+			WaitForSingleObject(ov.hEvent, 2000);
 			CloseHandle(ov.hEvent);
 			return WaitResult::Stopped;
 		}
@@ -417,10 +431,24 @@ void RunLoop()
 		}
 	}
 
-	// A stop cancels the parked WAIT_EVENT, so the workers return promptly.
+	// A stop cancels the parked WAIT_EVENT, so the workers return promptly. A worker
+	// stuck elsewhere (the driver or the encoder not answering) must not keep the
+	// service from stopping: wait a bounded time, then detach what is left and let
+	// the process exit take it down.
+	const ULONGLONG joinDeadline = GetTickCount64() + kWorkerStopWaitMs;
 	for (auto& worker : workers) {
-		if (worker.Thread.joinable()) {
+		while (!worker.Done->load() && GetTickCount64() < joinDeadline) {
+			Sleep(10);
+		}
+		if (!worker.Thread.joinable()) {
+			continue;
+		}
+		if (worker.Done->load()) {
 			worker.Thread.join();
+		} else {
+			Log("[svc] %s did not stop within %lu ms; abandoning it", WstrToUtf8(worker.Link).c_str(),
+				static_cast<unsigned long>(kWorkerStopWaitMs));
+			worker.Thread.detach();
 		}
 	}
 

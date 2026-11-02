@@ -50,6 +50,7 @@ NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 {
 	// Failing to register or reach the headset is not fatal; the device stays started.
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	KeClearEvent(&ctx->StopEvent);
 	ServiceStart(ctx);
 	(void)L2capRegisterServer(ctx);
 	(void)L2capOpenSignalingChannel(ctx);
@@ -64,6 +65,14 @@ NTSTATUS OnSelfManagedIoRestart(_In_ WDFDEVICE device)
 NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	if (!SignalingAbortSession(ctx))
+	{
+		// The signaling work item is busy, typically opening the media channel. Cut its
+		// waits short so the CLOSE can still go out, then retry once.
+		KeSetEvent(&ctx->StopEvent, IO_NO_INCREMENT, FALSE);
+		(void)SignalingAbortSession(ctx);
+	}
+	KeSetEvent(&ctx->StopEvent, IO_NO_INCREMENT, FALSE);
 	MediaStop(ctx);
 	ServiceStop(ctx);
 	L2capUnregisterServer(ctx);

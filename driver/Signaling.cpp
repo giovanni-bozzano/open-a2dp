@@ -36,7 +36,14 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 	uint8_t* configIe, size_t& configIeLength)
 {
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
-	const bool forceCodec = (ctx->Preference.flags & Ioctl::kPreferenceForceCodec) != 0;
+	Ioctl::Preference preference;
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+		preference = ctx->Preference;
+		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+	}
+	const bool forceCodec = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 
 	// Which codecs the sink actually advertises is otherwise invisible in the log,
 	// and "AAC never wins" looks the same whether the sink lacks it or we skipped it.
@@ -45,7 +52,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 
 	if (codec == Avdtp::CodecType::Sbc)
 	{
-		if (forceCodec && ctx->Preference.codec != Ioctl::kCodecSbc)
+		if (forceCodec && preference.codec != Ioctl::kCodecSbc)
 		{
 			return 0;
 		}
@@ -72,7 +79,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 	if (codec == Avdtp::CodecType::Aac)
 	{
 		// AAC exists only while an encoder service is registered for this device.
-		if (!ServiceRegistered(ctx) || (forceCodec && ctx->Preference.codec != Ioctl::kCodecAac))
+		if (!ServiceRegistered(ctx) || (forceCodec && preference.codec != Ioctl::kCodecAac))
 		{
 			return 0;
 		}
@@ -104,6 +111,14 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 	return AacConfig::Validate(ie, ieLength);
 }
 
+// Refreshes the snapshot GET_STATUS reads without taking SessionLock. Caller holds SessionLock.
+void PublishStatus(DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->AvdtpStateSnapshot, static_cast<LONG>(ctx->Session.State()));
+	InterlockedExchange(&ctx->NegotiatedCodecSnapshot,
+		ctx->Session.SelectedIeLength() != 0 ? static_cast<LONG>(ctx->Session.SelectedCodec()) : 0);
+}
+
 void ResetSession(DEVICE_CONTEXT* ctx)
 {
 	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, kSbcDriverCapabilities,
@@ -117,6 +132,17 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->Session.SetLocalSep(Avdtp::kLocalAacSeid, Avdtp::CodecType::Aac, AacConfig::kLocalCapabilities,
 		AacConfig::kIeLength);
 	ctx->LoggedState = Avdtp::SessionState::Idle;
+	ctx->ResponseDeadline = 0;
+	ctx->ConnectDelayDeadline = 0;
+	InterlockedExchange(&ctx->MediaOpenPending, 0);
+	PublishStatus(ctx);
+}
+
+// Deadlines protect a new timer arm from callbacks queued by an older arm.
+void ArmConnectDelay(DEVICE_CONTEXT* ctx, LONGLONG milliseconds)
+{
+	ctx->ConnectDelayDeadline = KeQueryInterruptTime() + static_cast<ULONGLONG>(milliseconds) * 10000;
+	WdfTimerStart(ctx->ConnectDelayTimer, WDF_REL_TIMEOUT_IN_MS(milliseconds));
 }
 
 // Sends what the session produced and arms or stops the response timer. Caller holds SessionLock.
@@ -126,7 +152,8 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 {
 	if (length != 0)
 	{
-		NTSTATUS status = L2capSend(ctx, ctx->SignalingChannel, ctx->WriteBuffer, static_cast<ULONG>(length));
+		const NTSTATUS status = L2capSend(ctx, &ctx->SignalSend, ctx->SignalingChannel, ctx->WriteBuffer,
+			static_cast<ULONG>(length), SignalSendTimeoutMs);
 		if (!NT_SUCCESS(status))
 		{
 			if (IsLinkLoss(ctx, status))
@@ -138,22 +165,48 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 				OA2DP_LOG("signaling send failed 0x%08X", status);
 			}
 		}
+		if (length >= 2 && ctx->WriteBuffer[1] == static_cast<uint8_t>(Avdtp::Signal::Close))
+		{
+			OA2DP_LOG("AVDTP CLOSE sent (%u bytes), send status 0x%08X", static_cast<unsigned>(length), status);
+		}
+		if (length >= 2 && ctx->WriteBuffer[1] == static_cast<uint8_t>(Avdtp::Signal::Abort))
+		{
+			OA2DP_LOG("AVDTP ABORT sent (%u bytes), send status 0x%08X", static_cast<unsigned>(length), status);
+		}
 	}
 
 	if (ctx->Session.HasPendingCommand())
 	{
+		ctx->ResponseDeadline = KeQueryInterruptTime() + ResponseTimeoutMs * 10000;
 		WdfTimerStart(ctx->ResponseTimer, WDF_REL_TIMEOUT_IN_MS(ResponseTimeoutMs));
 	}
 	else
 	{
+		ctx->ResponseDeadline = 0;
 		WdfTimerStop(ctx->ResponseTimer, FALSE);
 	}
 
 	const Avdtp::SessionState state = ctx->Session.State();
+	PublishStatus(ctx);
 	if (state != ctx->LoggedState)
 	{
 		ctx->LoggedState = state;
 		OA2DP_LOG("AVDTP state %u (remote SEID %u)", static_cast<unsigned>(state), ctx->Session.RemoteSeid());
+		if (state == Avdtp::SessionState::Failed && ctx->SignalingState == ChannelOpen)
+		{
+			const auto reason = ctx->Session.LastDiscoveryFailure();
+			if (reason != Avdtp::DiscoveryFailure::None)
+			{
+				OA2DP_LOG("AVDTP discovery failed: reason %u (1=rejected 2=no usable sink 3=malformed 4=timeout), error present %u code 0x%02X",
+					static_cast<unsigned>(reason), ctx->Session.HasDiscoveryError() ? 1u : 0u,
+					static_cast<unsigned>(ctx->Session.DiscoveryError()));
+			}
+		}
+		else if (state != Avdtp::SessionState::Idle && state != Avdtp::SessionState::Failed)
+		{
+			ctx->ConnectDelayDeadline = 0;
+			WdfTimerStop(ctx->ConnectDelayTimer, FALSE);
+		}
 		if (state == Avdtp::SessionState::Open)
 		{
 			const uint8_t* ie = ctx->Session.SelectedIe();
@@ -171,47 +224,9 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 			}
 			else
 			{
-				// The sink sometimes refuses the first media channel (L2CAP response 4,
-				// "no resources") because a previous session has not fully released it.
-				// Retry a few times before giving up; the sink usually frees the channel
-				// within a couple of hundred milliseconds.
-				NTSTATUS mediaStatus = STATUS_UNSUCCESSFUL;
-				for (int attempt = 0; attempt < 3; ++attempt)
-				{
-					if (attempt != 0)
-					{
-						LARGE_INTEGER delay;
-						delay.QuadPart = -10000LL * 200;
-						WdfWaitLockRelease(ctx->SessionLock);
-						KeDelayExecutionThread(KernelMode, FALSE, &delay);
-						WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-						// The channel may have closed while we waited.
-						if (ctx->SignalingState != ChannelOpen)
-						{
-							ctx->SignalingWorkItemThread = nullptr;
-							WdfWaitLockRelease(ctx->SessionLock);
-							return;
-						}
-					}
-					mediaStatus = L2capOpenMediaChannel(ctx);
-					if (NT_SUCCESS(mediaStatus))
-					{
-						break;
-					}
-					OA2DP_LOG("media channel open attempt %d failed 0x%08X", attempt + 1, mediaStatus);
-				}
-				if (NT_SUCCESS(mediaStatus))
-				{
-					Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-				}
-				else
-				{
-					OA2DP_LOG("media channel open failed after retries; tearing down the signaling channel");
-					// Tear the session down so the sink releases its resources and can
-					// be reconnected cleanly instead of leaving a half-open AVDTP
-					// session that never reaches Streaming.
-					L2capCloseSignalingChannel(ctx);
-				}
+				// Opening the media channel waits on the transport, so it is not done here
+				// but by the work item once it has re-armed the signaling read.
+				InterlockedExchange(&ctx->MediaOpenPending, 1);
 			}
 		}
 		else if (state == Avdtp::SessionState::Streaming)
@@ -303,6 +318,56 @@ void OnConnectDelay(_In_ WDFTIMER timer)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+// Opens the media channel after the initiator's OPEN was accepted, then sends START.
+// Runs in the signaling work item with SessionLock held; every wait on the transport
+// is bounded, and StopEvent cuts the waits short when the device is going away.
+void OpenMediaTransport(DEVICE_CONTEXT* ctx)
+{
+	// The sink sometimes refuses the first media channel (L2CAP response 4, "no
+	// resources") because a previous session has not fully released it. Retry a few
+	// times before giving up; the sink usually frees the channel within a couple of
+	// hundred milliseconds.
+	NTSTATUS mediaStatus = STATUS_UNSUCCESSFUL;
+	for (int attempt = 0; attempt < 3; ++attempt)
+	{
+		if (attempt != 0)
+		{
+			LARGE_INTEGER delay;
+			delay.QuadPart = -10000LL * 200;
+			WdfWaitLockRelease(ctx->SessionLock);
+			const NTSTATUS slept = KeWaitForSingleObject(&ctx->StopEvent, Executive, KernelMode, FALSE, &delay);
+			WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+			// The device may be going away or the channel may have closed while we waited.
+			if (slept != STATUS_TIMEOUT || ctx->SignalingState != ChannelOpen ||
+				ctx->Session.State() != Avdtp::SessionState::Open)
+			{
+				return;
+			}
+		}
+		mediaStatus = L2capOpenMediaChannel(ctx);
+		if (NT_SUCCESS(mediaStatus))
+		{
+			break;
+		}
+		OA2DP_LOG("media channel open attempt %d failed 0x%08X", attempt + 1, mediaStatus);
+		if (mediaStatus == STATUS_CANCELLED)
+		{
+			return; // teardown cut the open short
+		}
+	}
+
+	if (NT_SUCCESS(mediaStatus))
+	{
+		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		return;
+	}
+
+	OA2DP_LOG("media channel open failed after retries; tearing down the signaling channel");
+	// Tear the session down so the sink releases its resources and can be reconnected
+	// cleanly instead of leaving a half-open AVDTP session that never reaches Streaming.
+	L2capCloseSignalingChannel(ctx);
+}
+
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
@@ -326,9 +391,10 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				WdfWaitLockRelease(ctx->SessionLock);
 				LARGE_INTEGER interval;
 				interval.QuadPart = -10000LL * kConnectWaitMs;
-				KeDelayExecutionThread(KernelMode, FALSE, &interval);
+				// StopEvent ends the pause early when the device is going away.
+				const NTSTATUS slept = KeWaitForSingleObject(&ctx->StopEvent, Executive, KernelMode, FALSE, &interval);
 				WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-				if (ServiceRegistered(ctx) || ctx->SignalingState != ChannelOpen)
+				if (slept != STATUS_TIMEOUT || ServiceRegistered(ctx) || ctx->SignalingState != ChannelOpen)
 				{
 					break;
 				}
@@ -351,7 +417,7 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				OA2DP_LOG("signaling: headset-initiated; waiting up to %u ms for it to configure the stream",
 					static_cast<unsigned>(kIncomingConnectDelayMs));
 				SubmitRead(ctx);
-				WdfTimerStart(ctx->ConnectDelayTimer, WDF_REL_TIMEOUT_IN_MS(kIncomingConnectDelayMs));
+				ArmConnectDelay(ctx, kIncomingConnectDelayMs);
 			}
 			else
 			{
@@ -361,18 +427,53 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		}
 	}
 
-	if (InterlockedExchange(&ctx->DeferredConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
-		ctx->Session.State() == Avdtp::SessionState::Idle)
-	{
-		OA2DP_LOG("signaling: headset did not configure the stream; starting discovery");
-		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-	}
-
 	if (InterlockedExchange(&ctx->ReadCompleted, 0) != 0)
 	{
-		const size_t length = ctx->ReadBrb.BufferSize;
-		Transmit(ctx, ctx->Session.OnPacket(ctx->ReadBuffer, length, ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		if (ctx->SignalingState == ChannelOpen)
+		{
+			const size_t length = ctx->ReadBrb.BufferSize;
+			if (ctx->Session.State() == Avdtp::SessionState::Discovering && length >= 2 &&
+				(ctx->ReadBuffer[0] & 0x0F) == 0x02 && ctx->ReadBuffer[1] == 0x01)
+			{
+				for (size_t pos = 2; pos + 2 <= length; pos += 2)
+				{
+					OA2DP_LOG("AVDTP discover SEP seid %u inUse %u media %u sepType %u",
+						static_cast<unsigned>(ctx->ReadBuffer[pos] >> 2), static_cast<unsigned>((ctx->ReadBuffer[pos] >> 1) & 1),
+						static_cast<unsigned>(ctx->ReadBuffer[pos + 1] >> 4), static_cast<unsigned>((ctx->ReadBuffer[pos + 1] >> 3) & 1));
+				}
+			}
+			if ((ctx->Session.State() == Avdtp::SessionState::Aborting || ctx->Session.State() == Avdtp::SessionState::Closing) &&
+				length >= 2 && ctx->ReadBuffer[1] == static_cast<uint8_t>(ctx->Session.State() == Avdtp::SessionState::Closing
+					? Avdtp::Signal::Close : Avdtp::Signal::Abort))
+			{
+				OA2DP_LOG("AVDTP %s response type %u (2=accept 3=reject), length %u, code 0x%02X",
+					ctx->Session.State() == Avdtp::SessionState::Closing ? "CLOSE" : "ABORT",
+					static_cast<unsigned>(ctx->ReadBuffer[0] & 0x03), static_cast<unsigned>(length),
+					static_cast<unsigned>(length > 2 ? ctx->ReadBuffer[2] : 0));
+			}
+			Transmit(ctx, ctx->Session.OnPacket(ctx->ReadBuffer, length, ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		}
 		SubmitRead(ctx);
+	}
+
+	if (InterlockedExchange(&ctx->DeferredConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
+		ctx->ConnectDelayDeadline != 0)
+	{
+		const ULONGLONG now = KeQueryInterruptTime();
+		if (now < ctx->ConnectDelayDeadline)
+		{
+			WdfTimerStart(ctx->ConnectDelayTimer, -static_cast<LONGLONG>(ctx->ConnectDelayDeadline - now));
+		}
+		else
+		{
+			ctx->ConnectDelayDeadline = 0;
+			const auto state = ctx->Session.State();
+			if (state == Avdtp::SessionState::Idle)
+			{
+				OA2DP_LOG("signaling: starting discovery");
+				Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+			}
+		}
 	}
 
 	if (InterlockedExchange(&ctx->StartPending, 0) != 0 && ctx->Session.State() == Avdtp::SessionState::Open &&
@@ -387,14 +488,29 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		Transmit(ctx, ctx->Session.Suspend(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	}
 
-	if (InterlockedExchange(&ctx->TimeoutPending, 0) != 0 && ctx->Session.HasPendingCommand())
+	if (InterlockedExchange(&ctx->TimeoutPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
+		ctx->ResponseDeadline != 0 && ctx->Session.HasPendingCommand())
 	{
-		OA2DP_LOG("AVDTP response timeout in state %u", static_cast<unsigned>(ctx->Session.State()));
-		Transmit(ctx, ctx->Session.OnTimeout(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		const ULONGLONG now = KeQueryInterruptTime();
+		if (now < ctx->ResponseDeadline)
+		{
+			WdfTimerStart(ctx->ResponseTimer, -static_cast<LONGLONG>(ctx->ResponseDeadline - now));
+		}
+		else
+		{
+			OA2DP_LOG("AVDTP response timeout in state %u", static_cast<unsigned>(ctx->Session.State()));
+			Transmit(ctx, ctx->Session.OnTimeout(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		}
 	}
 
-	WdfWaitLockRelease(ctx->SessionLock);
+	if (InterlockedExchange(&ctx->MediaOpenPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
+		ctx->Session.State() == Avdtp::SessionState::Open && ctx->MediaChannel == nullptr)
+	{
+		OpenMediaTransport(ctx);
+	}
+
 	ctx->SignalingWorkItemThread = nullptr;
+	WdfWaitLockRelease(ctx->SessionLock);
 }
 } // namespace
 
@@ -481,6 +597,59 @@ void SignalingResetSession(_In_ DEVICE_CONTEXT* ctx)
 	{
 		WdfWaitLockRelease(ctx->SessionLock);
 	}
+}
+
+bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx)
+{
+	if (ctx->SignalingState != ChannelOpen || ctx->SignalingWorkItemThread == KeGetCurrentThread())
+	{
+		return true;
+	}
+
+	LONGLONG lockTimeout = WDF_REL_TIMEOUT_IN_MS(2000);
+	if (WdfWaitLockAcquire(ctx->SessionLock, &lockTimeout) != STATUS_SUCCESS)
+	{
+		OA2DP_LOG("AVDTP teardown: session is busy, skipping CLOSE");
+		return false;
+	}
+	const auto state = ctx->Session.State();
+	// A normal CLOSE lets the headset release its SEP; ABORT alone left PANTONE reporting it in use.
+	size_t length = ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer));
+	const bool closing = length != 0;
+	if (!closing)
+	{
+		length = ctx->Session.Abort(ctx->WriteBuffer, sizeof(ctx->WriteBuffer));
+	}
+	if (length != 0)
+	{
+		OA2DP_LOG("AVDTP %s before teardown (state %u)", closing ? "closing session" : "aborting session",
+			static_cast<unsigned>(state));
+		Transmit(ctx, length);
+	}
+	WdfWaitLockRelease(ctx->SessionLock);
+
+	// Give the headset up to 1 s to answer, so the command takes effect before the channel closes.
+	// The read work item applies the response; this thread only polls the session state.
+	for (int attempt = 0; attempt < 100; ++attempt)
+	{
+		if (WdfWaitLockAcquire(ctx->SessionLock, &lockTimeout) != STATUS_SUCCESS)
+		{
+			OA2DP_LOG("AVDTP teardown: session is busy, not waiting for the response");
+			return true;
+		}
+		const auto now = ctx->Session.State();
+		const bool waiting = now == Avdtp::SessionState::Aborting || now == Avdtp::SessionState::Closing;
+		WdfWaitLockRelease(ctx->SessionLock);
+		if (!waiting)
+		{
+			return true;
+		}
+		LARGE_INTEGER delay;
+		delay.QuadPart = -100000LL; // 10 ms
+		KeDelayExecutionThread(KernelMode, FALSE, &delay);
+	}
+	OA2DP_LOG("AVDTP %s response not received within 1 s", closing ? "CLOSE" : "ABORT");
+	return true;
 }
 
 void SignalingStop(_In_ DEVICE_CONTEXT* ctx)

@@ -47,6 +47,31 @@ inline constexpr LONG ChannelOpening = 1;
 inline constexpr LONG ChannelOpen = 2;
 inline constexpr LONG ChannelClosing = 3;
 
+// Bounds on how long a thread of ours may wait for the Bluetooth transport. The
+// transport does not always complete a cancelled request, so no wait on it may be
+// unbounded and nothing it still owns may be freed or reused after a wait gave up.
+inline constexpr ULONG SignalSendTimeoutMs = 1000;
+inline constexpr ULONG MediaSendTimeoutMs = 500;
+inline constexpr ULONG BrbControlTimeoutMs = 3000;
+
+inline constexpr ULONG SendSlotBytes = MediaMaxMtu > OpenA2dp::Avdtp::kMaxSignalPacket
+	? static_cast<ULONG>(MediaMaxMtu)
+	: static_cast<ULONG>(OpenA2dp::Avdtp::kMaxSignalPacket);
+
+// One asynchronous ACL send. The slot owns the request, the BRB and a copy of the
+// data, so a wait that times out can leave the send in flight without leaving the
+// transport a pointer into a stack frame or a buffer another thread rewrites.
+// Idle is signaled while no send is in flight. Callers serialize access to a slot.
+struct SEND_SLOT
+{
+	WDFREQUEST Request;
+	WDFMEMORY BrbMemory;
+	struct _BRB_L2CA_ACL_TRANSFER Brb;
+	KEVENT Idle;
+	volatile LONG Status;
+	UCHAR Buffer[SendSlotBytes];
+};
+
 struct DEVICE_CONTEXT
 {
 	WDFDEVICE Device;
@@ -73,6 +98,24 @@ struct DEVICE_CONTEXT
 
 	WDFWORKITEM DisconnectWorkItem;
 
+	// Signaled once device teardown has begun, after the courtesy CLOSE. Waits that
+	// would otherwise run to their timeout (opening the media channel, the pauses
+	// between attempts) end as soon as it is set, so teardown never waits for them.
+	KEVENT StopEvent;
+
+	// Asynchronous sends: AVDTP signaling (SessionLock) and media (MediaLock).
+	SEND_SLOT SignalSend;
+	SEND_SLOT MediaSend;
+
+	// Lock-free snapshot of the session for GET_STATUS, refreshed under SessionLock.
+	volatile LONG AvdtpStateSnapshot;
+	volatile LONG NegotiatedCodecSnapshot;
+	// Set when the session reached Open as the initiator; the signaling work item then
+	// opens the media channel after it has re-armed the read.
+	volatile LONG MediaOpenPending;
+	// Consecutive media ticks that found the previous send still pending.
+	ULONG MediaBusyTicks;
+
 	// L2CAP server for headset-initiated connections on the AVDTP PSM. Incoming
 	// signaling connections are accepted through OpenRequest; others are
 	// refused through RejectRequest (RejectBusy guards it).
@@ -94,6 +137,8 @@ struct DEVICE_CONTEXT
 	OpenA2dp::Avdtp::SessionState LoggedState;
 	WDFWORKITEM SignalingWorkItem;
 	WDFTIMER ResponseTimer;
+	ULONGLONG ResponseDeadline;
+	ULONGLONG ConnectDelayDeadline;
 	volatile LONG ConnectPending;
 	volatile LONG ReadCompleted;
 	volatile LONG TimeoutPending;
@@ -121,7 +166,7 @@ struct DEVICE_CONTEXT
 	WDFWAITLOCK MediaLock;
 	WDFTIMER MediaTimer;
 	WDFWORKITEM MediaWorkItem;
-	BOOLEAN MediaActive;
+	volatile BOOLEAN MediaActive;
 	ULONGLONG MediaStartTime;
 	ULONGLONG MediaSamplesSent;
 	USHORT RtpSequence;
@@ -172,6 +217,9 @@ struct DEVICE_CONTEXT
 	volatile LONG EncoderRegistered;
 	volatile LONG RingsMapped;
 	volatile LONG ServiceActive;
+	// Codec preference. Written by SET_PREFERENCE and read by the negotiation under
+	// PreferenceLock (a spin lock), so neither side ever waits on SessionLock.
+	KSPIN_LOCK PreferenceLock;
 	OpenA2dp::Ioctl::Preference Preference;
 
 	// Active media configuration (GET_STATUS/WAIT_EVENT) and failure counters.
@@ -220,8 +268,19 @@ void L2capUnregisterServer(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx);
 
+// Copies the data into the slot and sends it, waiting at most timeoutMs. On a timeout
+// the request is cancelled and STATUS_IO_TIMEOUT returned; the send may still be in
+// flight, which L2capSendIdle reports. STATUS_DEVICE_BUSY when the slot is not idle.
 _IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, _In_reads_bytes_(length) PVOID data, _In_ ULONG length);
+NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
+	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs);
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+bool L2capSendIdle(_In_ SEND_SLOT* slot);
+
+// Cancels the send in flight, if any, so the transport releases the channel.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void L2capCancelSend(_In_ SEND_SLOT* slot);
 
 // True when a failed send means the headset went away, not a driver fault.
 bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status);
@@ -254,6 +313,11 @@ void SignalingOnMediaChannelOpen(_In_ DEVICE_CONTEXT* ctx);
 // Called before the signaling channel is closed; stops reads and the timer.
 _IRQL_requires_(PASSIVE_LEVEL)
 void SignalingStop(_In_ DEVICE_CONTEXT* ctx);
+
+// Best-effort AVDTP CLOSE (ABORT as fallback) before teardown, so the headset frees its SEP.
+// Bounded. Returns false when the session lock stayed busy and nothing was sent.
+_IRQL_requires_(PASSIVE_LEVEL)
+bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
 
 // Asks the signaling work item to SUSPEND the stream (e.g. after a media send failure).
 _IRQL_requires_max_(DISPATCH_LEVEL)

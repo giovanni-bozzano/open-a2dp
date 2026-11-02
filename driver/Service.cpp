@@ -433,14 +433,17 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 		}
 		*out = {};
 		out->abiVersion = Ioctl::kAbiVersion;
-		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-		out->avdtpState = static_cast<uint32_t>(ctx->Session.State());
-		out->negotiatedCodec = ctx->Session.SelectedIeLength() != 0
-			? static_cast<uint32_t>(ctx->Session.SelectedCodec())
-			: 0;
-		out->preferenceFlags = ctx->Preference.flags;
-		out->preferenceCodec = ctx->Preference.codec;
-		WdfWaitLockRelease(ctx->SessionLock);
+		// Everything here comes from lock-free snapshots or short spin locks, so a
+		// busy session can never make the CLI wait.
+		out->avdtpState = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->AvdtpStateSnapshot, 0, 0));
+		out->negotiatedCodec = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->NegotiatedCodecSnapshot, 0, 0));
+		{
+			KIRQL irql;
+			KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+			out->preferenceFlags = ctx->Preference.flags;
+			out->preferenceCodec = ctx->Preference.codec;
+			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+		}
 		const LONG mode = InterlockedCompareExchange(&ctx->MediaMode, 0, 0);
 		if (InterlockedCompareExchange(&ctx->StreamFault, 0, 0) != 0)
 		{
@@ -504,9 +507,12 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 			Complete(request, STATUS_INVALID_PARAMETER);
 			return;
 		}
-		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-		ctx->Preference = *in;
-		WdfWaitLockRelease(ctx->SessionLock);
+		{
+			KIRQL irql;
+			KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+			ctx->Preference = *in;
+			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;
 	}
@@ -660,7 +666,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	// A device object's parent must stay the driver object (WdfDeviceCreate
 	// rejects ParentObject); ServiceStop deletes the control device explicitly.
 	attrs.EvtCleanupCallback = OnControlDeviceCleanup;
-	// GET_STATUS takes SessionLock, and a parked WAIT_EVENT must not block the
+	// A parked WAIT_EVENT must not block the
 	// control queue, so the IOCTL callbacks run at PASSIVE_LEVEL in parallel.
 	attrs.ExecutionLevel = WdfExecutionLevelPassive;
 

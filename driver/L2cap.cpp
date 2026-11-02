@@ -3,17 +3,210 @@
 namespace
 {
 
-NTSTATUS SubmitBrbSynchronously(_In_ DEVICE_CONTEXT* ctx, _Inout_ PBRB brb, _In_ ULONG size)
+// A control BRB (register/unregister server, open/close channel) in flight. The BRB
+// lives here rather than on the caller's stack so a caller that stops waiting can
+// return while the transport still owns it. Two references: the caller's and the
+// completion routine's; the last one to let go frees the operation.
+struct BRB_OP
 {
-	WDF_MEMORY_DESCRIPTOR desc;
-	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&desc, brb, size);
+	DEVICE_CONTEXT* Ctx;
+	WDFREQUEST Request;
+	WDFMEMORY Memory;
+	KEVENT Done;
+	volatile LONG State; // 0 running, 1 completed, 2 abandoned by its waiter
+	volatile LONG Refs;
+	BOOLEAN IsOpen;
+	BOOLEAN IsRegister;
+	NTSTATUS Status;
+	union
+	{
+		struct _BRB_L2CA_OPEN_CHANNEL Open;
+		struct _BRB_L2CA_CLOSE_CHANNEL Close;
+		struct _BRB_L2CA_REGISTER_SERVER Register;
+		struct _BRB_L2CA_UNREGISTER_SERVER Unregister;
+	} Brb;
+};
 
-	WDF_REQUEST_SEND_OPTIONS options;
-	WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
-	WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_MS(5000));
+void BrbOpRelease(_In_ BRB_OP* op)
+{
+	if (InterlockedDecrement(&op->Refs) == 0)
+	{
+		WdfObjectDelete(op->Request); // also deletes the memory object parented to it
+		ExFreePoolWithTag(op, OpenA2dpPoolTag);
+	}
+}
 
-	return WdfIoTargetSendInternalIoctlOthersSynchronously(
-		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTH_SUBMIT_BRB, &desc, nullptr, nullptr, &options, nullptr);
+BRB_OP* BrbOpCreate(_In_ DEVICE_CONTEXT* ctx, _In_ BRB_TYPE type)
+{
+	auto* op = static_cast<BRB_OP*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(BRB_OP), OpenA2dpPoolTag));
+	if (op == nullptr)
+	{
+		return nullptr;
+	}
+	op->Ctx = ctx;
+	op->Refs = 2;
+	op->IsOpen = type == BRB_L2CA_OPEN_CHANNEL;
+	op->IsRegister = type == BRB_L2CA_REGISTER_SERVER;
+	KeInitializeEvent(&op->Done, NotificationEvent, FALSE);
+
+	WDF_OBJECT_ATTRIBUTES attrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
+	attrs.ParentObject = ctx->Device;
+	if (!NT_SUCCESS(WdfRequestCreate(&attrs, ctx->IoTarget, &op->Request)))
+	{
+		ExFreePoolWithTag(op, OpenA2dpPoolTag);
+		return nullptr;
+	}
+	attrs.ParentObject = op->Request;
+	if (!NT_SUCCESS(WdfMemoryCreatePreallocated(&attrs, &op->Brb, sizeof(op->Brb), &op->Memory)))
+	{
+		WdfObjectDelete(op->Request);
+		ExFreePoolWithTag(op, OpenA2dpPoolTag);
+		return nullptr;
+	}
+	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&op->Brb), type);
+	return op;
+}
+
+void CloseOrphanedChannel(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel);
+void UnregisterOrphanedServer(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_SERVER_HANDLE server);
+
+void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context)
+{
+	auto* op = static_cast<BRB_OP*>(context);
+	op->Status = params->IoStatus.Status;
+	if (InterlockedCompareExchange(&op->State, 1, 0) == 2 && NT_SUCCESS(op->Status))
+	{
+		// The waiter gave up and nobody will ever use this result; do not leak it.
+		if (op->IsOpen)
+		{
+			CloseOrphanedChannel(op->Ctx, op->Brb.Open.ChannelHandle);
+		}
+		else if (op->IsRegister)
+		{
+			UnregisterOrphanedServer(op->Ctx, op->Brb.Register.ServerHandle);
+		}
+	}
+	KeSetEvent(&op->Done, IO_NO_INCREMENT, FALSE);
+	BrbOpRelease(op);
+}
+
+// Sends the operation. On failure the completion routine will not run, so the
+// completion reference is dropped here.
+NTSTATUS BrbOpStart(_In_ BRB_OP* op)
+{
+	DEVICE_CONTEXT* ctx = op->Ctx;
+	NTSTATUS status = WdfIoTargetFormatRequestForInternalIoctlOthers(ctx->IoTarget, op->Request,
+		IOCTL_INTERNAL_BTH_SUBMIT_BRB, op->Memory, nullptr, nullptr, nullptr, nullptr, nullptr);
+	if (NT_SUCCESS(status))
+	{
+		WdfRequestSetCompletionRoutine(op->Request, OnBrbOpComplete, op);
+		if (WdfRequestSend(op->Request, ctx->IoTarget, WDF_NO_SEND_OPTIONS))
+		{
+			return STATUS_SUCCESS;
+		}
+		status = WdfRequestGetStatus(op->Request);
+	}
+	op->Status = status;
+	InterlockedExchange(&op->State, 1);
+	KeSetEvent(&op->Done, IO_NO_INCREMENT, FALSE);
+	BrbOpRelease(op);
+	return status;
+}
+
+void CloseOrphanedChannel(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel)
+{
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_CLOSE_CHANNEL);
+	if (op == nullptr)
+	{
+		return;
+	}
+	op->Brb.Close.BtAddress = ctx->RemoteAddress;
+	op->Brb.Close.ChannelHandle = channel;
+	op->State = 2; // nobody waits for this one
+	(void)BrbOpStart(op);
+	BrbOpRelease(op);
+	OA2DP_LOG("closed a channel whose open finished after its waiter gave up");
+}
+
+void UnregisterOrphanedServer(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_SERVER_HANDLE server)
+{
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_UNREGISTER_SERVER);
+	if (op == nullptr)
+	{
+		return;
+	}
+	op->Brb.Unregister.BtAddress = ctx->RemoteAddress;
+	op->Brb.Unregister.Psm = AvdtpPsm;
+	op->Brb.Unregister.ServerHandle = server;
+	op->State = 2;
+	(void)BrbOpStart(op);
+	BrbOpRelease(op);
+	OA2DP_LOG("unregistered a server whose registration finished after its waiter gave up");
+}
+
+// Runs a prepared BRB operation and waits at most timeoutMs. With abortable the wait
+// also ends when teardown begins (StopEvent). When the wait ends early the request is
+// cancelled and, if the transport still does not complete it, abandoned: the operation
+// outlives this call and the completion routine cleans up. The caller still owns its
+// reference and must call BrbOpRelease. Results in op->Brb are valid only when the
+// returned status is a success.
+NTSTATUS BrbOpRun(_In_ BRB_OP* op, _In_ ULONG timeoutMs, _In_ bool abortable)
+{
+	DEVICE_CONTEXT* ctx = op->Ctx;
+	NTSTATUS status = BrbOpStart(op);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	LARGE_INTEGER timeout;
+	timeout.QuadPart = -static_cast<LONGLONG>(timeoutMs) * 10000;
+	NTSTATUS wait;
+	if (abortable)
+	{
+		PVOID objects[2] = {&op->Done, &ctx->StopEvent};
+		wait = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, &timeout, nullptr);
+	}
+	else
+	{
+		wait = KeWaitForSingleObject(&op->Done, Executive, KernelMode, FALSE, &timeout);
+	}
+	if (wait == STATUS_WAIT_0)
+	{
+		return op->Status;
+	}
+
+	WdfRequestCancelSentRequest(op->Request);
+	timeout.QuadPart = -1000000LL; // 100 ms for a well-behaved transport to complete the cancel
+	if (KeWaitForSingleObject(&op->Done, Executive, KernelMode, FALSE, &timeout) == STATUS_SUCCESS)
+	{
+		return op->Status;
+	}
+	if (InterlockedCompareExchange(&op->State, 2, 0) == 1)
+	{
+		return op->Status; // completed in the instant between the wait and the abandon
+	}
+	OA2DP_LOG("BRB did not complete (%s); abandoning it", wait == STATUS_TIMEOUT ? "timeout" : "teardown");
+	return wait == STATUS_TIMEOUT ? STATUS_IO_TIMEOUT : STATUS_CANCELLED;
+}
+
+void OnSendComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context)
+{
+	auto* slot = static_cast<SEND_SLOT*>(context);
+	InterlockedExchange(&slot->Status, params->IoStatus.Status);
+	KeSetEvent(&slot->Idle, IO_NO_INCREMENT, FALSE);
+}
+
+NTSTATUS InitSendSlot(_In_ DEVICE_CONTEXT* ctx, _In_ WDF_OBJECT_ATTRIBUTES* attrs, _Inout_ SEND_SLOT* slot)
+{
+	KeInitializeEvent(&slot->Idle, NotificationEvent, TRUE);
+	NTSTATUS status = WdfRequestCreate(attrs, ctx->IoTarget, &slot->Request);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	return WdfMemoryCreatePreallocated(attrs, &slot->Brb, sizeof(slot->Brb), &slot->BrbMemory);
 }
 
 void OnIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication, _In_ PINDICATION_PARAMETERS parameters)
@@ -193,6 +386,8 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 
 	if (InterlockedCompareExchange(&ctx->SignalingState, ChannelOpening, ChannelClosed) != ChannelClosed)
 	{
+		OA2DP_LOG("incoming signaling connection refused: signaling channel already in state %ld",
+			static_cast<long>(ctx->SignalingState));
 		RespondIncoming(ctx, parameters->ConnectionHandle, parameters->BtAddress, false);
 		return;
 	}
@@ -230,6 +425,8 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeEvent(&ctx->OpenIdle, NotificationEvent, TRUE);
+	KeInitializeEvent(&ctx->StopEvent, NotificationEvent, FALSE);
+	KeInitializeSpinLock(&ctx->PreferenceLock);
 	ctx->IoTarget = WdfDeviceGetIoTarget(ctx->Device);
 
 	NTSTATUS status = WdfFdoQueryForInterface(ctx->Device, &GUID_BTHDDI_PROFILE_DRIVER_INTERFACE,
@@ -264,7 +461,18 @@ NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
-	return WdfMemoryCreatePreallocated(&attrs, &ctx->RejectBrb, sizeof(ctx->RejectBrb), &ctx->RejectBrbMemory);
+	status = WdfMemoryCreatePreallocated(&attrs, &ctx->RejectBrb, sizeof(ctx->RejectBrb), &ctx->RejectBrbMemory);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	status = InitSendSlot(ctx, &attrs, &ctx->SignalSend);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	return InitSendSlot(ctx, &attrs, &ctx->MediaSend);
 }
 
 NTSTATUS L2capRegisterServer(_In_ DEVICE_CONTEXT* ctx)
@@ -274,20 +482,25 @@ NTSTATUS L2capRegisterServer(_In_ DEVICE_CONTEXT* ctx)
 		return STATUS_SUCCESS;
 	}
 
-	struct _BRB_L2CA_REGISTER_SERVER brb;
-	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_REGISTER_SERVER);
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_REGISTER_SERVER);
+	if (op == nullptr)
+	{
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	auto& brb = op->Brb.Register;
 	brb.BtAddress = ctx->RemoteAddress;
 	brb.PSM = AvdtpPsm;
 	brb.IndicationCallback = &OnServerIndication;
 	brb.IndicationCallbackContext = ctx;
 	brb.ReferenceObject = WdfDeviceWdmGetDeviceObject(ctx->Device);
 
-	NTSTATUS status = SubmitBrbSynchronously(ctx, reinterpret_cast<PBRB>(&brb), sizeof(brb));
+	NTSTATUS status = BrbOpRun(op, BrbControlTimeoutMs, false);
 	OA2DP_LOG("L2CAP server register 0x%08X", status);
 	if (NT_SUCCESS(status))
 	{
 		ctx->ServerHandle = brb.ServerHandle;
 	}
+	BrbOpRelease(op);
 	return status;
 }
 
@@ -298,14 +511,19 @@ void L2capUnregisterServer(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	struct _BRB_L2CA_UNREGISTER_SERVER brb;
-	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_UNREGISTER_SERVER);
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_UNREGISTER_SERVER);
+	if (op == nullptr)
+	{
+		return;
+	}
+	auto& brb = op->Brb.Unregister;
 	brb.BtAddress = ctx->RemoteAddress;
 	brb.Psm = AvdtpPsm;
 	brb.ServerHandle = ctx->ServerHandle;
-	NTSTATUS status = SubmitBrbSynchronously(ctx, reinterpret_cast<PBRB>(&brb), sizeof(brb));
+	NTSTATUS status = BrbOpRun(op, BrbControlTimeoutMs, false);
 	OA2DP_LOG("L2CAP server unregister 0x%08X", status);
 	ctx->ServerHandle = nullptr;
+	BrbOpRelease(op);
 }
 
 NTSTATUS L2capRetrieveRemoteAddress(_In_ DEVICE_CONTEXT* ctx)
@@ -394,13 +612,17 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 
 	SignalingStop(ctx);
 	L2capCloseMediaChannel(ctx);
+	L2capCancelSend(&ctx->SignalSend);
 
-	struct _BRB_L2CA_CLOSE_CHANNEL brb;
-	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_CLOSE_CHANNEL);
-	brb.BtAddress = ctx->RemoteAddress;
-	brb.ChannelHandle = ctx->SignalingChannel;
-
-	NTSTATUS status = SubmitBrbSynchronously(ctx, reinterpret_cast<PBRB>(&brb), sizeof(brb));
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_CLOSE_CHANNEL);
+	NTSTATUS status = STATUS_INSUFFICIENT_RESOURCES;
+	if (op != nullptr)
+	{
+		op->Brb.Close.BtAddress = ctx->RemoteAddress;
+		op->Brb.Close.ChannelHandle = ctx->SignalingChannel;
+		status = BrbOpRun(op, BrbControlTimeoutMs, false);
+		BrbOpRelease(op);
+	}
 	OA2DP_LOG("signaling channel closed 0x%08X", status);
 
 	ctx->SignalingChannel = nullptr;
@@ -409,24 +631,80 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	AudioNotifyLinkState(ctx);
 }
 
-NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel, _In_reads_bytes_(length) PVOID data, _In_ ULONG length)
+bool L2capSendIdle(_In_ SEND_SLOT* slot)
 {
-	struct _BRB_L2CA_ACL_TRANSFER brb;
-	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_ACL_TRANSFER);
-	brb.BtAddress = ctx->RemoteAddress;
-	brb.ChannelHandle = channel;
-	brb.TransferFlags = ACL_TRANSFER_DIRECTION_OUT;
-	brb.BufferSize = length;
-	brb.Buffer = data;
+	return KeReadStateEvent(&slot->Idle) != 0;
+}
 
-	// A stalled transfer must not block teardown forever (it holds MediaLock/SessionLock).
-	WDF_REQUEST_SEND_OPTIONS options;
-	WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
-	WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_MS(1000));
-	WDF_MEMORY_DESCRIPTOR desc;
-	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&desc, &brb, sizeof(brb));
-	return WdfIoTargetSendInternalIoctlOthersSynchronously(
-		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTH_SUBMIT_BRB, &desc, nullptr, nullptr, &options, nullptr);
+void L2capCancelSend(_In_ SEND_SLOT* slot)
+{
+	if (!L2capSendIdle(slot))
+	{
+		WdfRequestCancelSentRequest(slot->Request);
+	}
+}
+
+NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
+	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs)
+{
+	if (length > sizeof(slot->Buffer))
+	{
+		return STATUS_BUFFER_OVERFLOW;
+	}
+	if (!L2capSendIdle(slot))
+	{
+		return STATUS_DEVICE_BUSY;
+	}
+	KeClearEvent(&slot->Idle);
+	RtlCopyMemory(slot->Buffer, data, length);
+
+	WDF_REQUEST_REUSE_PARAMS reuse;
+	WDF_REQUEST_REUSE_PARAMS_INIT(&reuse, WDF_REQUEST_REUSE_NO_FLAGS, STATUS_SUCCESS);
+	NTSTATUS status = WdfRequestReuse(slot->Request, &reuse);
+	if (NT_SUCCESS(status))
+	{
+		auto& brb = slot->Brb;
+		ctx->Profile.BthReuseBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_ACL_TRANSFER);
+		brb.BtAddress = ctx->RemoteAddress;
+		brb.ChannelHandle = channel;
+		brb.TransferFlags = ACL_TRANSFER_DIRECTION_OUT;
+		brb.BufferSize = length;
+		brb.Buffer = slot->Buffer;
+		status = WdfIoTargetFormatRequestForInternalIoctlOthers(ctx->IoTarget, slot->Request,
+			IOCTL_INTERNAL_BTH_SUBMIT_BRB, slot->BrbMemory, nullptr, nullptr, nullptr, nullptr, nullptr);
+	}
+	if (NT_SUCCESS(status))
+	{
+		WdfRequestSetCompletionRoutine(slot->Request, OnSendComplete, slot);
+		if (!WdfRequestSend(slot->Request, ctx->IoTarget, WDF_NO_SEND_OPTIONS))
+		{
+			status = WdfRequestGetStatus(slot->Request);
+		}
+	}
+	if (!NT_SUCCESS(status))
+	{
+		KeSetEvent(&slot->Idle, IO_NO_INCREMENT, FALSE);
+		return status;
+	}
+
+	LARGE_INTEGER timeout;
+	timeout.QuadPart = -static_cast<LONGLONG>(timeoutMs) * 10000;
+	if (KeWaitForSingleObject(&slot->Idle, Executive, KernelMode, FALSE, &timeout) == STATUS_SUCCESS)
+	{
+		return static_cast<NTSTATUS>(slot->Status);
+	}
+
+	// The transport did not finish the send in time. Cancel it and leave it in flight if
+	// it still does not complete: the slot keeps the request, BRB and data alive, and
+	// stays busy until the completion arrives.
+	WdfRequestCancelSentRequest(slot->Request);
+	timeout.QuadPart = -1000000LL;
+	if (KeWaitForSingleObject(&slot->Idle, Executive, KernelMode, FALSE, &timeout) == STATUS_SUCCESS)
+	{
+		return static_cast<NTSTATUS>(slot->Status);
+	}
+	OA2DP_LOG("send did not complete within %u ms; it stays pending in the transport", timeoutMs);
+	return STATUS_IO_TIMEOUT;
 }
 
 bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status)
@@ -453,8 +731,12 @@ NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 		return STATUS_SUCCESS;
 	}
 
-	struct _BRB_L2CA_OPEN_CHANNEL brb;
-	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_OPEN_CHANNEL);
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_OPEN_CHANNEL);
+	if (op == nullptr)
+	{
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	auto& brb = op->Brb.Open;
 	brb.BtAddress = ctx->RemoteAddress;
 	brb.Psm = AvdtpPsm;
 	brb.ChannelFlags = CF_ROLE_EITHER;
@@ -472,16 +754,19 @@ NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 	brb.ReferenceObject = WdfDeviceWdmGetDeviceObject(ctx->Device);
 	brb.IncomingQueueDepth = 10;
 
-	NTSTATUS status = SubmitBrbSynchronously(ctx, reinterpret_cast<PBRB>(&brb), sizeof(brb));
+	// Abortable: this runs in the signaling work item, which teardown has to wait for.
+	NTSTATUS status = BrbOpRun(op, BrbControlTimeoutMs, true);
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_LOG("media channel open failed 0x%08X (L2CAP response %u/%u)", status, brb.Response, brb.ResponseStatus);
+		BrbOpRelease(op);
 		return status;
 	}
 
 	ctx->MediaChannel = brb.ChannelHandle;
 	ctx->MediaOutMtu = brb.OutResults.Params.Mtu;
 	OA2DP_LOG("media channel open, out MTU %u", ctx->MediaOutMtu);
+	BrbOpRelease(op);
 	return STATUS_SUCCESS;
 }
 
@@ -494,11 +779,18 @@ void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	struct _BRB_L2CA_CLOSE_CHANNEL brb;
-	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&brb), BRB_L2CA_CLOSE_CHANNEL);
-	brb.BtAddress = ctx->RemoteAddress;
-	brb.ChannelHandle = ctx->MediaChannel;
-	NTSTATUS status = SubmitBrbSynchronously(ctx, reinterpret_cast<PBRB>(&brb), sizeof(brb));
+	// A send the transport still holds would keep the channel referenced; cancel it first.
+	L2capCancelSend(&ctx->MediaSend);
+
+	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_CLOSE_CHANNEL);
+	NTSTATUS status = STATUS_INSUFFICIENT_RESOURCES;
+	if (op != nullptr)
+	{
+		op->Brb.Close.BtAddress = ctx->RemoteAddress;
+		op->Brb.Close.ChannelHandle = ctx->MediaChannel;
+		status = BrbOpRun(op, BrbControlTimeoutMs, false);
+		BrbOpRelease(op);
+	}
 	OA2DP_LOG("media channel closed 0x%08X", status);
 	ctx->MediaChannel = nullptr;
 }

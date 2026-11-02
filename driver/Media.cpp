@@ -17,6 +17,8 @@ constexpr int MaxPacketsPerTick = 8;
 constexpr ULONGLONG UnderrunTimeout = 200ull * 10000ull;
 constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
 constexpr ULONGLONG StallTimeout = 2000ull * 10000ull;
+// Ticks (10 ms each) a media send may stay pending in the transport before the stream is stopped.
+constexpr ULONG MediaBusyLimitTicks = 300;
 
 EVT_WDF_TIMER OnMediaTimer;
 EVT_WDF_WORKITEM OnMediaWorkItem;
@@ -25,6 +27,28 @@ void OnMediaTimer(_In_ WDFTIMER timer)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
 	WdfWorkItemEnqueue(ctx->MediaWorkItem);
+}
+
+// Caller holds MediaLock. False when the previous send has not completed yet, in which
+// case this tick sends nothing and nothing is consumed. A send that stays pending for
+// MediaBusyLimitTicks ticks ends the stream instead of leaving it silently stuck.
+bool MediaSendReady(DEVICE_CONTEXT* ctx)
+{
+	if (L2capSendIdle(&ctx->MediaSend))
+	{
+		ctx->MediaBusyTicks = 0;
+		return true;
+	}
+	if (++ctx->MediaBusyTicks == MediaBusyLimitTicks)
+	{
+		OA2DP_LOG("media: the previous send is still pending in the transport after %u ms; stopping",
+			MediaBusyLimitTicks * MediaPeriodMs);
+		InterlockedIncrement(&ctx->SendFailures);
+		InterlockedExchange(&ctx->LastMediaError, STATUS_IO_TIMEOUT);
+		ctx->MediaActive = FALSE;
+		SignalingRequestSuspend(ctx);
+	}
+	return false;
 }
 
 // Builds one RTP + SBC media packet into MediaBuffer. Caller holds MediaLock.
@@ -99,6 +123,10 @@ void TickSbc(DEVICE_CONTEXT* ctx)
 
 	for (int i = 0; i < MaxPacketsPerTick && ctx->MediaSamplesSent < target; ++i)
 	{
+		if (!ctx->MediaActive || ctx->MediaChannel == nullptr || !MediaSendReady(ctx))
+		{
+			return;
+		}
 		uint32_t samples = 0;
 		const ULONG length = BuildSbcPacket(ctx, samples);
 		if (length == 0)
@@ -107,7 +135,7 @@ void TickSbc(DEVICE_CONTEXT* ctx)
 			ctx->MediaActive = FALSE;
 			return;
 		}
-		const NTSTATUS status = L2capSend(ctx, ctx->MediaChannel, ctx->MediaBuffer, length);
+		const NTSTATUS status = L2capSend(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length, MediaSendTimeoutMs);
 		if (!NT_SUCCESS(status))
 		{
 			if (IsLinkLoss(ctx, status))
@@ -139,13 +167,17 @@ void TickAac(DEVICE_CONTEXT* ctx)
 	bool sent = false;
 	for (int i = 0; i < MaxPacketsPerTick; ++i)
 	{
+		if (!ctx->MediaActive || ctx->MediaChannel == nullptr || !MediaSendReady(ctx))
+		{
+			break;
+		}
 		uint32_t samples = 0;
 		const ULONG length = BuildAacPacket(ctx, samples);
 		if (length == 0)
 		{
 			break;
 		}
-		const NTSTATUS status = L2capSend(ctx, ctx->MediaChannel, ctx->MediaBuffer, length);
+		const NTSTATUS status = L2capSend(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length, MediaSendTimeoutMs);
 		if (!NT_SUCCESS(status))
 		{
 			if (IsLinkLoss(ctx, status))
@@ -165,6 +197,11 @@ void TickAac(DEVICE_CONTEXT* ctx)
 		sent = true;
 		ctx->MediaSamplesSent += samples;
 		ctx->AacLastFrameTime = now;
+	}
+
+	if (!ctx->MediaActive)
+	{
+		return;
 	}
 
 	if (InterlockedCompareExchange(&ctx->StreamFault, 0, 0) != 0)
@@ -202,6 +239,13 @@ void TickAac(DEVICE_CONTEXT* ctx)
 void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	// A stop in progress clears MediaActive before it waits for MediaLock. Checking it
+	// here, without the lock, means a stream that is being stopped never competes with
+	// the stopper for the lock again, however the lock happens to be handed out.
+	if (!ctx->MediaActive)
+	{
+		return;
+	}
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 
 	if (ctx->MediaActive && ctx->MediaChannel != nullptr)
@@ -260,6 +304,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 	ctx->ActiveCodec = Ioctl::kCodecAac;
+	ctx->MediaBusyTicks = 0;
 	ctx->ActiveSampleRate = params.sampleRate;
 	ctx->ActiveChannels = params.channels;
 	ctx->ActiveBitrate = params.bitrate;
@@ -327,6 +372,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 	ctx->Encoder.Reset(params);
+	ctx->MediaBusyTicks = 0;
 	ctx->ActiveCodec = Ioctl::kCodecSbc;
 	ctx->ActiveSampleRate = params.sampleRate;
 	ctx->ActiveChannels = params.Channels();
@@ -349,11 +395,24 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 
 void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 {
+	// Clear the flag first, atomically and without the lock: the media work item and
+	// its per-packet checks read it, so the stream stops within one packet and the
+	// work item stops taking MediaLock. In the failing hang the lock was held by a work
+	// item that kept running every 10 ms for two minutes while this thread waited.
+	const bool wasActive = InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), 0) != 0;
 	WdfTimerStop(ctx->MediaTimer, TRUE);
-	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
-	const bool wasActive = ctx->MediaActive != FALSE;
+	// MediaLock is only ever held for one bounded work item run, so this wait ends. It
+	// is retried rather than abandoned: stopping without the lock would race a send.
+	for (;;)
+	{
+		LONGLONG lockTimeout = WDF_REL_TIMEOUT_IN_MS(1000);
+		if (WdfWaitLockAcquire(ctx->MediaLock, &lockTimeout) == STATUS_SUCCESS)
+		{
+			break;
+		}
+		OA2DP_LOG("media stop: still waiting for the media work item to release the lock");
+	}
 	const LONG mode = InterlockedExchange(&ctx->MediaMode, MediaModeNone);
-	ctx->MediaActive = FALSE;
 	if (wasActive)
 	{
 		OA2DP_LOG("media stopped after %u packets", ctx->RtpSequence);

@@ -375,6 +375,8 @@ bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* 
 		if (wait == WAIT_TIMEOUT)
 		{
 			CancelIoEx(handle, &overlapped);
+			// Give the cancel a moment to land so the driver is not left writing into this frame.
+			WaitForSingleObject(overlapped.hEvent, 1000);
 			GetOverlappedResult(handle, &overlapped, &bytes, FALSE);
 			error = "DeviceIoControl timed out after " + std::to_string(timeoutMs) + " ms";
 			CloseHandle(overlapped.hEvent);

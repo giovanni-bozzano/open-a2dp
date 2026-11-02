@@ -36,6 +36,14 @@ enum class SessionState : uint8_t {
 	Failed,
 };
 
+enum class DiscoveryFailure : uint8_t {
+	None,
+	Rejected,
+	NoUsableSink,
+	MalformedResponse,
+	Timeout,
+};
+
 // Called for each audio sink SEP. Returns a score (0 = unusable) and writes the
 // chosen configuration IE. The highest score wins; ties keep the first SEP.
 using ConfigSelector = uint32_t (*)(void* context, CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
@@ -98,6 +106,9 @@ public:
 	bool HasPendingCommand() const noexcept { return pending_; }
 	// True when the sink configured the stream; the sink then opens the media channel.
 	bool IsAcceptor() const noexcept { return acceptor_; }
+	DiscoveryFailure LastDiscoveryFailure() const noexcept { return discoveryFailure_; }
+	uint8_t DiscoveryError() const noexcept { return discoveryError_; }
+	bool HasDiscoveryError() const noexcept { return hasDiscoveryError_; }
 
 	// Begins discovery. Returns the length of the command written to out (0 on bad state).
 	size_t Connect(uint8_t* out, size_t cap) noexcept
@@ -113,6 +124,9 @@ public:
 		localSeid_ = 0;
 		selectedIeLength_ = 0;
 		acceptor_ = false;
+		discoveryFailure_ = DiscoveryFailure::None;
+		hasDiscoveryError_ = false;
+		discoveryError_ = 0;
 		state_ = SessionState::Discovering;
 		return Command(Signal::Discover, nullptr, 0, out, cap);
 	}
@@ -135,6 +149,19 @@ public:
 		return SeidCommand(state_, SessionState::Closing, Signal::Close, out, cap);
 	}
 
+	size_t Abort(uint8_t* out, size_t cap) noexcept
+	{
+		// Valid from any state once a remote SEP has been selected, including while another
+		// command is pending and after a failure, so a configured SEP is never left in use.
+		if (remoteSeid_ == 0 || state_ == SessionState::Aborting || state_ == SessionState::Idle ||
+			state_ < SessionState::Configuring) {
+			return 0;
+		}
+		state_ = SessionState::Aborting;
+		const uint8_t seid = static_cast<uint8_t>(remoteSeid_ << 2);
+		return Command(Signal::Abort, &seid, 1, out, cap);
+	}
+
 	// Called when the response to the pending command did not arrive in time.
 	size_t OnTimeout(uint8_t* out, size_t cap) noexcept
 	{
@@ -142,7 +169,10 @@ public:
 			return 0;
 		}
 		pending_ = false;
-		if (remoteSeid_ != 0 && state_ != SessionState::Aborting && state_ >= SessionState::Opening) {
+		if (state_ == SessionState::Discovering) {
+			discoveryFailure_ = DiscoveryFailure::Timeout;
+		}
+		if (remoteSeid_ != 0 && state_ != SessionState::Aborting && state_ >= SessionState::Configuring) {
 			return SeidCommand(state_, SessionState::Aborting, Signal::Abort, out, cap);
 		}
 		state_ = SessionState::Failed;
@@ -301,7 +331,17 @@ private:
 	{
 		switch (signal) {
 		case Signal::Discover:
-			if (!accepted || state_ != SessionState::Discovering) {
+			if (state_ != SessionState::Discovering) {
+				break;
+			}
+			if (!accepted) {
+				discoveryFailure_ = DiscoveryFailure::Rejected;
+				hasDiscoveryError_ = len != 0;
+				if (hasDiscoveryError_) { discoveryError_ = p[0]; }
+				break;
+			}
+			if ((len & 1) != 0) {
+				discoveryFailure_ = DiscoveryFailure::MalformedResponse;
 				break;
 			}
 			for (size_t pos = 0; pos + 2 <= len && sinkCount_ < kMaxSinkSeps; pos += 2) {
@@ -311,6 +351,7 @@ private:
 				}
 			}
 			if (sinkCount_ == 0) {
+				discoveryFailure_ = DiscoveryFailure::NoUsableSink;
 				break;
 			}
 			state_ = SessionState::GettingCapabilities;
@@ -587,6 +628,7 @@ private:
 		}
 
 		pending_ = false;
+		discoveryFailure_ = DiscoveryFailure::None;
 		acceptor_ = true;
 		remoteSeid_ = static_cast<uint8_t>(p[1] >> 2);
 		localSeid_ = acpSeid;
@@ -641,6 +683,9 @@ private:
 	ConfigValidator validator_;
 
 	SessionState state_ = SessionState::Idle;
+	DiscoveryFailure discoveryFailure_ = DiscoveryFailure::None;
+	uint8_t discoveryError_ = 0;
+	bool hasDiscoveryError_ = false;
 	uint8_t label_ = 0;
 	bool pending_ = false;
 	Signal pendingSignal_ = Signal::Discover;

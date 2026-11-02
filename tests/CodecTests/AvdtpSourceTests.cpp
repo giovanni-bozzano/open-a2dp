@@ -268,6 +268,7 @@ TEST(AvdtpSource_FailsWhenAllCandidatesRejected)
 
 	CHECK_EQ(s.OnPacket(rsp, RejectResponse(cmd, rsp), cmd, kMaxSignalPacket), size_t{0});
 	CHECK(s.State() == SessionState::Failed);
+	CHECK(s.LastDiscoveryFailure() == DiscoveryFailure::None);
 }
 
 TEST(AvdtpSource_StartSuspendClose)
@@ -319,6 +320,7 @@ TEST(AvdtpSource_FailsWithoutUsableSink)
 	WriteSepInfo({3, true, MediaType::Audio, SepType::Sink}, seps);
 	CHECK_EQ(s.OnPacket(rsp, Accept(cmd, seps, 2, rsp), cmd, sizeof(cmd)), size_t{0});
 	CHECK(s.State() == SessionState::Failed);
+	CHECK(s.LastDiscoveryFailure() == DiscoveryFailure::NoUsableSink);
 }
 
 TEST(AvdtpSource_DiscoverListsBothSeps)
@@ -403,6 +405,26 @@ TEST(AvdtpSource_AnswersSinkCommands)
 	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::BadLength)});
 }
 
+TEST(AvdtpSource_AbortBeforeTeardown)
+{
+	SourceSession s = MakeSession();
+	ConnectToOpen(s);
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	REQUIRE(s.Start(cmd, sizeof(cmd)) == 3);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	REQUIRE(s.State() == SessionState::Streaming);
+	REQUIRE(s.Abort(cmd, sizeof(cmd)) == 3);
+	CHECK(Header(cmd).signal == Signal::Abort);
+	CHECK(s.State() == SessionState::Aborting);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	CHECK(s.State() == SessionState::Idle);
+
+	SourceSession d = MakeSession();
+	REQUIRE(d.Connect(cmd, sizeof(cmd)) == 2);
+	CHECK_EQ(d.Abort(cmd, sizeof(cmd)), size_t{0});
+}
+
 TEST(AvdtpSource_TimeoutAbortsAfterConfiguration)
 {
 	SourceSession s = MakeSession();
@@ -420,6 +442,21 @@ TEST(AvdtpSource_TimeoutAbortsAfterConfiguration)
 	REQUIRE(d.Connect(cmd, sizeof(cmd)) == 2);
 	CHECK_EQ(d.OnTimeout(cmd, sizeof(cmd)), size_t{0});
 	CHECK(d.State() == SessionState::Failed);
+}
+
+TEST(AvdtpSource_AbortOverridesPendingCommand)
+{
+	SourceSession s = MakeSession();
+	ConnectToOpen(s);
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	REQUIRE(s.Start(cmd, sizeof(cmd)) == 3);
+	REQUIRE(s.State() == SessionState::Starting);
+	REQUIRE(s.Abort(cmd, sizeof(cmd)) == 3);
+	CHECK(Header(cmd).signal == Signal::Abort);
+	CHECK(s.State() == SessionState::Aborting);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	CHECK(s.State() == SessionState::Idle);
 }
 
 TEST(AvdtpSource_AcceptsSinkConfiguration)
