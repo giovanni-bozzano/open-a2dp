@@ -635,6 +635,15 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	}
 
 	SignalingStop(ctx);
+	// Barrier: the signaling work item may have been queued again after SignalingStop
+	// flushed it (a late accept, a media fault). It checks SignalingState under
+	// SessionLock before every send and before starting media, so once this thread has
+	// passed through the lock no send can start on the channels closed below.
+	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
+	{
+		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+		WdfWaitLockRelease(ctx->SessionLock);
+	}
 	L2capCloseMediaChannel(ctx);
 	L2capCancelSend(&ctx->SignalSend);
 

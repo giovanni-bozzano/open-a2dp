@@ -211,6 +211,10 @@ struct DEVICE_CONTEXT
 	WDFREQUEST WaitRequest;
 	OpenA2dp::Ioctl::WaitEventOut WaitState;
 	uint32_t PendingEvents;
+	// RingLock serializes MapRings/UnmapRings; RingOwner is the file object that mapped
+	// the rings, so only that handle's cleanup unmaps them.
+	KMUTEX RingLock;
+	PVOID RingOwner;
 	PMDL RingMdl;
 	PVOID RingUserVa;
 	PVOID RingProcess;

@@ -150,6 +150,13 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length);
 
 void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 {
+	if (length != 0 && ctx->SignalingState != ChannelOpen)
+	{
+		// The channel is closing. L2capCloseSignalingChannel passes through SessionLock
+		// after it leaves ChannelOpen, so no send that checked this under the lock can
+		// still be running when the channel handle is closed.
+		length = 0;
+	}
 	if (length != 0)
 	{
 		const NTSTATUS status = L2capSend(ctx, &ctx->SignalSend, ctx->SignalingChannel, ctx->WriteBuffer,

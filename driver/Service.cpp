@@ -10,9 +10,16 @@ namespace
 {
 
 // Context of the per-device control device that exposes the service interface.
+// The control device's parent is the driver, so its handles can outlive the FDO's
+// start/stop cycle. Every handler enters through Rundown, which ServiceStop drains
+// before it detaches Device; the control device also holds a reference on the FDO
+// (Owner) until it is destroyed, so DEVICE_CONTEXT memory stays valid for anything
+// that still runs afterwards (a WAIT_EVENT cancel routine).
 struct CONTROL_DEVICE_CONTEXT
 {
 	DEVICE_CONTEXT* Device;
+	WDFDEVICE Owner;
+	EX_RUNDOWN_REF Rundown;
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(CONTROL_DEVICE_CONTEXT, GetControlDeviceContext)
 
@@ -30,6 +37,28 @@ EVT_WDF_DEVICE_FILE_CREATE OnFileCreate;
 EVT_WDF_FILE_CLEANUP OnFileCleanup;
 EVT_WDF_REQUEST_CANCEL OnWaitCancel;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP OnControlDeviceCleanup;
+EVT_WDF_OBJECT_CONTEXT_DESTROY OnControlDeviceDestroy;
+
+// Enters a handler: returns the device, or nullptr once ServiceStop has begun.
+DEVICE_CONTEXT* EnterControl(WDFDEVICE control)
+{
+	CONTROL_DEVICE_CONTEXT* cc = GetControlDeviceContext(control);
+	if (!ExAcquireRundownProtection(&cc->Rundown))
+	{
+		return nullptr;
+	}
+	if (cc->Device == nullptr)
+	{
+		ExReleaseRundownProtection(&cc->Rundown);
+		return nullptr;
+	}
+	return cc->Device;
+}
+
+void LeaveControl(WDFDEVICE control)
+{
+	ExReleaseRundownProtection(&GetControlDeviceContext(control)->Rundown);
+}
 
 constexpr ULONG kRingHeaderBytes = static_cast<ULONG>(sizeof(OpenA2dp::RingHeader));
 constexpr ULONG kLayoutBytes =
@@ -131,79 +160,101 @@ void OnWaitCancel(WDFREQUEST request)
 	WdfRequestComplete(request, STATUS_CANCELLED);
 }
 
-void UnmapRings(DEVICE_CONTEXT* ctx)
+// Releases the user-mode mapping. With owner set, only when that file object made it
+// (a handle's cleanup must not unmap another handle's rings); nullptr unmaps always.
+void UnmapRings(DEVICE_CONTEXT* ctx, PVOID owner = nullptr)
 {
+	KeWaitForSingleObject(&ctx->RingLock, Executive, KernelMode, FALSE, nullptr);
+	if (ctx->RingMdl == nullptr || (owner != nullptr && ctx->RingOwner != owner))
+	{
+		KeReleaseMutex(&ctx->RingLock, FALSE);
+		return;
+	}
 	// A user-mode mapping must be released in the context of the process that mapped
 	// it; device teardown runs in a system thread, so attach when needed.
-	PEPROCESS process = static_cast<PEPROCESS>(InterlockedExchangePointer(&ctx->RingProcess, nullptr));
-	if (ctx->RingMdl != nullptr)
+	auto* process = static_cast<PEPROCESS>(ctx->RingProcess);
+	if (ctx->RingUserVa != nullptr)
 	{
-		if (ctx->RingUserVa != nullptr)
+		KAPC_STATE apc;
+		bool attached = false;
+		if (process != nullptr && process != IoGetCurrentProcess() &&
+			PsGetProcessExitStatus(process) == STATUS_PENDING)
 		{
-			KAPC_STATE apc;
-			bool attached = false;
-			if (process != nullptr && process != IoGetCurrentProcess() &&
-				PsGetProcessExitStatus(process) == STATUS_PENDING)
-			{
-				KeStackAttachProcess(process, &apc);
-				attached = true;
-			}
-			// If the process already exited its address space is gone, so there is
-			// nothing to unmap and touching it would hit another process.
-			if (process == nullptr || process == IoGetCurrentProcess() || attached)
-			{
-				MmUnmapLockedPages(ctx->RingUserVa, ctx->RingMdl);
-			}
-			if (attached)
-			{
-				KeUnstackDetachProcess(&apc);
-			}
-			ctx->RingUserVa = nullptr;
+			KeStackAttachProcess(process, &apc);
+			attached = true;
 		}
-		IoFreeMdl(ctx->RingMdl);
-		ctx->RingMdl = nullptr;
+		// If the process already exited its address space is gone, so there is
+		// nothing to unmap and touching it would hit another process.
+		if (process == nullptr || process == IoGetCurrentProcess() || attached)
+		{
+			MmUnmapLockedPages(ctx->RingUserVa, ctx->RingMdl);
+		}
+		if (attached)
+		{
+			KeUnstackDetachProcess(&apc);
+		}
 	}
+	IoFreeMdl(ctx->RingMdl);
+	ctx->RingMdl = nullptr;
+	ctx->RingUserVa = nullptr;
+	ctx->RingProcess = nullptr;
+	ctx->RingOwner = nullptr;
+	InterlockedExchange(&ctx->RingsMapped, 0);
+	KeReleaseMutex(&ctx->RingLock, FALSE);
 	if (process != nullptr)
 	{
 		ObDereferenceObject(process);
 	}
-	InterlockedExchange(&ctx->RingsMapped, 0);
 }
 
-NTSTATUS MapRings(DEVICE_CONTEXT* ctx)
+NTSTATUS MapRings(DEVICE_CONTEXT* ctx, PVOID owner)
 {
 	if (ctx->ServiceRawBase == nullptr)
 	{
 		return STATUS_INVALID_DEVICE_STATE;
 	}
-	if (InterlockedCompareExchange(&ctx->RingsMapped, 1, 0) != 0)
+	KeWaitForSingleObject(&ctx->RingLock, Executive, KernelMode, FALSE, nullptr);
+	if (ctx->RingMdl != nullptr)
 	{
+		KeReleaseMutex(&ctx->RingLock, FALSE);
 		return STATUS_DEVICE_BUSY;
 	}
 
 	PMDL mdl = IoAllocateMdl(ctx->ServiceRawBase, kAllocationBytes, FALSE, FALSE, nullptr);
 	if (mdl == nullptr)
 	{
-		InterlockedExchange(&ctx->RingsMapped, 0);
+		KeReleaseMutex(&ctx->RingLock, FALSE);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 	MmBuildMdlForNonPagedPool(mdl);
 
 	// IOCTLs run in the caller's process context, so the pages land in the service.
-	PVOID userVa = MmMapLockedPagesSpecifyCache(mdl, UserMode, MmCached, nullptr, FALSE, NormalPagePriority);
+	// A user-mode mapping raises on failure instead of returning nullptr.
+	PVOID userVa = nullptr;
+	__try
+	{
+		userVa = MmMapLockedPagesSpecifyCache(mdl, UserMode, MmCached, nullptr, FALSE, NormalPagePriority | MdlMappingNoExecute);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		userVa = nullptr;
+	}
 	if (userVa == nullptr)
 	{
 		IoFreeMdl(mdl);
-		InterlockedExchange(&ctx->RingsMapped, 0);
+		KeReleaseMutex(&ctx->RingLock, FALSE);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 
-	ctx->RingMdl = mdl;
-	ctx->RingUserVa = userVa;
 	// Keep the mapping process alive so teardown can attach and unmap.
 	PEPROCESS process = IoGetCurrentProcess();
 	ObReferenceObject(process);
+	ctx->RingMdl = mdl;
+	ctx->RingUserVa = userVa;
 	ctx->RingProcess = process;
+	ctx->RingOwner = owner;
+	InterlockedExchange(&ctx->RingsMapped, 1);
+	KeReleaseMutex(&ctx->RingLock, FALSE);
 	return STATUS_SUCCESS;
 }
 
@@ -225,25 +276,51 @@ void OnControlDeviceCleanup(WDFOBJECT object)
 	InterlockedExchange(&ctx->EncoderRegistered, 0);
 }
 
+void OnControlDeviceDestroy(WDFOBJECT object)
+{
+	WDFDEVICE owner = GetControlDeviceContext(object)->Owner;
+	if (owner != nullptr)
+	{
+		WdfObjectDereferenceWithTag(owner, reinterpret_cast<PVOID>(OnControlDeviceDestroy));
+	}
+}
+
 void Complete(WDFREQUEST request, NTSTATUS status)
 {
 	WdfRequestComplete(request, status);
 }
+
+void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFILEOBJECT fileObject,
+	WDFREQUEST request, ULONG ioControlCode);
 
 void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, size_t inputLength, ULONG ioControlCode)
 {
 	UNREFERENCED_PARAMETER(outputLength);
 	UNREFERENCED_PARAMETER(inputLength);
 
-	DEVICE_CONTEXT* ctx = GetControlDeviceContext(WdfIoQueueGetDevice(queue))->Device;
+	WDFDEVICE control = WdfIoQueueGetDevice(queue);
 	WDFFILEOBJECT fileObject = WdfRequestGetFileObject(request);
 	SERVICE_FILE_CONTEXT* file = fileObject != nullptr ? GetServiceFileContext(fileObject) : nullptr;
-	if (ctx == nullptr || file == nullptr)
+	DEVICE_CONTEXT* ctx = EnterControl(control);
+	if (ctx == nullptr)
 	{
 		Complete(request, STATUS_INVALID_DEVICE_STATE);
 		return;
 	}
+	if (file == nullptr)
+	{
+		Complete(request, STATUS_INVALID_DEVICE_STATE);
+	}
+	else
+	{
+		HandleDeviceControl(ctx, file, fileObject, request, ioControlCode);
+	}
+	LeaveControl(control);
+}
 
+void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFILEOBJECT fileObject,
+	WDFREQUEST request, ULONG ioControlCode)
+{
 	switch (ioControlCode)
 	{
 	case Ioctl::kIoctlGetVersion:
@@ -352,7 +429,7 @@ void OnDeviceControl(WDFQUEUE queue, WDFREQUEST request, size_t outputLength, si
 			Complete(request, status);
 			return;
 		}
-		status = MapRings(ctx);
+		status = MapRings(ctx, fileObject);
 		if (!NT_SUCCESS(status))
 		{
 			Complete(request, status);
@@ -533,7 +610,10 @@ void OnFileCreate(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJECT fileObject
 void OnFileCleanup(WDFFILEOBJECT fileObject)
 {
 	SERVICE_FILE_CONTEXT* file = GetServiceFileContext(fileObject);
-	DEVICE_CONTEXT* ctx = file->Device;
+	WDFDEVICE control = WdfFileObjectGetDevice(fileObject);
+	// Once ServiceStop has run there is nothing left to undo: it released the wait,
+	// unmapped the rings and cleared the registration itself.
+	DEVICE_CONTEXT* ctx = EnterControl(control);
 	if (ctx == nullptr)
 	{
 		return;
@@ -547,8 +627,6 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 		ReleaseWait(ctx, Ioctl::kEventDeviceGone);
 		file->Registered = FALSE;
 		InterlockedExchange(&ctx->EncoderRegistered, 0);
-		// During device teardown ServiceStop has already stopped media and latched
-		// kEventDeviceGone; do not touch the media/signaling work items then.
 		if (InterlockedCompareExchange(&ctx->ServiceActive, 0, 0) != 0 &&
 			InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeAac)
 		{
@@ -557,11 +635,9 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 			SignalingRequestSuspend(ctx);
 		}
 	}
-	if (file->Mapped)
-	{
-		file->Mapped = FALSE;
-		UnmapRings(ctx);
-	}
+	file->Mapped = FALSE;
+	UnmapRings(ctx, fileObject);
+	LeaveControl(control);
 }
 
 } // namespace
@@ -569,6 +645,7 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 NTSTATUS ServiceInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeSpinLock(&ctx->WaitLock);
+	KeInitializeMutex(&ctx->RingLock, 0);
 
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
@@ -666,6 +743,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	// A device object's parent must stay the driver object (WdfDeviceCreate
 	// rejects ParentObject); ServiceStop deletes the control device explicitly.
 	attrs.EvtCleanupCallback = OnControlDeviceCleanup;
+	attrs.EvtDestroyCallback = OnControlDeviceDestroy;
 	// A parked WAIT_EVENT must not block the
 	// control queue, so the IOCTL callbacks run at PASSIVE_LEVEL in parallel.
 	attrs.ExecutionLevel = WdfExecutionLevelPassive;
@@ -682,6 +760,14 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 	GetControlDeviceContext(control)->Device = ctx;
+	// Keeps DEVICE_CONTEXT memory alive until the control device is destroyed;
+	// dropped in OnControlDeviceDestroy, which also runs on the failure paths below.
+	{
+		CONTROL_DEVICE_CONTEXT* cc = GetControlDeviceContext(control);
+		ExInitializeRundownProtection(&cc->Rundown);
+		WdfObjectReferenceWithTag(ctx->Device, reinterpret_cast<PVOID>(OnControlDeviceDestroy));
+		cc->Owner = ctx->Device;
+	}
 
 	WDF_IO_QUEUE_CONFIG queueConfig;
 	// Parallel: a parked WAIT_EVENT (the service's tick source) must not stop the
@@ -731,13 +817,20 @@ void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
 
 	InterlockedExchange(&ctx->ServiceActive, 0);
 	LatchEvents(ctx, Ioctl::kEventDeviceGone);
+
+	// Wait for every IOCTL and cleanup handler that is already running (none of them
+	// blocks for long) and refuse new ones; after this nothing but a WAIT_EVENT cancel
+	// routine can reach the device through the control device.
+	CONTROL_DEVICE_CONTEXT* cc = GetControlDeviceContext(control);
+	ExWaitForRundownProtectionRelease(&cc->Rundown);
+	cc->Device = nullptr;
+	// A handler that ran during the wait may have registered and parked a new WAIT_EVENT.
+	LatchEvents(ctx, Ioctl::kEventDeviceGone);
 	UnmapRings(ctx);
 	InterlockedExchange(&ctx->EncoderRegistered, 0);
 
 	// The control device's parent is the driver object, so it can outlive this
-	// FDO's context. Detach it before deleting so the cleanup callback cannot
-	// dereference a freed DEVICE_CONTEXT.
-	GetControlDeviceContext(control)->Device = nullptr;
+	// FDO's start/stop cycle; with Device cleared its handlers no longer touch ctx.
 	WdfObjectDelete(control);
 	OA2DP_LOG("service: control device removed");
 }

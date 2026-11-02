@@ -357,6 +357,13 @@ NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx)
 void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_bytes_(ieLength) const UCHAR* ie,
 	_In_ SIZE_T ieLength)
 {
+	// Called under SessionLock. A link that is closing, or a device going away, must
+	// not get a stream again after its teardown stopped media.
+	if (ctx->SignalingState != ChannelOpen || KeReadStateEvent(&ctx->StopEvent) != 0)
+	{
+		OA2DP_LOG("media: not starting, the link is closing");
+		return;
+	}
 	if (codec == Avdtp::CodecType::Aac)
 	{
 		StartAac(ctx, ie, ieLength);
