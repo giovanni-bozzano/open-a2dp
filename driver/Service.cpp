@@ -398,12 +398,12 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->maxFramePayload = Ioctl::kMaxFramePayload;
 		out->pcmSampleRate = AudioSampleRate;
 		out->pcmChannels = AudioChannels;
-		OA2DP_LOG("service: encoder registered (max frame %u bytes)", out->maxFramePayload);
+		OA2DP_INFO(ctx, "Service", "encoder registered (max frame %u bytes)", out->maxFramePayload);
 		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeSbc)
 		{
 			// The stream was negotiated before the service came up, so AAC was not
 			// offered for it. Say so: otherwise this looks like AAC silently failing.
-			OA2DP_LOG("service: stream is already SBC; reconnect the headset to negotiate AAC");
+			OA2DP_WARN(ctx, "Service", "stream is already SBC; reconnect the headset to negotiate AAC");
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::RegisterEncoderOut));
 		return;
@@ -439,7 +439,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		*out = ctx->Rings;
 		const auto offset = static_cast<uint64_t>(ctx->ServiceBase - static_cast<PUCHAR>(ctx->ServiceRawBase));
 		out->userBase = reinterpret_cast<uintptr_t>(ctx->RingUserVa) + offset;
-		OA2DP_LOG("service: rings mapped at 0x%I64X", out->userBase);
+		OA2DP_INFO(ctx, "Service", "rings mapped at 0x%I64X", out->userBase);
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::SharedRings));
 		return;
 	}
@@ -630,7 +630,7 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 		if (InterlockedCompareExchange(&ctx->ServiceActive, 0, 0) != 0 &&
 			InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeAac)
 		{
-			OA2DP_LOG("service: encoder lost while streaming AAC; suspending");
+			OA2DP_WARN(ctx, "Service", "encoder lost while streaming AAC; suspending");
 			MediaStop(ctx);
 			SignalingRequestSuspend(ctx);
 		}
@@ -656,7 +656,7 @@ NTSTATUS ServiceInitialize(_In_ DEVICE_CONTEXT* ctx)
 		&attrs, NonPagedPoolNx, OpenA2dpPoolTag, kAllocationBytes, &ctx->ServiceMemory, &raw);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: shared memory allocation failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Service", "shared memory allocation failed 0x%08X", status);
 		return status;
 	}
 
@@ -700,7 +700,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	PWDFDEVICE_INIT init = WdfControlDeviceInitAllocate(WdfDeviceGetDriver(ctx->Device), &sddl);
 	if (init == nullptr)
 	{
-		OA2DP_LOG("service: control device init failed");
+		OA2DP_ERROR(ctx, "Service", "control device init failed");
 		return;
 	}
 	WdfDeviceInitSetCharacteristics(init, FILE_DEVICE_SECURE_OPEN, FALSE);
@@ -718,7 +718,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	NTSTATUS status = RtlStringCchPrintfW(address, ARRAYSIZE(address), L"%012I64X", ctx->RemoteAddress);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: address format failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Service", "address format failed 0x%08X", status);
 		WdfDeviceInitFree(init);
 		return;
 	}
@@ -733,7 +733,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	}
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: control device name failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Service", "control device name failed 0x%08X", status);
 		WdfDeviceInitFree(init);
 		return;
 	}
@@ -752,7 +752,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	status = WdfDeviceCreate(&init, &attrs, &control);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: control device create failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Service", "control device create failed 0x%08X", status);
 		if (init != nullptr)
 		{
 			WdfDeviceInitFree(init);
@@ -777,7 +777,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	status = WdfIoQueueCreate(control, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: queue create failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Service", "queue create failed 0x%08X", status);
 		WdfObjectDelete(control);
 		return;
 	}
@@ -792,7 +792,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	}
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("service: symbolic link failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Service", "symbolic link failed 0x%08X", status);
 		WdfObjectDelete(control);
 		return;
 	}
@@ -802,7 +802,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 
 	ctx->ControlDevice = control;
 	InterlockedExchange(&ctx->ServiceActive, 1);
-	OA2DP_LOG("service: control device ready at %ws", linkName);
+	OA2DP_INFO(ctx, "Service", "control device ready at %ws", linkName);
 }
 
 void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
@@ -832,7 +832,7 @@ void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
 	// The control device's parent is the driver object, so it can outlive this
 	// FDO's start/stop cycle; with Device cleared its handlers no longer touch ctx.
 	WdfObjectDelete(control);
-	OA2DP_LOG("service: control device removed");
+	OA2DP_INFO(ctx, "Service", "control device removed");
 }
 
 void ServiceCleanup(_In_ DEVICE_CONTEXT* ctx)
@@ -933,7 +933,7 @@ ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _O
 	if (result == FrameRecord::ReadResult::Corrupt)
 	{
 		// Not repairable from the consumer side: stop consuming and let media stop.
-		OA2DP_LOG("service: corrupt frame record");
+		OA2DP_ERROR(ctx, "Service", "corrupt frame record");
 		InterlockedExchange(&ctx->LastMediaError, STATUS_DATA_ERROR);
 		InterlockedExchange(&ctx->StreamFault, 1);
 		return 0;

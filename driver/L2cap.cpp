@@ -1,4 +1,5 @@
 #include "Driver.h"
+#include <ntstrsafe.h>
 
 namespace
 {
@@ -126,7 +127,7 @@ void CloseOrphanedChannel(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE ch
 	op->State = 2; // nobody waits for this one
 	(void)BrbOpStart(op);
 	BrbOpRelease(op);
-	OA2DP_LOG("closed a channel whose open finished after its waiter gave up");
+	OA2DP_WARN(ctx, "L2CAP", "closed a channel whose open finished after its waiter gave up");
 }
 
 void UnregisterOrphanedServer(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_SERVER_HANDLE server)
@@ -142,7 +143,7 @@ void UnregisterOrphanedServer(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_SERVER_HANDLE
 	op->State = 2;
 	(void)BrbOpStart(op);
 	BrbOpRelease(op);
-	OA2DP_LOG("unregistered a server whose registration finished after its waiter gave up");
+	OA2DP_WARN(ctx, "L2CAP", "unregistered a server whose registration finished after its waiter gave up");
 }
 
 // Runs a prepared BRB operation and waits at most timeoutMs. With abortable the wait
@@ -187,7 +188,7 @@ NTSTATUS BrbOpRun(_In_ BRB_OP* op, _In_ ULONG timeoutMs, _In_ bool abortable)
 	{
 		return op->Status; // completed in the instant between the wait and the abandon
 	}
-	OA2DP_LOG("BRB did not complete (%s); abandoning it", wait == STATUS_TIMEOUT ? "timeout" : "teardown");
+	OA2DP_WARN(ctx, "L2CAP", "BRB did not complete (%s); abandoning it", wait == STATUS_TIMEOUT ? "timeout" : "teardown");
 	return wait == STATUS_TIMEOUT ? STATUS_IO_TIMEOUT : STATUS_CANCELLED;
 }
 
@@ -219,7 +220,7 @@ void OnIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication, _In_ 
 
 	if (indication == IndicationRemoteDisconnect)
 	{
-		OA2DP_LOG("signaling channel remote disconnect, reason %d", static_cast<int>(parameters->Parameters.Disconnect.Reason));
+		OA2DP_INFO(ctx, "L2CAP", "signaling channel remote disconnect, reason %d", static_cast<int>(parameters->Parameters.Disconnect.Reason));
 		WdfWorkItemEnqueue(ctx->DisconnectWorkItem);
 	}
 }
@@ -241,13 +242,13 @@ void OnOpenComplete(
 		ctx->SignalingChannel = ctx->OpenBrb.ChannelHandle;
 		ctx->SignalingOutMtu = ctx->OpenBrb.OutResults.Params.Mtu;
 		InterlockedExchange(&ctx->SignalingState, ChannelOpen);
-		OA2DP_LOG("signaling channel open, out MTU %u", ctx->SignalingOutMtu);
+		OA2DP_INFO(ctx, "L2CAP", "signaling channel open, out MTU %u", ctx->SignalingOutMtu);
 		SignalingOnChannelOpen(ctx);
 	}
 	else
 	{
 		InterlockedExchange(&ctx->SignalingState, ChannelClosed);
-		OA2DP_LOG("signaling channel open failed 0x%08X (L2CAP response %u/%u)",
+		OA2DP_ERROR(ctx, "L2CAP", "signaling channel open failed 0x%08X (L2CAP response %u/%u)",
 			status, ctx->OpenBrb.Response, ctx->OpenBrb.ResponseStatus);
 	}
 
@@ -303,12 +304,12 @@ void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPL
 		{
 			ctx->MediaOutMtu = ctx->RejectBrb.OutResults.Params.Mtu;
 			ctx->MediaChannel = ctx->RejectBrb.ChannelHandle;
-			OA2DP_LOG("incoming media channel open, out MTU %u", ctx->MediaOutMtu);
+			OA2DP_INFO(ctx, "L2CAP", "incoming media channel open, out MTU %u", ctx->MediaOutMtu);
 			InterlockedExchange(&ctx->RejectBusy, 0);
 			SignalingOnMediaChannelOpen(ctx);
 			return;
 		}
-		OA2DP_LOG("incoming media accept failed 0x%08X", params->IoStatus.Status);
+		OA2DP_ERROR(ctx, "L2CAP", "incoming media accept failed 0x%08X", params->IoStatus.Status);
 		if (ctx->SignalingState == ChannelOpen)
 		{
 			InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
@@ -321,7 +322,7 @@ void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPL
 	}
 	else
 	{
-		OA2DP_LOG("incoming connection refused 0x%08X", params->IoStatus.Status);
+		OA2DP_INFO(ctx, "L2CAP", "incoming connection refused, completion status 0x%08X", params->IoStatus.Status);
 	}
 	InterlockedExchange(&ctx->RejectBusy, 0);
 }
@@ -332,7 +333,7 @@ void RespondIncoming(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE handle,
 {
 	if (InterlockedCompareExchange(&ctx->RejectBusy, 1, 0) != 0)
 	{
-		OA2DP_LOG("incoming connection dropped (response in flight)");
+		OA2DP_WARN(ctx, "L2CAP", "incoming connection dropped (response in flight)");
 		return;
 	}
 
@@ -366,7 +367,7 @@ void RespondIncoming(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE handle,
 		}
 		status = WdfRequestGetStatus(ctx->RejectRequest);
 	}
-	OA2DP_LOG("incoming connection response failed 0x%08X", status);
+	OA2DP_ERROR(ctx, "L2CAP", "incoming connection response failed 0x%08X", status);
 	if (InterlockedExchange(&ctx->MediaAcceptPending, 0) != 0)
 	{
 		InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
@@ -400,20 +401,20 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 
 	if (ctx->SignalingState == ChannelOpen && InterlockedCompareExchange(&ctx->MediaAcceptAllowed, 0, 1) == 1)
 	{
-		OA2DP_LOG("incoming media connection");
+		OA2DP_INFO(ctx, "L2CAP", "incoming media connection");
 		RespondIncoming(ctx, parameters->ConnectionHandle, parameters->BtAddress, true);
 		return;
 	}
 
 	if (InterlockedCompareExchange(&ctx->SignalingState, ChannelOpening, ChannelClosed) != ChannelClosed)
 	{
-		OA2DP_LOG("incoming signaling connection refused: signaling channel already in state %ld",
+		OA2DP_WARN(ctx, "L2CAP", "incoming signaling connection refused: signaling channel already in state %ld",
 			static_cast<long>(ctx->SignalingState));
 		RespondIncoming(ctx, parameters->ConnectionHandle, parameters->BtAddress, false);
 		return;
 	}
 
-	OA2DP_LOG("incoming signaling connection");
+	OA2DP_INFO(ctx, "L2CAP", "incoming signaling connection");
 	InterlockedExchange(&ctx->SignalingIncoming, 1);
 	KeClearEvent(&ctx->OpenIdle);
 
@@ -437,7 +438,7 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("incoming signaling accept failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "L2CAP", "incoming signaling accept failed 0x%08X", status);
 	}
 }
 
@@ -448,6 +449,7 @@ NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx)
 	KeInitializeEvent(&ctx->OpenIdle, NotificationEvent, TRUE);
 	KeInitializeEvent(&ctx->StopEvent, NotificationEvent, FALSE);
 	KeInitializeSpinLock(&ctx->PreferenceLock);
+	RtlStringCchCopyA(ctx->LogTag, ARRAYSIZE(ctx->LogTag), "unidentified device");
 	ctx->IoTarget = WdfDeviceGetIoTarget(ctx->Device);
 
 	NTSTATUS status = WdfFdoQueryForInterface(ctx->Device, &GUID_BTHDDI_PROFILE_DRIVER_INTERFACE,
@@ -455,7 +457,7 @@ NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx)
 		BTHDDI_PROFILE_DRIVER_INTERFACE_VERSION_FOR_QI, nullptr);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("query profile driver interface failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "L2CAP", "query profile driver interface failed 0x%08X", status);
 		return status;
 	}
 	ctx->ProfileValid = TRUE;
@@ -516,7 +518,7 @@ NTSTATUS L2capRegisterServer(_In_ DEVICE_CONTEXT* ctx)
 	brb.ReferenceObject = WdfDeviceWdmGetDeviceObject(ctx->Device);
 
 	NTSTATUS status = BrbOpRun(op, BrbControlTimeoutMs, false);
-	OA2DP_LOG("L2CAP server register 0x%08X", status);
+	OA2DP_INFO(ctx, "L2CAP", "server register status 0x%08X", status);
 	if (NT_SUCCESS(status))
 	{
 		ctx->ServerHandle = brb.ServerHandle;
@@ -542,7 +544,7 @@ void L2capUnregisterServer(_In_ DEVICE_CONTEXT* ctx)
 	brb.Psm = AvdtpPsm;
 	brb.ServerHandle = ctx->ServerHandle;
 	NTSTATUS status = BrbOpRun(op, BrbControlTimeoutMs, false);
-	OA2DP_LOG("L2CAP server unregister 0x%08X", status);
+	OA2DP_INFO(ctx, "L2CAP", "server unregister status 0x%08X", status);
 	ctx->ServerHandle = nullptr;
 	BrbOpRelease(op);
 }
@@ -560,13 +562,12 @@ NTSTATUS L2capRetrieveRemoteAddress(_In_ DEVICE_CONTEXT* ctx)
 		ctx->IoTarget, nullptr, IOCTL_INTERNAL_BTHENUM_GET_DEVINFO, nullptr, &out, &options, nullptr);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("get device info failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "L2CAP", "get device info failed 0x%08X", status);
 		return status;
 	}
 
 	ctx->RemoteAddress = info.address;
 	ctx->RemoteClass = (info.flags & BDIF_COD) != 0 ? info.classOfDevice : 0;
-	OA2DP_LOG("remote device %012llX, CoD 0x%06X", info.address, ctx->RemoteClass);
 
 	ctx->RemoteName[0] = L'\0';
 	if ((info.flags & BDIF_NAME) != 0)
@@ -579,6 +580,24 @@ NTSTATUS L2capRetrieveRemoteAddress(_In_ DEVICE_CONTEXT* ctx)
 			ctx->RemoteName[nameBytes / sizeof(WCHAR)] = L'\0';
 		}
 	}
+
+	// Log tag: "<name> (aa:bb:cc:dd:ee:ff)". The name is reduced to printable ASCII so the
+	// tag can be printed at any IRQL.
+	char name[BTH_MAX_NAME_SIZE + 1];
+	size_t length = 0;
+	for (; length < BTH_MAX_NAME_SIZE && ctx->RemoteName[length] != L'\0'; ++length)
+	{
+		const WCHAR c = ctx->RemoteName[length];
+		name[length] = (c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : '?';
+	}
+	name[length] = '\0';
+	const BTH_ADDR a = info.address;
+	RtlStringCchPrintfA(ctx->LogTag, ARRAYSIZE(ctx->LogTag), "%s (%02X:%02X:%02X:%02X:%02X:%02X)",
+		length != 0 ? name : "unnamed", static_cast<unsigned>((a >> 40) & 0xFF), static_cast<unsigned>((a >> 32) & 0xFF),
+		static_cast<unsigned>((a >> 24) & 0xFF), static_cast<unsigned>((a >> 16) & 0xFF),
+		static_cast<unsigned>((a >> 8) & 0xFF), static_cast<unsigned>(a & 0xFF));
+
+	OA2DP_INFO(ctx, "Device", "identified: class of device 0x%06X", ctx->RemoteClass);
 	return STATUS_SUCCESS;
 }
 
@@ -612,7 +631,7 @@ NTSTATUS L2capOpenSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("signaling channel open submit failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "L2CAP", "signaling channel open submit failed 0x%08X", status);
 	}
 	return status;
 }
@@ -627,7 +646,7 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	openTimeout.QuadPart = -static_cast<LONGLONG>(BrbControlTimeoutMs) * 10000;
 	if (KeWaitForSingleObject(&ctx->OpenIdle, Executive, KernelMode, FALSE, &openTimeout) != STATUS_SUCCESS)
 	{
-		OA2DP_LOG("close signaling: open did not complete within %u ms", BrbControlTimeoutMs);
+		OA2DP_WARN(ctx, "L2CAP", "close signaling: open did not complete within %u ms", BrbControlTimeoutMs);
 	}
 	if (InterlockedCompareExchange(&ctx->SignalingState, ChannelClosing, ChannelOpen) != ChannelOpen)
 	{
@@ -656,7 +675,7 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 		status = BrbOpRun(op, BrbControlTimeoutMs, false);
 		BrbOpRelease(op);
 	}
-	OA2DP_LOG("signaling channel closed 0x%08X", status);
+	OA2DP_INFO(ctx, "L2CAP", "signaling channel closed, status 0x%08X", status);
 
 	ctx->SignalingChannel = nullptr;
 	InterlockedExchange(&ctx->SignalingState, ChannelClosed);
@@ -736,7 +755,7 @@ NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CH
 	{
 		return static_cast<NTSTATUS>(slot->Status);
 	}
-	OA2DP_LOG("send did not complete within %u ms; it stays pending in the transport", timeoutMs);
+	OA2DP_WARN(ctx, "L2CAP", "send did not complete within %u ms; it stays pending in the transport", timeoutMs);
 	return STATUS_IO_TIMEOUT;
 }
 
@@ -791,14 +810,14 @@ NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 	NTSTATUS status = BrbOpRun(op, BrbControlTimeoutMs, true);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("media channel open failed 0x%08X (L2CAP response %u/%u)", status, brb.Response, brb.ResponseStatus);
+		OA2DP_ERROR(ctx, "L2CAP", "media channel open failed 0x%08X (L2CAP response %u/%u)", status, brb.Response, brb.ResponseStatus);
 		BrbOpRelease(op);
 		return status;
 	}
 
 	ctx->MediaChannel = brb.ChannelHandle;
 	ctx->MediaOutMtu = brb.OutResults.Params.Mtu;
-	OA2DP_LOG("media channel open, out MTU %u", ctx->MediaOutMtu);
+	OA2DP_INFO(ctx, "L2CAP", "media channel open, out MTU %u", ctx->MediaOutMtu);
 	BrbOpRelease(op);
 	return STATUS_SUCCESS;
 }
@@ -834,6 +853,6 @@ void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 		status = BrbOpRun(op, BrbControlTimeoutMs, false);
 		BrbOpRelease(op);
 	}
-	OA2DP_LOG("media channel closed 0x%08X", status);
+	OA2DP_INFO(ctx, "L2CAP", "media channel closed, status 0x%08X", status);
 	ctx->MediaChannel = nullptr;
 }

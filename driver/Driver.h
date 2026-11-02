@@ -21,8 +21,19 @@
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcFixed.h>
 
-#define OA2DP_LOG(fmt, ...) \
-	DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "OpenA2dp: " fmt "\n", __VA_ARGS__)
+// Log format: "OpenA2dp <LEVEL> [<headset name> (<address>)] <Category>: <message>".
+// ctx may be nullptr before a device exists (the tag is then "-"). Every level is
+// emitted at DPFLTR_INFO_LEVEL on purpose: a debug-filter mask that shows the
+// driver's messages at all must never hide the warnings and errors among them; the
+// level is part of the text instead. The tag is plain ANSI in the device context, so
+// it is safe to print at any IRQL (completion routines run at DISPATCH_LEVEL).
+#define OA2DP_TAG(ctx) OA2dpTagOf(ctx)
+#define OA2DP_LOG_AT(levelName, ctx, category, fmt, ...) \
+	DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "OpenA2dp " levelName " [%s] " category ": " fmt "\n", \
+		OA2DP_TAG(ctx), __VA_ARGS__)
+#define OA2DP_INFO(ctx, category, fmt, ...) OA2DP_LOG_AT("INFO ", ctx, category, fmt, __VA_ARGS__)
+#define OA2DP_WARN(ctx, category, fmt, ...) OA2DP_LOG_AT("WARN ", ctx, category, fmt, __VA_ARGS__)
+#define OA2DP_ERROR(ctx, category, fmt, ...) OA2DP_LOG_AT("ERROR", ctx, category, fmt, __VA_ARGS__)
 
 inline constexpr ULONG OpenA2dpPoolTag = 'pdAO';
 inline constexpr USHORT AvdtpPsm = 0x0019;
@@ -46,6 +57,49 @@ inline constexpr LONG ChannelClosed = 0;
 inline constexpr LONG ChannelOpening = 1;
 inline constexpr LONG ChannelOpen = 2;
 inline constexpr LONG ChannelClosing = 3;
+
+inline const char* AvdtpStateName(OpenA2dp::Avdtp::SessionState state)
+{
+	switch (state)
+	{
+	case OpenA2dp::Avdtp::SessionState::Idle: return "Idle";
+	case OpenA2dp::Avdtp::SessionState::Discovering: return "Discovering";
+	case OpenA2dp::Avdtp::SessionState::GettingCapabilities: return "GettingCapabilities";
+	case OpenA2dp::Avdtp::SessionState::Configuring: return "Configuring";
+	case OpenA2dp::Avdtp::SessionState::Configured: return "Configured";
+	case OpenA2dp::Avdtp::SessionState::Opening: return "Opening";
+	case OpenA2dp::Avdtp::SessionState::Open: return "Open";
+	case OpenA2dp::Avdtp::SessionState::Starting: return "Starting";
+	case OpenA2dp::Avdtp::SessionState::Streaming: return "Streaming";
+	case OpenA2dp::Avdtp::SessionState::Suspending: return "Suspending";
+	case OpenA2dp::Avdtp::SessionState::Closing: return "Closing";
+	case OpenA2dp::Avdtp::SessionState::Aborting: return "Aborting";
+	case OpenA2dp::Avdtp::SessionState::Failed: return "Failed";
+	}
+	return "?";
+}
+
+inline const char* CodecName(OpenA2dp::Avdtp::CodecType codec)
+{
+	switch (codec)
+	{
+	case OpenA2dp::Avdtp::CodecType::Sbc: return "SBC";
+	case OpenA2dp::Avdtp::CodecType::Aac: return "AAC";
+	default: return "other";
+	}
+}
+
+inline const char* ChannelStateName(LONG state)
+{
+	switch (state)
+	{
+	case ChannelClosed: return "Closed";
+	case ChannelOpening: return "Opening";
+	case ChannelOpen: return "Open";
+	case ChannelClosing: return "Closing";
+	}
+	return "?";
+}
 
 // Bounds on how long a thread of ours may wait for the Bluetooth transport. The
 // transport does not always complete a cancelled request, so no wait on it may be
@@ -80,6 +134,8 @@ struct DEVICE_CONTEXT
 	BTH_PROFILE_DRIVER_INTERFACE Profile;
 	BOOLEAN ProfileValid;
 	BTH_ADDR RemoteAddress;
+	// "<name> (<aa:bb:cc:dd:ee:ff>)" for log lines; ANSI so any IRQL may print it.
+	char LogTag[BTH_MAX_NAME_SIZE + 32];
 	// Remote device name (UTF-16) from BTHENUM, empty if unknown.
 	WCHAR RemoteName[BTH_MAX_NAME_SIZE + 1];
 	// Remote Class of Device from BTHENUM, 0 if unknown.
@@ -251,6 +307,11 @@ struct DEVICE_CONTEXT
 	UCHAR WriteBuffer[OpenA2dp::Avdtp::kMaxSignalPacket];
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, GetDeviceContext)
+
+inline const char* OA2dpTagOf(const DEVICE_CONTEXT* ctx)
+{
+	return ctx != nullptr ? ctx->LogTag : "-";
+}
 
 // L2cap.cpp
 _IRQL_requires_(PASSIVE_LEVEL)

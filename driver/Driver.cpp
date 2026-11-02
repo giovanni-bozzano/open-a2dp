@@ -32,7 +32,7 @@ void AssignFriendlyName(_In_ DEVICE_CONTEXT* ctx)
 	WDF_DEVICE_PROPERTY_DATA_INIT(&property, &DEVPKEY_Device_FriendlyName);
 	const ULONG bytes = static_cast<ULONG>((wcslen(friendlyName) + 1) * sizeof(WCHAR));
 	status = WdfDeviceAssignProperty(ctx->Device, &property, DEVPROP_TYPE_STRING, bytes, friendlyName);
-	OA2DP_LOG("friendly name '%ws' 0x%08X", friendlyName, status);
+	OA2DP_INFO(ctx, "Device", "friendly name '%ws' 0x%08X", friendlyName, status);
 }
 
 NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMRESLIST)
@@ -51,6 +51,7 @@ NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 	// Failing to register or reach the headset is not fatal; the device stays started.
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	KeClearEvent(&ctx->StopEvent);
+	OA2DP_INFO(ctx, "Device", "starting: registering the AVDTP server and connecting to the headset");
 	ServiceStart(ctx);
 	(void)L2capRegisterServer(ctx);
 	(void)L2capOpenSignalingChannel(ctx);
@@ -65,6 +66,7 @@ NTSTATUS OnSelfManagedIoRestart(_In_ WDFDEVICE device)
 NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	OA2DP_INFO(ctx, "Device", "stopping: closing the AVDTP session, then the channels");
 	if (!SignalingAbortSession(ctx))
 	{
 		// The signaling work item is busy, typically opening the media channel. Cut its
@@ -84,6 +86,7 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 	WdfWorkItemFlush(ctx->SignalingWorkItem);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
 	MediaStop(ctx);
+	OA2DP_INFO(ctx, "Device", "stopped");
 	return STATUS_SUCCESS;
 }
 
@@ -179,7 +182,7 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	status = AudioInitialize(ctx);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio endpoint creation failed 0x%08X", status);
+		OA2DP_ERROR(ctx, "Device", "audio endpoint creation failed 0x%08X", status);
 		return status;
 	}
 
@@ -202,6 +205,6 @@ extern "C" NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT driverObject, _In_ PUNICODE_
 		ACX_DRIVER_CONFIG_INIT(&acxConfig);
 		status = AcxDriverInitialize(driver, &acxConfig);
 	}
-	OA2DP_LOG("DriverEntry 0x%08X, built " __DATE__ " " __TIME__, status);
+	OA2DP_INFO(nullptr, "Driver", "DriverEntry 0x%08X, built " __DATE__ " " __TIME__, status);
 	return status;
 }

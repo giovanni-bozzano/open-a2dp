@@ -41,7 +41,7 @@ bool MediaSendReady(DEVICE_CONTEXT* ctx)
 	}
 	if (++ctx->MediaBusyTicks == MediaBusyLimitTicks)
 	{
-		OA2DP_LOG("media: the previous send is still pending in the transport after %u ms; stopping",
+		OA2DP_WARN(ctx, "Media", "the previous send is still pending in the transport after %u ms; stopping",
 			MediaBusyLimitTicks * MediaPeriodMs);
 		InterlockedIncrement(&ctx->SendFailures);
 		InterlockedExchange(&ctx->LastMediaError, STATUS_IO_TIMEOUT);
@@ -131,7 +131,7 @@ void TickSbc(DEVICE_CONTEXT* ctx)
 		const ULONG length = BuildSbcPacket(ctx, samples);
 		if (length == 0)
 		{
-			OA2DP_LOG("media packet build failed");
+			OA2DP_ERROR(ctx, "Media", "packet build failed");
 			ctx->MediaActive = FALSE;
 			return;
 		}
@@ -140,11 +140,11 @@ void TickSbc(DEVICE_CONTEXT* ctx)
 		{
 			if (IsLinkLoss(ctx, status))
 			{
-				OA2DP_LOG("media: stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+				OA2DP_INFO(ctx, "Media", "stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
 			}
 			else
 			{
-				OA2DP_LOG("media send failed 0x%08X after %u packets", status, ctx->RtpSequence);
+				OA2DP_ERROR(ctx, "Media", "send failed 0x%08X after %u packets", status, ctx->RtpSequence);
 				InterlockedIncrement(&ctx->SendFailures);
 				InterlockedExchange(&ctx->LastMediaError, status);
 			}
@@ -155,7 +155,7 @@ void TickSbc(DEVICE_CONTEXT* ctx)
 		ctx->MediaSamplesSent += samples;
 		if ((ctx->RtpSequence & 0xFF) == 0)
 		{
-			OA2DP_LOG("media: %u packets sent", ctx->RtpSequence);
+			OA2DP_INFO(ctx, "Media", "%u packets sent", ctx->RtpSequence);
 		}
 	}
 }
@@ -182,11 +182,11 @@ void TickAac(DEVICE_CONTEXT* ctx)
 		{
 			if (IsLinkLoss(ctx, status))
 			{
-				OA2DP_LOG("media: AAC stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+				OA2DP_INFO(ctx, "Media", "AAC stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
 			}
 			else
 			{
-				OA2DP_LOG("media: AAC send failed 0x%08X after %u packets", status, ctx->RtpSequence);
+				OA2DP_ERROR(ctx, "Media", "AAC send failed 0x%08X after %u packets", status, ctx->RtpSequence);
 				InterlockedIncrement(&ctx->SendFailures);
 				InterlockedExchange(&ctx->LastMediaError, status);
 			}
@@ -206,7 +206,7 @@ void TickAac(DEVICE_CONTEXT* ctx)
 
 	if (InterlockedCompareExchange(&ctx->StreamFault, 0, 0) != 0)
 	{
-		OA2DP_LOG("media: AAC frame ring fault, suspending");
+		OA2DP_ERROR(ctx, "Media", "AAC frame ring fault, suspending");
 		ctx->MediaActive = FALSE;
 		SignalingRequestSuspend(ctx);
 		return;
@@ -222,7 +222,7 @@ void TickAac(DEVICE_CONTEXT* ctx)
 	const ULONGLONG idle = now - ctx->AacLastFrameTime;
 	if (idle >= StallTimeout)
 	{
-		OA2DP_LOG("media: AAC encoder stalled for %I64u ms, suspending", idle / 10000ull);
+		OA2DP_WARN(ctx, "Media", "AAC encoder stalled for %I64u ms, suspending", idle / 10000ull);
 		InterlockedExchange(&ctx->LastMediaError, STATUS_IO_TIMEOUT);
 		ctx->MediaActive = FALSE;
 		SignalingRequestSuspend(ctx);
@@ -232,7 +232,7 @@ void TickAac(DEVICE_CONTEXT* ctx)
 	{
 		ctx->AacLastUnderrunLog = now;
 		InterlockedIncrement(&ctx->Underruns);
-		OA2DP_LOG("media: AAC underrun (%I64u ms without a frame)", idle / 10000ull);
+		OA2DP_WARN(ctx, "Media", "AAC underrun (%I64u ms without a frame)", idle / 10000ull);
 	}
 }
 
@@ -274,17 +274,17 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	AacConfig::Params params;
 	if (!AacConfig::ParseConfiguredIe(ie, ieLength, params))
 	{
-		OA2DP_LOG("media: invalid AAC configuration");
+		OA2DP_WARN(ctx, "Media", "invalid AAC configuration");
 		return;
 	}
 	if (params.sampleRate != AudioSampleRate || params.channels != AudioChannels)
 	{
-		OA2DP_LOG("media: unsupported AAC format %u Hz %u ch", params.sampleRate, params.channels);
+		OA2DP_WARN(ctx, "Media", "unsupported AAC format %u Hz %u ch", params.sampleRate, params.channels);
 		return;
 	}
 	if (params.bitrate == 0 || params.bitrate > AacConfig::kMaxBitrate)
 	{
-		OA2DP_LOG("media: unsupported AAC bitrate %u", params.bitrate);
+		OA2DP_WARN(ctx, "Media", "unsupported AAC bitrate %u", params.bitrate);
 		return;
 	}
 	// The average frame plus the LATM and RTP headers must fit one packet; the
@@ -293,12 +293,12 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 		params.bitrate / 8 * Ioctl::kAacSamplesPerFrame / params.sampleRate;
 	if (average + 64 > Ioctl::kMaxFramePayload)
 	{
-		OA2DP_LOG("media: AAC bitrate %u does not fit the media MTU", params.bitrate);
+		OA2DP_WARN(ctx, "Media", "AAC bitrate %u does not fit the media MTU", params.bitrate);
 		return;
 	}
 	if (!ServiceRegistered(ctx))
 	{
-		OA2DP_LOG("media: AAC configured but no encoder service is registered");
+		OA2DP_WARN(ctx, "Media", "AAC configured but no encoder service is registered");
 		return;
 	}
 
@@ -322,7 +322,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->MediaActive = TRUE;
 	WdfWaitLockRelease(ctx->MediaLock);
 
-	OA2DP_LOG("media: AAC %u Hz %u ch %u bps, object 0x%02X, frames from service", params.sampleRate,
+	OA2DP_INFO(ctx, "Media", "AAC %u Hz %u ch %u bps, object 0x%02X, frames from service", params.sampleRate,
 		params.channels, params.bitrate, params.objectType);
 	WdfTimerStart(ctx->MediaTimer, 0);
 }
@@ -361,7 +361,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	// not get a stream again after its teardown stopped media.
 	if (ctx->SignalingState != ChannelOpen || KeReadStateEvent(&ctx->StopEvent) != 0)
 	{
-		OA2DP_LOG("media: not starting, the link is closing");
+		OA2DP_WARN(ctx, "Media", "not starting, the link is closing");
 		return;
 	}
 	if (codec == Avdtp::CodecType::Aac)
@@ -373,7 +373,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	SbcFixed::Params params;
 	if (!SbcFixed::ParseIe(ie, ieLength, params) || params.sampleRate != AudioSampleRate || params.Channels() != AudioChannels)
 	{
-		OA2DP_LOG("media: unsupported SBC configuration");
+		OA2DP_WARN(ctx, "Media", "unsupported SBC configuration");
 		return;
 	}
 
@@ -394,7 +394,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->MediaActive = TRUE;
 	WdfWaitLockRelease(ctx->MediaLock);
 
-	OA2DP_LOG("media: endpoint PCM, SBC %u Hz blocks %u subbands %u mode %u bitpool %u, frame %u bytes",
+	OA2DP_INFO(ctx, "Media", "endpoint PCM, SBC %u Hz blocks %u subbands %u mode %u bitpool %u, frame %u bytes",
 		params.sampleRate, params.blocks, params.subbands, static_cast<unsigned>(params.channelMode),
 		params.bitpool, static_cast<unsigned>(SbcFixed::FrameLength(params)));
 	WdfTimerStart(ctx->MediaTimer, 0);
@@ -417,12 +417,12 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 		{
 			break;
 		}
-		OA2DP_LOG("media stop: still waiting for the media work item to release the lock");
+		OA2DP_WARN(ctx, "Media", "stop: still waiting for the media work item to release the lock");
 	}
 	const LONG mode = InterlockedExchange(&ctx->MediaMode, MediaModeNone);
 	if (wasActive)
 	{
-		OA2DP_LOG("media stopped after %u packets", ctx->RtpSequence);
+		OA2DP_INFO(ctx, "Media", "stopped after %u packets", ctx->RtpSequence);
 	}
 	WdfWaitLockRelease(ctx->MediaLock);
 

@@ -175,7 +175,7 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 
 	if (report)
 	{
-		OA2DP_LOG("audio: pos %llu ring %u dropped %llu", position, readable, dropped);
+		OA2DP_INFO(ctx, "Audio", "position %llu, %u PCM bytes buffered, %llu bytes dropped so far", position, readable, dropped);
 	}
 
 	if (notify && stream != nullptr)
@@ -222,7 +222,7 @@ NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACX
 	status = AcxRtStreamCreate(device, circuit, &attrs, &streamInit, &stream);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: create stream 0x%08X", status);
+		OA2DP_ERROR(GetDeviceContext(device), "Audio", "AcxRtStreamCreate failed 0x%08X", status);
 		return status;
 	}
 
@@ -284,7 +284,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	WdfTimerStart(ctx->AudioTimer, 0);
-	OA2DP_LOG("audio: stream run");
+	OA2DP_INFO(ctx, "Audio", "stream run");
 	return STATUS_SUCCESS;
 }
 
@@ -300,7 +300,7 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 	const ULONGLONG dropped = ctx->AudioDroppedBytes;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
-	OA2DP_LOG("audio: stream pause, %llu bytes dropped", dropped);
+	OA2DP_INFO(ctx, "Audio", "stream paused, %llu bytes dropped during the run", dropped);
 	return STATUS_SUCCESS;
 }
 
@@ -309,7 +309,7 @@ NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_
 	*packets = nullptr;
 	if (packetCount == 0 || packetCount > AudioMaxPacketCount || packetSize == 0 || packetSize % AudioBytesPerFrame != 0)
 	{
-		OA2DP_LOG("audio: allocate %u packets of %u bytes rejected", packetCount, packetSize);
+		OA2DP_WARN(GetStreamContext(stream)->Device, "Audio", "allocate %u packets of %u bytes rejected", packetCount, packetSize);
 		return STATUS_NOT_SUPPORTED;
 	}
 
@@ -331,7 +331,7 @@ NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_
 	PMDL mdl = MmAllocatePagesForMdlEx(low, high, skip, bufferSize, MmCached, MM_ALLOCATE_FULLY_REQUIRED);
 	if (mdl == nullptr)
 	{
-		OA2DP_LOG("audio: MDL allocation failed");
+		OA2DP_ERROR(ctx, "Audio", "render buffer MDL allocation failed");
 		ExFreePoolWithTag(rtPackets, OpenA2dpPoolTag);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
@@ -457,7 +457,7 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 	NTSTATUS status = AcxJackCreate(pin, &attrs, &config, &ctx->SinkJack);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxJackCreate 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "AcxJackCreate failed 0x%08X", status);
 		return status;
 	}
 	GetSinkJackContext(ctx->SinkJack)->Device = ctx;
@@ -465,7 +465,7 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 	status = AcxPinAddJacks(pin, &ctx->SinkJack, 1);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxPinAddJacks 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "AcxPinAddJacks failed 0x%08X", status);
 	}
 	return status;
 }
@@ -481,13 +481,13 @@ NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin)
 	NTSTATUS status = AcxDataFormatCreate(device, &attrs, &config, &format);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxDataFormatCreate 0x%08X", status);
+		OA2DP_ERROR(GetDeviceContext(device), "Audio", "AcxDataFormatCreate failed 0x%08X", status);
 		return status;
 	}
 	status = AcxDataFormatListAddDataFormat(AcxPinGetRawDataFormatList(pin), format);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxDataFormatListAddDataFormat 0x%08X", status);
+		OA2DP_ERROR(GetDeviceContext(device), "Audio", "AcxDataFormatListAddDataFormat failed 0x%08X", status);
 	}
 	return status;
 }
@@ -532,14 +532,14 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	status = AcxCircuitInitAssignName(circuitInit, &RenderCircuitName);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxCircuitInitAssignName 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "AcxCircuitInitAssignName failed 0x%08X", status);
 	}
 	if (NT_SUCCESS(status))
 	{
 		status = AcxCircuitInitAssignAcxCreateStreamCallback(circuitInit, OnCreateStream);
 		if (!NT_SUCCESS(status))
 		{
-			OA2DP_LOG("audio: AcxCircuitInitAssignAcxCreateStreamCallback 0x%08X", status);
+			OA2DP_ERROR(ctx, "Audio", "AcxCircuitInitAssignAcxCreateStreamCallback failed 0x%08X", status);
 		}
 	}
 	if (NT_SUCCESS(status))
@@ -551,7 +551,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		status = AcxCircuitCreate(ctx->Device, &circuitAttrs, &circuitInit, &circuit);
 		if (!NT_SUCCESS(status))
 		{
-			OA2DP_LOG("audio: AcxCircuitCreate 0x%08X", status);
+			OA2DP_ERROR(ctx, "Audio", "AcxCircuitCreate failed 0x%08X", status);
 		}
 	}
 	if (circuitInit != nullptr)
@@ -560,7 +560,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	}
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: circuit creation 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "circuit creation failed 0x%08X", status);
 		return status;
 	}
 
@@ -577,7 +577,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	status = AcxPinCreate(circuit, &pinAttrs, &pinConfig, &pins[0]);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: streaming pin 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "creating the streaming pin failed 0x%08X", status);
 		return status;
 	}
 	status = AddFormat(ctx->Device, pins[0]);
@@ -593,14 +593,14 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	status = AcxPinCreate(circuit, &pinAttrs, &pinConfig, &pins[1]);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: bridge pin 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "creating the bridge pin failed 0x%08X", status);
 		return status;
 	}
 
 	status = AcxCircuitAddPins(circuit, pins, ARRAYSIZE(pins));
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxCircuitAddPins 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "AcxCircuitAddPins failed 0x%08X", status);
 		return status;
 	}
 
@@ -613,7 +613,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	status = AcxDeviceAddCircuit(ctx->Device, circuit);
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_LOG("audio: AcxDeviceAddCircuit 0x%08X", status);
+		OA2DP_ERROR(ctx, "Audio", "AcxDeviceAddCircuit failed 0x%08X", status);
 	}
 	return status;
 }
