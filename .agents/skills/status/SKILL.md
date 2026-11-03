@@ -1,12 +1,10 @@
-# Status / Session Handoff
+---
+name: status
+description: Recover current plan and Git state without loading historical handoffs.
+---
 
-## Description
-One-turn context recovery using git log/status instead of reading docs.
+1. Read `docs/STATUS.md` unless already current in context.
+2. Run `git log --oneline -n 5` and `git status --short`; read relevant commit bodies only if needed.
+3. Summarize active milestones/blockers, next validation gate, recent SHAs and uncommitted state in ≤8 lines.
 
-## Instructions
-1. `git log --oneline -n 5` — last 5 commit summaries
-2. `git status -s` — uncommitted changes
-3. Return: commit SHAs + file state in ≤6 lines
-
-## Cache note
-Output ≤6 lines; kills the need to read SESSION-CONTEXT.md at session start.
+Do not load historical plan/action logs at startup or edit files just to record a session. Follow the minimal-file and commit-only change-tracking rules in `AGENTS.md`.
