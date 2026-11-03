@@ -6,6 +6,7 @@ NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeEvent(&ctx->OpenIdle, NotificationEvent, TRUE);
 	KeInitializeEvent(&ctx->StopEvent, NotificationEvent, FALSE);
+	KeInitializeEvent(&ctx->RejectIdle, NotificationEvent, TRUE);
 	KeInitializeSpinLock(&ctx->PreferenceLock);
 	RtlStringCchCopyA(ctx->LogTag, ARRAYSIZE(ctx->LogTag), "unidentified device");
 	ctx->IoTarget = WdfDeviceGetIoTarget(ctx->Device);

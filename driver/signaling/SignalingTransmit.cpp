@@ -59,6 +59,7 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 
 	const Avdtp::SessionState state = ctx->Session.State();
 	PublishStatus(ctx);
+	KeSetEvent(&ctx->SessionChanged, IO_NO_INCREMENT, FALSE);
 	if (state != ctx->LoggedState)
 	{
 		ctx->LoggedState = state;

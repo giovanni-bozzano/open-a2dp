@@ -180,6 +180,9 @@ struct DEVICE_CONTEXT
 	WDFMEMORY RejectBrbMemory;
 	struct _BRB_L2CA_OPEN_CHANNEL RejectBrb;
 	volatile LONG RejectBusy;
+	// Signaled while RejectBusy is clear, so the media close waits for an in-flight
+	// accept instead of polling it.
+	KEVENT RejectIdle;
 	// Set while the sink-configured stream is Open without a media channel: the
 	// next incoming channel is accepted (through RejectRequest) as media transport.
 	volatile LONG MediaAcceptAllowed;
@@ -199,6 +202,9 @@ struct DEVICE_CONTEXT
 	volatile LONG ReadCompleted;
 	volatile LONG TimeoutPending;
 	volatile LONG SuspendPending;
+	// Set after every session transition (Transmit, ResetSession). Teardown clears it,
+	// re-checks the state under SessionLock and waits on it instead of polling.
+	KEVENT SessionChanged;
 	// The thread currently running OnSignalingWorkItem (it holds SessionLock then).
 	// Code reached from inside the work item, such as the media-open failure
 	// teardown, must neither flush that work item nor take SessionLock again; a

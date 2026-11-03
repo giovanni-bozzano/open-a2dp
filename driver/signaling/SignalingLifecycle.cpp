@@ -5,6 +5,7 @@ using namespace OpenA2dpDriver::Signaling;
 NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeEvent(&ctx->ReadIdle, NotificationEvent, TRUE);
+	KeInitializeEvent(&ctx->SessionChanged, NotificationEvent, FALSE);
 	ResetSession(ctx);
 
 	WDF_OBJECT_ATTRIBUTES attrs;

@@ -2,6 +2,16 @@
 
 namespace OpenA2dpDriver::L2cap
 {
+namespace
+{
+// Clears RejectBusy first, so a waiter woken by RejectIdle sees the slot free.
+void ReleaseReject(_In_ DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->RejectBusy, 0);
+	KeSetEvent(&ctx->RejectIdle, IO_NO_INCREMENT, FALSE);
+}
+} // namespace
+
 void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context)
 {
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
@@ -13,7 +23,7 @@ void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPL
 			ctx->MediaOutMtu = ctx->RejectBrb.OutResults.Params.Mtu;
 			ctx->MediaChannel = ctx->RejectBrb.ChannelHandle;
 			OA2DP_INFO(ctx, "L2CAP", "incoming media channel open, out MTU %u", ctx->MediaOutMtu);
-			InterlockedExchange(&ctx->RejectBusy, 0);
+			ReleaseReject(ctx);
 			SignalingOnMediaChannelOpen(ctx);
 			return;
 		}
@@ -32,7 +42,7 @@ void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPL
 	{
 		OA2DP_INFO(ctx, "L2CAP", "incoming connection refused, completion status 0x%08X", params->IoStatus.Status);
 	}
-	InterlockedExchange(&ctx->RejectBusy, 0);
+	ReleaseReject(ctx);
 }
 
 // Answers an incoming connection through the preallocated RejectRequest:
@@ -44,6 +54,9 @@ void RespondIncoming(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE handle,
 		OA2DP_WARN(ctx, "L2CAP", "incoming connection dropped (response in flight)");
 		return;
 	}
+	// Only the owner of RejectBusy clears or sets RejectIdle, and nothing can complete
+	// before the request is sent below.
+	KeClearEvent(&ctx->RejectIdle);
 
 	WDF_REQUEST_REUSE_PARAMS reuse;
 	WDF_REQUEST_REUSE_PARAMS_INIT(&reuse, WDF_REQUEST_REUSE_NO_FLAGS, STATUS_SUCCESS);
@@ -80,7 +93,7 @@ void RespondIncoming(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE handle,
 	{
 		InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
 	}
-	InterlockedExchange(&ctx->RejectBusy, 0);
+	ReleaseReject(ctx);
 }
 
 // Server indication: the headset opened an L2CAP channel on the AVDTP PSM.

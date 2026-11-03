@@ -53,14 +53,20 @@ void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->MediaAcceptAllowed, 0);
 	MediaStop(ctx);
 	// An accept still in flight would otherwise set MediaChannel after the close below.
-	// Revoke it (a late success then closes the channel itself) and give the completion
-	// a bounded moment so it is not halfway through adopting the channel.
+	// Revoke it (a late success then closes the channel itself) and wait, bounded, for
+	// the completion to signal RejectIdle so it is not halfway through adopting the channel.
 	InterlockedExchange(&ctx->MediaAcceptPending, 0);
-	for (int i = 0; i < 100 && InterlockedCompareExchange(&ctx->RejectBusy, 0, 0) != 0; ++i)
+	const ULONGLONG deadline = KeQueryInterruptTime() + 1000ull * 10000ull;
+	while (InterlockedCompareExchange(&ctx->RejectBusy, 0, 0) != 0)
 	{
-		LARGE_INTEGER delay;
-		delay.QuadPart = -100000LL; // 10 ms
-		KeDelayExecutionThread(KernelMode, FALSE, &delay);
+		const ULONGLONG now = KeQueryInterruptTime();
+		if (now >= deadline)
+		{
+			break;
+		}
+		LARGE_INTEGER wait;
+		wait.QuadPart = -static_cast<LONGLONG>(deadline - now);
+		KeWaitForSingleObject(&ctx->RejectIdle, Executive, KernelMode, FALSE, &wait);
 	}
 	if (ctx->MediaChannel == nullptr)
 	{

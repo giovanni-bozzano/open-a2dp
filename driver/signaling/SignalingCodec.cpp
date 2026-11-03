@@ -121,5 +121,6 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->ConnectDelayDeadline = 0;
 	InterlockedExchange(&ctx->MediaOpenPending, 0);
 	PublishStatus(ctx);
+	KeSetEvent(&ctx->SessionChanged, IO_NO_INCREMENT, FALSE);
 }
 } // namespace OpenA2dpDriver::Signaling

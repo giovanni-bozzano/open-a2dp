@@ -32,12 +32,15 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx)
 	WdfWaitLockRelease(ctx->SessionLock);
 
 	// Give the headset up to 1 s in total to answer, so the command takes effect before the
-	// channel closes. The read work item applies the response; this thread only polls the
-	// session state. Every lock wait is limited to what is left of the second.
+	// channel closes. The read work item applies the response and sets SessionChanged;
+	// this thread waits for that without holding SessionLock. Clearing the event before
+	// the check means a transition after the check sets it again, so none is missed.
+	// Every wait is limited to what is left of the second.
 	const ULONGLONG deadline = KeQueryInterruptTime() + 1000ull * 10000ull;
 	for (;;)
 	{
-		const ULONGLONG now = KeQueryInterruptTime();
+		KeClearEvent(&ctx->SessionChanged);
+		ULONGLONG now = KeQueryInterruptTime();
 		if (now >= deadline)
 		{
 			break;
@@ -55,9 +58,14 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx)
 		{
 			return true;
 		}
-		LARGE_INTEGER delay;
-		delay.QuadPart = -100000LL; // 10 ms
-		KeDelayExecutionThread(KernelMode, FALSE, &delay);
+		now = KeQueryInterruptTime();
+		if (now >= deadline)
+		{
+			break;
+		}
+		LARGE_INTEGER wait;
+		wait.QuadPart = -static_cast<LONGLONG>(deadline - now);
+		KeWaitForSingleObject(&ctx->SessionChanged, Executive, KernelMode, FALSE, &wait);
 	}
 	OA2DP_WARN(ctx, "AVDTP", "%s response not received within 1 s", closing ? "CLOSE" : "ABORT");
 	return true;

@@ -433,17 +433,16 @@ void RunLoop()
 
 	// A stop cancels the parked WAIT_EVENT, so the workers return promptly. A worker
 	// stuck elsewhere (the driver or the encoder not answering) must not keep the
-	// service from stopping: wait a bounded time, then detach what is left and let
-	// the process exit take it down.
+	// service from stopping: wait on each thread a bounded time, then detach what is left
+	// and let the process exit take it down.
 	const ULONGLONG joinDeadline = GetTickCount64() + kWorkerStopWaitMs;
 	for (auto& worker : workers) {
-		while (!worker.Done->load() && GetTickCount64() < joinDeadline) {
-			Sleep(10);
-		}
 		if (!worker.Thread.joinable()) {
 			continue;
 		}
-		if (worker.Done->load()) {
+		const ULONGLONG now = GetTickCount64();
+		const DWORD remaining = now < joinDeadline ? static_cast<DWORD>(joinDeadline - now) : 0;
+		if (WaitForSingleObject(worker.Thread.native_handle(), remaining) == WAIT_OBJECT_0) {
 			worker.Thread.join();
 		} else {
 			Log("[svc] %s did not stop within %lu ms; abandoning it", WstrToUtf8(worker.Link).c_str(),
