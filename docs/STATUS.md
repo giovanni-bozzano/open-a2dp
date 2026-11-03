@@ -19,9 +19,9 @@ Single source of current plan state. Keep this short; change history and test re
 ## Next priorities (ordered)
 
 1. Ensure the project is as much event-driven as possible. Remove any code that triggers a state transition based on elapsed time. Verify if this is possible and make a plan for it.
-2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink. See [AAC gate](validation/Hardware.md#aac-and-fallback).
+2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink. See [AAC gate](VALIDATION.md#aac-and-fallback).
 3. Implement M5b, then finish M6. See [configuration design](architecture/Codec-Configuration.md).
 
 ## Deferred validation
 
-See [hardware validation](validation/Hardware.md#deferred) for deferred coverage and blockers; load only for validation tasks.
+See [VALIDATION.md](VALIDATION.md#deferred) for deferred coverage and blockers; load only for validation tasks.
