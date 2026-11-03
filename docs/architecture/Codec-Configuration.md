@@ -1,7 +1,5 @@
 # Codec configuration design (planned: M5b -> M6)
 
-On-demand scope, not a progress log; live state is in [STATUS.md](../STATUS.md).
-
 Implement in order:
 1. Per-headset registry settings (`Parameters\Devices\<addr>`) and global defaults: codec priority, SBC rate/channel mode/blocks/subbands/allocation/bitpool, AAC rate/channels/bitrate/VBR.
 2. Preference-aware `SbcConfig`/`AacConfig` selection with supported-value fallback. Test Default, SBC HQ and SBC XQ presets against media MTU limits.
