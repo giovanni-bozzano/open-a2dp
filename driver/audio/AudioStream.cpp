@@ -103,6 +103,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 
 	WdfTimerStart(ctx->AudioTimer, 0);
 	OA2DP_INFO(ctx, "Audio", "stream run");
+	SignalingOnAudioRun(ctx);
 	return STATUS_SUCCESS;
 }
 

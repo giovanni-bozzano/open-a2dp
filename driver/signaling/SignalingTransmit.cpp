@@ -2,13 +2,6 @@
 
 namespace OpenA2dpDriver::Signaling
 {
-// Deadlines protect a new timer arm from callbacks queued by an older arm.
-void ArmConnectDelay(DEVICE_CONTEXT* ctx, LONGLONG milliseconds)
-{
-	ctx->ConnectDelayDeadline = KeQueryInterruptTime() + static_cast<ULONGLONG>(milliseconds) * 10000;
-	WdfTimerStart(ctx->ConnectDelayTimer, WDF_REL_TIMEOUT_IN_MS(milliseconds));
-}
-
 static void LogSendFailure(DEVICE_CONTEXT* ctx, NTSTATUS status)
 {
 	if (IsLinkLoss(ctx, status))
@@ -129,11 +122,6 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 					DiscoveryFailureName(reason), static_cast<unsigned>(reason), ctx->Session.HasDiscoveryError() ? 1u : 0u,
 					static_cast<unsigned>(ctx->Session.DiscoveryError()));
 			}
-		}
-		else if (state != Avdtp::SessionState::Idle && state != Avdtp::SessionState::Failed)
-		{
-			ctx->ConnectDelayDeadline = 0;
-			WdfTimerStop(ctx->ConnectDelayTimer, FALSE);
 		}
 		if (state == Avdtp::SessionState::Open)
 		{

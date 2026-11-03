@@ -17,12 +17,11 @@ service IOCTLs. Elapsed time may only drive the cases below.
 | 2 (done, `c7103ef`) | Media send waited up to 500 ms under `MediaLock`; AAC 2 s stall and 3 s pending send -> suspend | Async media send: the completion enqueues `MediaWorkItem`, the timer only raises the sample target and wakes the service. Stall and pending-send checks are diagnostics only; encoder loss (`OnFileCleanup`, ring fault) and link loss (send status, disconnect indication) end the stream. |
 | 3a (done, `3f1683c`) | Media open blocked the work item (3 s) under `SessionLock` and retried after 200 ms sleeps | `L2capStartMediaOpen` submits the BRB; its completion sets `MediaOpenCompleted` and enqueues the signaling work item, which collects it (`L2capFinishMediaOpen`) and sends START. Failure -> ABORT, rediscover on the ABORT response (3 attempts), else close. A close reclaims an open in flight: a late success is adopted and closed, an abandoned one is closed by its completion. |
 | 3b (done, `2a2ed82`) | Signaling send waited up to 1 s under `SessionLock` (timeout only logged) | `Transmit` submits to the idle slot or appends to a 4-packet FIFO under `SessionLock`; the send completion enqueues the signaling work item, which logs the status and submits the next packet. Close cancels and waits the send-cancel grace; `ResetSession` drops packets of the old session. |
-| 4a (done) | Service polled for control devices every 250 ms | The driver enables `kControlArrivalInterface` on its PnP device once the control link exists (disabled in `ServiceStop`, so each resume is a new arrival); the service enumerates on `CM_Register_Notification` arrival, at start and when a worker ends. |
-| 4b (done) | Connect waited 8 x 100 ms for the service | REGISTER_ENCODER enqueues the signaling work item. Once the session settles in Streaming with SBC against a sink that advertised AAC (`SourceSession::RemoteOffers`), it sends CLOSE and rediscovers on the response. |
-| 4c | 700 ms delay before discovery on headset-initiated links | Stay acceptor until the headset's first command or until ACX runs the stream, then discover. |
+| 4a (done, `4749fe4`) | Service polled for control devices every 250 ms | The driver enables `kControlArrivalInterface` on its PnP device once the control link exists (disabled in `ServiceStop`, so each resume is a new arrival); the service enumerates on `CM_Register_Notification` arrival, at start and when a worker ends. |
+| 4b (done, `d89b328`) | Connect waited 8 x 100 ms for the service | REGISTER_ENCODER enqueues the signaling work item. Once the session settles in Streaming with SBC against a sink that advertised AAC (`SourceSession::RemoteOffers`), it sends CLOSE and rediscovers on the response. |
+| 4c (done) | 700 ms delay before discovery on headset-initiated links | Stay acceptor: the headset's own commands configure the stream. Discover only when the ACX stream runs (`SignalingOnAudioRun`, or already running at connect) while the session is still Idle. |
 
-Phases 3-4 change interoperability behaviour and need PANTONE/AAC-sink validation before
-the timed path is deleted.
+Phases 3-4 change interoperability behaviour and still need PANTONE/AAC-sink validation.
 
 ## Deadlock and ownership rules for every phase
 - Completion routines and timers (up to `DISPATCH_LEVEL`) never take `SessionLock` or

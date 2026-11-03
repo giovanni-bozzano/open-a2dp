@@ -77,11 +77,4 @@ void OnResponseTimeout(_In_ WDFTIMER timer)
 	InterlockedExchange(&ctx->TimeoutPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
-
-void OnConnectDelay(_In_ WDFTIMER timer)
-{
-	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
-	InterlockedExchange(&ctx->DeferredConnectPending, 1);
-	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
-}
 } // namespace OpenA2dpDriver::Signaling

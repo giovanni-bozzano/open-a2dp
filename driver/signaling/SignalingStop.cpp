@@ -82,8 +82,6 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_WARN(ctx, "Signaling", "stop: read did not complete within 1 s");
 	}
 	WdfTimerStop(ctx->ResponseTimer, TRUE);
-	WdfTimerStop(ctx->ConnectDelayTimer, TRUE);
-	InterlockedExchange(&ctx->DeferredConnectPending, 0);
 	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
 	{
 		WdfWorkItemFlush(ctx->SignalingWorkItem);

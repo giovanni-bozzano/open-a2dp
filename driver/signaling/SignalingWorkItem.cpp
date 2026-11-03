@@ -85,6 +85,16 @@ static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
 	}
 }
 
+// True while Windows is running the render stream.
+static bool AudioRunActive(DEVICE_CONTEXT* ctx)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const bool running = ctx->AudioRunning != FALSE;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return running;
+}
+
 static bool AacAllowedByPreference(DEVICE_CONTEXT* ctx)
 {
 	KIRQL irql;
@@ -155,11 +165,18 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				// sides configure the same stream: PANTONE then got its own
 				// SET_CONFIGURATION rejected (SEP in use) and refused the media
 				// channel with "no resources". Listen first; the library accepts the
-				// headset's configuration, and we only discover if it stays silent.
-				OA2DP_INFO(ctx, "Signaling", "headset-initiated; waiting up to %u ms for it to configure the stream",
-					static_cast<unsigned>(kIncomingConnectDelayMs));
+				// headset's configuration, and we discover only when Windows plays
+				// audio while the session is still Idle (here or SignalingOnAudioRun).
+				if (AudioRunActive(ctx))
+				{
+					OA2DP_INFO(ctx, "Signaling", "headset-initiated with audio running; starting discovery");
+					Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+				}
+				else
+				{
+					OA2DP_INFO(ctx, "Signaling", "headset-initiated; waiting for it to configure the stream or for audio");
+				}
 				SubmitRead(ctx);
-				ArmConnectDelay(ctx, kIncomingConnectDelayMs);
 			}
 			else
 			{
@@ -199,24 +216,12 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		SubmitRead(ctx);
 	}
 
-	if (InterlockedExchange(&ctx->DeferredConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
-		ctx->ConnectDelayDeadline != 0)
+	if (InterlockedExchange(&ctx->AudioRunPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
+		InterlockedCompareExchange(&ctx->SignalingIncoming, 0, 0) != 0 &&
+		ctx->Session.State() == Avdtp::SessionState::Idle)
 	{
-		const ULONGLONG now = KeQueryInterruptTime();
-		if (now < ctx->ConnectDelayDeadline)
-		{
-			WdfTimerStart(ctx->ConnectDelayTimer, -static_cast<LONGLONG>(ctx->ConnectDelayDeadline - now));
-		}
-		else
-		{
-			ctx->ConnectDelayDeadline = 0;
-			const auto state = ctx->Session.State();
-			if (state == Avdtp::SessionState::Idle)
-			{
-				OA2DP_INFO(ctx, "Signaling", "starting discovery");
-				Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-			}
-		}
+		OA2DP_INFO(ctx, "Signaling", "audio started on a silent headset-initiated link; starting discovery");
+		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	}
 
 	if (InterlockedExchange(&ctx->StartPending, 0) != 0 && ctx->Session.State() == Avdtp::SessionState::Open &&

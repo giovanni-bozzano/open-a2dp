@@ -118,7 +118,6 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 		AacConfig::kIeLength);
 	ctx->LoggedState = Avdtp::SessionState::Idle;
 	ctx->ResponseDeadline = 0;
-	ctx->ConnectDelayDeadline = 0;
 	InterlockedExchange(&ctx->MediaOpenPending, 0);
 	// A stale completion flag is harmless (FinishMediaOpen checks the operation itself);
 	// the operation was reclaimed by the media channel close that preceded this reset.

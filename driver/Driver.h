@@ -233,7 +233,6 @@ struct DEVICE_CONTEXT
 	WDFWORKITEM SignalingWorkItem;
 	WDFTIMER ResponseTimer;
 	ULONGLONG ResponseDeadline;
-	ULONGLONG ConnectDelayDeadline;
 	volatile LONG ConnectPending;
 	volatile LONG ReadCompleted;
 	volatile LONG TimeoutPending;
@@ -250,11 +249,11 @@ struct DEVICE_CONTEXT
 
 	// True when the headset opened the signaling channel, false when we did. A
 	// headset that connects to us usually starts its own AVDTP discovery and
-	// configuration at the same moment, so we let it go first (see
-	// OnSignalingWorkItem) instead of racing it.
+	// configuration at the same moment, so we let it go first and only discover
+	// once Windows runs the audio stream while the session is still Idle.
 	volatile LONG SignalingIncoming;
-	WDFTIMER ConnectDelayTimer;
-	volatile LONG DeferredConnectPending;
+	// Set by the ACX stream run (SignalingOnAudioRun) for the signaling work item.
+	volatile LONG AudioRunPending;
 
 	// Media transport channel, opened from the signaling work item.
 	L2CAP_CHANNEL_HANDLE MediaChannel;
@@ -443,6 +442,10 @@ void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
 // Called when the encoder service registered; may renegotiate an SBC stream as AAC.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx);
+
+// Called when Windows runs the render stream; discovers if no stream is configured.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx);
 
 // audio/
 // Reports the headset link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.

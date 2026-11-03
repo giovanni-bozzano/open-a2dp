@@ -35,14 +35,6 @@ NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
-	WDF_TIMER_CONFIG delayConfig;
-	WDF_TIMER_CONFIG_INIT(&delayConfig, OnConnectDelay);
-	status = WdfTimerCreate(&delayConfig, &attrs, &ctx->ConnectDelayTimer);
-	if (!NT_SUCCESS(status))
-	{
-		return status;
-	}
-
 	status = WdfRequestCreate(&attrs, ctx->IoTarget, &ctx->ReadRequest);
 	if (!NT_SUCCESS(status))
 	{
@@ -61,6 +53,12 @@ void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx)
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->EncoderArrivedPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->AudioRunPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
