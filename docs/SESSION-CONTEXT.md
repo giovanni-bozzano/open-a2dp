@@ -1,6 +1,6 @@
 # OpenA2dp – Session Context (handoff)
 
-Read this first in a new chat. It summarizes the project state; the authoritative plan, action log and next steps are in [A2DP-Driver-Plan.md](A2DP-Driver-Plan.md).
+> Historical handoff, frozen during documentation consolidation; details below may be stale. Do not read this at session startup or append session notes. Use [STATUS.md](STATUS.md) for current plan state and Git commits for individual changes. Consult this file only for historical evidence.
 
 ## Origin and goal
 - Started from questions about the commercial "Alternative A2DP Driver": why it connects audio faster, which codecs it supports, and how it relates to the Intel Bluetooth driver.

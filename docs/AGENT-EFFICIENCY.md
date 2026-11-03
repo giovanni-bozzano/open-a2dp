@@ -1,48 +1,17 @@
-# Agent Efficiency Guide
+# Documentation map
 
-## 1. Minimal Context Loading
-- **Never read entire files** - use `grep`/`glob` to find exact symbols
-- **Read only needed sections**: 
-  - `grep -n "function_name" file.cpp | head -5` to find first 5 lines
-  - `sed -n '200,250p' file.cpp` to read specific lines
-  - `offset:line_number limit:line_count` in `read` tool
+| File | Purpose | Update policy |
+|---|---|---|
+| `AGENTS.md` | Short, stable agent rules and code map | Only when constraints/workflows change |
+| `docs/STATUS.md` | Authoritative milestone states, blockers, priorities and exit gates | Only on plan-state changes; no diary |
+| `docs/validation/Hardware.md`, `docs/design/Codec-Configuration.md` | On-demand validation gates and configuration scope | Only when requirements change |
+| `driver/README.md` | Map of independently compiled subsystem sources | When source layout changes |
+| Git commit messages | Individual changes, rationale, tests and validation limits | One logical change per commit |
+| `README.md` | Project introduction and build entry point | Keep status linked, not duplicated |
+| `docs/AAC-Service-Boundary.md` | On-demand ABI/lifecycle design | When the design changes; no progress log |
+| `.agents/skills/*/SKILL.md` | On-demand operational workflows | When the workflow changes |
+| `docs/A2DP-Driver-Plan.md`, `docs/SESSION-CONTEXT.md` | Frozen legacy design/history | Do not maintain; consult only relevant sections |
 
-## 2. Build & Test Workflow
-- **Single-turn build**: `build-and-test` skill runs:
-  ```powershell
-  $ms = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "MSBuild\**\Bin\amd64\MSBuild.exe" | Select-Object -First 1
-  & $ms OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64 /v:minimal /nologo
-  .\out\x64\Debug\CodecTests.exe
-  ```
-- **Output**: "76/76 pass" or "24 fail at SbcTests.cpp:42"
+Startup: read the short live status, Git status and five commit subjects. Search before reading implementation/design sections. Keep volatile state out of auto-loaded agent instructions; do not duplicate commit history in Markdown or create per-session handoffs.
 
-## 3. Deadlock Diagnosis
-- **One-turn check**: `windbg-deadlock-check` skill:
-  1. `tools.windbg.request_break()`
-  2. `!wdfkd.wdfdriverinfo OpenA2dp 0x1f`
-  3. `!wdfkd.wdfdevice`
-  4. Return 3-line summary of owning thread + blocked stack
-
-## 4. Log Analysis Best Practices
-- **Search patterns**:
-  - `grep "media stop: still waiting" driver/*.cpp` → find WARN messages
-  - `grep "no response within" driver/*.cpp` → find state-specific timeouts
-- **Key messages to watch**:
-  - `WARN Media: stop: still waiting for the media work item to release the lock`
-  - `WARN L2CAP: BRB did not complete (timeout); abandoning it`
-  - `ERROR L2CAP: send did not complete within`
-
-## 5. Codebase Structure
-- **File locations**:
-  - `driver/Driver.cpp` - entry points
-  - `driver/L2cap*.cpp` - L2CAP logic
-  - `driver/Signaling*.cpp` - AVDTP state machine
-  - `driver/Media*.cpp` - media pacing
-  - `driver/Service*.cpp` - IOCTLs and rings
-- **Each file ≤ 250 lines** - split only when necessary
-
-## 6. Cache Optimization
-- **Immutable AGENTS.md** - never change top 80%
-- **Modular docs** - keep volatile notes in separate files
-- **Skill files** - encapsulate multi-step workflows
-- **Short outputs** - all skills return ≤ 5 lines
+Keep these files minimal under the budgets in `AGENTS.md`. Preserve unchanged text/order, make targeted edits only for substantive changes, and load skills on demand. Stable prefixes support cache reuse; concise files reduce context cost, but neither guarantees cache hits. Do not log token counts or cache statistics here.

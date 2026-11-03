@@ -1,32 +1,29 @@
-# Agent Instructions (v3 - Ultra-Lean & Cache-Optimized)
+# Agent instructions
 
-## 1. Immutable Rules
-- **KMDF Kernel Environment**: Windows 11 KMDF (C++20, x64, toolset v145, warnings as errors). Zero STL/exceptions in `common/include`.
-- **Locking Order**: Always `SessionLock` -> `MediaLock`. Never hold locks across unbounded transport waits.
-- **MCP Debugging**: Use native WinDbg MCP tools (`tools.windbg.*`). No custom scripts.
-- **Commits**: One logical change per commit (`feat(scope): #id description [state, tests]`). Never push automatically.
+## Stable constraints
+- Windows 11 KMDF, C++20, x64, toolset v145; warnings as errors. No STL or exceptions in `common/include`.
+- Lock order: `SessionLock` -> `MediaLock`. Never hold locks across unbounded transport waits.
+- Debug through native WinDbg MCP tools; no custom debugger scripts.
+- Commit every completed logical change separately after validation; do not batch unrelated work or include pre-existing user changes. Never push automatically.
 
-## 2. Zero-Cost State Tracking Protocol
-- **DO NOT** edit or rewrite `docs/A2DP-Driver-Plan.md` or `docs/SESSION-CONTEXT.md` during regular work.
-- Check current context in 1 turn via `skills/status` or `git log -n 5 --oneline`.
-- Document work in **Git Commit Messages**. If text logging is required, append a single line to `CHANGELOG.log` via `Add-Content`.
+## Context and tracking
+- Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
+- `docs/STATUS.md` is the only live plan: milestone state, blockers, next priorities and validation gates. Update it only when these change; replace stale state rather than append a diary.
+- Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs. Legacy action-log numbers are not required.
+- `docs/A2DP-Driver-Plan.md` and `docs/SESSION-CONTEXT.md` are frozen historical references, not startup context. Read relevant sections only for architecture or historical evidence; do not extend their logs.
+- Keep stable rules here; designs/workflows stay on demand. Locate symbols with grep/glob, then read the relevant file/range. Split by responsibility, not arbitrary line counts.
+- Keep `AGENTS.md`, live status and skills minimal (targets: ≤40 lines here/status, ≤30 per skill). Replace or remove redundant text before adding; never omit safety constraints to meet a target.
+- Preserve unchanged wording and section order to support prefix-cache reuse. No cosmetic rewrites, timestamps, session notes, copied tool output or duplicate instructions. Edit only affected lines when rules, plan state or workflows actually change; load only the needed skill.
 
-## 3. Modular Code Map (Read ONLY the Target Sub-File)
-- Entry / PnP: `driver/Driver.cpp`
-- L2CAP: `driver/l2cap/L2cap*.cpp` (BRB, Channel, Server, Send)
-- Signaling: `driver/signaling/Signaling*.cpp` (Session, WorkItem, Abort)
-- Service: `driver/service/Service*.cpp` (Control, Ioctl, Rings)
-- Media: `driver/media/Media*.cpp` (Stream, Pacing)
-- Codecs / Tests: `codecs/` & `tests/CodecTests/`
+## Code map
+- Entry/PnP: `driver/Driver.cpp`; [driver map](driver/README.md) lists subsystem `.cpp` files under `driver/{audio,l2cap,signaling,service,media}/`.
+- Prefer standard independently compiled `.cpp` files with declarations in subsystem-private `*Internal.h` headers; never include `.cpp` implementations or introduce `.inc` fragments. Namespace boundaries stay within each file.
+- AAC service: `service/main.cpp`; ABI: `common/include/OpenA2dp/Ioctl.h`.
+- Codecs/tests: `codecs/`, `tests/CodecTests/`; diagnostics: `tools/OpenA2dpCtl/`.
 
-## 4. Skills (Global Standard: `.agents/skills/`)
-- `build-and-test` → MSBuild + CodecTests in one turn (≤3 lines output).
-- `windbg-deadlock-check` → WinDbg deadlock diagnosis in 3 lines (≤5 lines output).
-- `status` → git log/status one-turn handoff (≤6 lines output).
-- `log-audit` → grep driver logs for WARN/ERROR patterns (≤5 lines output).
-- Each skill file is a single markdown file (`SKILL.md`) with description, instructions, and output format.
-
-## 5. Operational Protocol
-1. **Locate**: Use `grep` or `glob`. Read ONLY exact lines via `offset` and `limit`.
-2. **Build & Test**: Execute `skills/build-and-test`.
-3. **Debug**: On hangs, execute `skills/windbg-deadlock-check`.
+## On-demand workflows
+Read `.agents/skills/<name>/SKILL.md` when needed:
+- `status`: compact plan + Git handoff.
+- `build-and-test`: MSBuild and CodecTests after code changes; docs-only changes need link/diff checks, not a driver build.
+- `windbg-deadlock-check`: diagnose hangs.
+- `log-audit`: inspect driver warnings/errors.

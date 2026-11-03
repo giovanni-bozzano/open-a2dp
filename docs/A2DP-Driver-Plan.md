@@ -1,5 +1,7 @@
 # OpenA2dp — Open-Source A2DP Source Driver for Windows
 
+> Historical reference, frozen during documentation consolidation. Status, next steps and action-log entries below may be stale. Use [STATUS.md](STATUS.md) for the live plan and Git commits for subsequent changes. Read design sections on demand; do not append to this action log.
+
 Status: M1, M2 and M4 complete (Windows audio plays over SBC on a real headset via the ACX Speaker0 endpoint); M3 (BlueZ sink, acceptor path, AAC selection) and M5 (AAC) in progress
 Target OS: Windows 11 (22H2+), x64 first, ARM64 later
 License: Apache-2.0 (proposed, see Open Decisions)

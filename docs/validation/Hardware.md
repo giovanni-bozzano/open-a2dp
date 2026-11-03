@@ -1,0 +1,19 @@
+# Hardware validation gates
+
+On-demand checklists; live priority/state stays in [STATUS.md](../STATUS.md). Record run results in Git commits, not here.
+
+## Teardown and reconnect
+- Deployment of the latest teardown/read/logging fixes is unconfirmed; verify the active build first.
+- Verify a plain connect, then repeat disable/re-enable while streaming and disconnected; kill/restart the encoder service during disable.
+- Use one installer/PnP operation at a time. If query-remove hangs, capture targeted native WinDbg stacks/IRPs; do not reboot automatically.
+
+## AAC and fallback
+- Requires an AAC-capable sink; the documented PANTONE and Positive Vibration 2 BT headsets offer SBC only.
+- Start the service before negotiation; confirm AAC offered/selected, audible output and advancing CLI counters.
+- Reconnect with the service stopped and confirm SBC. An existing SBC session does not switch codecs on service registration.
+
+## Deferred
+- BlueZ/PipeWire + `btmon` negotiation/acceptor coverage: needs a Linux Bluetooth host.
+- External SBC decoder comparison; AAC LATM captures from real sinks.
+- Latency, pause/resume, default-output switching, out-of-range/adapter-removal handling and long-run system tests.
+- AVRCP absolute volume: deferred; Windows software volume/mute already works.

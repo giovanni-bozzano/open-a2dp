@@ -1,9 +1,8 @@
 # OpenA2dp — AAC driver/service boundary
 
-Status: driver side implemented (Action Log #66), the AAC SEP plus codec fallback are
-implemented (Action Log #67) and `OpenA2dpCtl.exe` provides the manual codec switch and
-status (Action Log #68); `OpenA2dpSvc.exe` is next. Related:
-[A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2, 5 and 15; ABI in
+Design reference, not a progress log. Current implementation/validation gates:
+[STATUS.md](STATUS.md). Historical architecture:
+[A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2 and 5; ABI in
 [`common/include/OpenA2dp/Ioctl.h`](../common/include/OpenA2dp/Ioctl.h).
 
 ## 1. Scope
