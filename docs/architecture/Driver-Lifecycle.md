@@ -1,7 +1,5 @@
 # Driver lifecycle and invariants
 
-Source locations: [driver map](../../driver/README.md). Public interfaces: `driver/Driver.h`, `driver/Service.h`.
-
 ## PnP and transport
 - Bind to remote A2DP sink service UUID `0x110B`; use `BTH_PROFILE_DRIVER_INTERFACE` and L2CAP PSM `0x0019` for signaling/media. Do not replace the core/radio stack.
 - Start creates the service control endpoint, registers incoming L2CAP handling and opens signaling. Remote Class of Device determines headphones versus speaker category; endpoint name includes `<headset> [OpenA2DP]`.
@@ -18,4 +16,4 @@ Source locations: [driver map](../../driver/README.md). Public interfaces: `driv
 
 ## Diagnostics
 - Driver logs use `OA2DP_INFO/WARN/ERROR` with level, device tag and category. Tags are prepared as ANSI before high-IRQL callbacks; do not print `%ws` there.
-- Use targeted native WinDbg MCP tools for hangs. Bounded waits do not prove lower-transport cancellation completed. Unresolved validation belongs in [status](../STATUS.md).
+- Use targeted native WinDbg MCP tools for hangs. Bounded waits do not prove lower-transport cancellation completed.
