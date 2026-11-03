@@ -33,6 +33,13 @@ uint32_t TestSelector(void*, CodecType codec, const uint8_t*, size_t, uint8_t* c
 	return 0;
 }
 
+// Mirrors the driver while no encoder service is registered: AAC scores 0.
+uint32_t SbcOnlySelector(void* context, CodecType codec, const uint8_t* ie, size_t ieLength, uint8_t* config,
+						 size_t& configLength)
+{
+	return codec == CodecType::Sbc ? TestSelector(context, codec, ie, ieLength, config, configLength) : 0;
+}
+
 // Mirrors the driver: only AAC has a validator; the session checks SBC itself.
 uint8_t TestValidator(void*, CodecType codec, const uint8_t* ie, size_t ieLength)
 {
@@ -252,6 +259,26 @@ TEST(AvdtpSource_FallsBackToSbcWhenAacRejected)
 	CHECK(Header(cmd).signal == Signal::Open);
 	REQUIRE(s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket) == 0);
 	CHECK(s.State() == SessionState::Open);
+}
+
+TEST(AvdtpSource_RemembersRemoteCodecsTheSelectorSkipped)
+{
+	// The driver scores AAC 0 while no encoder service is registered; a later
+	// registration renegotiates only if the sink advertised AAC.
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), SbcOnlySelector, nullptr, TestValidator);
+	s.SetLocalSep(kLocalAacSeid, CodecType::Aac, AacConfig::kLocalCapabilities, AacConfig::kIeLength);
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+
+	DriveToConfiguration(s, true, cmd, rsp, payload);
+	CHECK(s.SelectedCodec() == CodecType::Sbc);
+	CHECK(s.RemoteOffers(CodecType::Aac));
+	CHECK(s.RemoteOffers(CodecType::Sbc));
+
+	SourceSession sbcOnly = MakeSession();
+	DriveToConfiguration(sbcOnly, false, cmd, rsp, payload);
+	CHECK(!sbcOnly.RemoteOffers(CodecType::Aac));
 }
 
 TEST(AvdtpSource_FailsWhenAllCandidatesRejected)

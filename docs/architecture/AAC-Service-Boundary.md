@@ -269,5 +269,4 @@ exceed `kMaxFramePayload`, and enters the service path.
   frames within 883 bytes; oversize records are dropped and counted).
 - VBR and rates other than 44.1 kHz stereo (M5b adds the multi-rate endpoint).
 - More than one service or more than one registration per device.
-- Re-negotiation after the service registers late (the stream stays SBC until reconnect).
 - AVRCP absolute volume and the config UI (D4, M5b/M6).

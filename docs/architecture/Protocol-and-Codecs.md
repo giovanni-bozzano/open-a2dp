@@ -4,7 +4,7 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 
 ## Negotiation
 - Source flow: DISCOVER -> GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START; SUSPEND, CLOSE and ABORT release stream state. The state machine also accepts sink-initiated configuration.
-- Local SEID 1 (SBC) and SEID 2 (AAC) are always advertised. AAC is selected/accepted only with a registered encoder; late registration does not change an already-negotiated SBC stream.
+- Local SEID 1 (SBC) and SEID 2 (AAC) are always advertised. AAC is selected/accepted only with a registered encoder; a late registration CLOSEs a streaming SBC session and rediscovers when the sink advertised AAC (initiator role only).
 - Prefer a forced codec when available, otherwise AAC > SBC. Keep scored sink candidates and fall back after rejected configuration rather than requiring reconnect.
 - Driver SBC capabilities match ACX: 44.1 kHz stereo-family modes. Default selection uses 16 blocks, 8 subbands, joint stereo/loudness and bitpool capped at 53, subject to sink support.
 - AAC format/payload limits: [service boundary](AAC-Service-Boundary.md). Broader rates, presets and parameter overrides are [planned](Codec-Configuration.md), not current capabilities.

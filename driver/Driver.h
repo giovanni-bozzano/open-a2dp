@@ -165,8 +165,8 @@ struct DEVICE_CONTEXT
 	WDFWORKITEM DisconnectWorkItem;
 
 	// Signaled once device teardown has begun, after the courtesy CLOSE. Waits that
-	// would otherwise run to their timeout (the wait for the encoder service, control
-	// BRBs) end as soon as it is set, so teardown never waits for them.
+	// would otherwise run to their timeout (control BRBs) end as soon as it is set,
+	// so teardown never waits for them.
 	KEVENT StopEvent;
 
 	// Asynchronous sends: AVDTP signaling (SessionLock) and media (MediaLock).
@@ -194,6 +194,12 @@ struct DEVICE_CONTEXT
 	// stream and MediaOpenRetry restarts discovery when the ABORT response arrives.
 	ULONG MediaOpenAttempts;
 	BOOLEAN MediaOpenRetry;
+	// Set by REGISTER_ENCODER. The signaling work item then checks, once the session is
+	// streaming, whether an SBC stream should be renegotiated as AAC (AacUpgradeWanted);
+	// AacUpgradeClosing restarts discovery when the CLOSE it sent for that is answered.
+	volatile LONG EncoderArrivedPending;
+	BOOLEAN AacUpgradeWanted;
+	BOOLEAN AacUpgradeClosing;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.
@@ -433,6 +439,10 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
 // Asks the signaling work item to SUSPEND the stream (e.g. after a media send failure).
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
+
+// Called when the encoder service registered; may renegotiate an SBC stream as AAC.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx);
 
 // audio/
 // Reports the headset link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.

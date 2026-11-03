@@ -58,6 +58,12 @@ void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->EncoderArrivedPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
 void SignalingOnMediaChannelOpen(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->StartPending, 1);

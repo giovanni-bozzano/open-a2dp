@@ -87,8 +87,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		{
 			// The stream was negotiated before the service came up, so AAC was not
 			// offered for it. Say so: otherwise this looks like AAC silently failing.
-			OA2DP_WARN(ctx, "Service", "stream is already SBC; reconnect the headset to negotiate AAC");
+			OA2DP_INFO(ctx, "Service", "stream is SBC; renegotiating if the headset offered AAC");
 		}
+		SignalingOnEncoderRegistered(ctx);
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::RegisterEncoderOut));
 		return;
 	}

@@ -29,11 +29,6 @@ void ServiceCleanup(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool ServiceRegistered(_In_ DEVICE_CONTEXT* ctx);
 
-// True when the encoder service is installed on this machine (its service key
-// exists), whether or not it is currently registered for this device.
-_IRQL_requires_(PASSIVE_LEVEL)
-bool ServiceInstalled();
-
 // Latches stream lifecycle events (start/stop) for WAIT_EVENT.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void ServiceStreamStart(_In_ DEVICE_CONTEXT* ctx);

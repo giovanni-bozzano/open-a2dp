@@ -85,6 +85,54 @@ static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
 	}
 }
 
+static bool AacAllowedByPreference(DEVICE_CONTEXT* ctx)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+	const Ioctl::Preference preference = ctx->Preference;
+	KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+	return (preference.flags & Ioctl::kPreferenceForceCodec) == 0 || preference.codec == Ioctl::kCodecAac;
+}
+
+// The encoder service registered after this connection negotiated its codec. Every
+// session transition re-runs the work item, so the decision simply waits for a settled
+// state: Streaming with SBC against a sink that advertised AAC is CLOSEd and, once the
+// CLOSE is answered, rediscovered (now selecting AAC). Any other outcome drops the request.
+static void ContinueAacUpgrade(DEVICE_CONTEXT* ctx)
+{
+	const auto state = ctx->Session.State();
+	if (ctx->AacUpgradeClosing)
+	{
+		if (state == Avdtp::SessionState::Closing)
+		{
+			return;
+		}
+		ctx->AacUpgradeClosing = FALSE;
+		ctx->AacUpgradeWanted = FALSE;
+		if (state == Avdtp::SessionState::Idle && ServiceRegistered(ctx) && !ctx->MediaOpenRetry)
+		{
+			OA2DP_INFO(ctx, "Signaling", "stream closed; rediscovering to negotiate AAC");
+			Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		}
+		return;
+	}
+	if (state != Avdtp::SessionState::Streaming && state != Avdtp::SessionState::Idle &&
+		state != Avdtp::SessionState::Failed)
+	{
+		return; // not settled yet; the next transition re-runs this
+	}
+	ctx->AacUpgradeWanted = FALSE;
+	if (state != Avdtp::SessionState::Streaming || !ServiceRegistered(ctx) ||
+		ctx->Session.SelectedCodec() != Avdtp::CodecType::Sbc || !ctx->Session.RemoteOffers(Avdtp::CodecType::Aac) ||
+		!AacAllowedByPreference(ctx))
+	{
+		return; // Idle/Failed: the next discovery already sees the service
+	}
+	OA2DP_INFO(ctx, "Signaling", "encoder service arrived; closing the SBC stream to negotiate AAC");
+	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+	ctx->AacUpgradeClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
+}
+
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
@@ -95,33 +143,8 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{
 		AudioNotifyLinkState(ctx);
-		// The control device appears when the device starts and the encoder service
-		// attaches on its arrival notification, but a service started later (or slower
-		// than the headset) registers after discovery has already run and AAC is lost
-		// for the whole connection. Wait for it briefly,
-		// but only when the service is installed: a machine without it must connect
-		// exactly as fast as before. The wait is bounded and the channel can close
-		// underneath us, so re-check both after every step.
-		if (!ServiceRegistered(ctx) && ServiceInstalled())
-		{
-			OA2DP_INFO(ctx, "Signaling", "waiting up to %u ms for the encoder service", kConnectWaitSteps * kConnectWaitMs);
-			for (unsigned step = 0; step < kConnectWaitSteps; ++step)
-			{
-				WdfWaitLockRelease(ctx->SessionLock);
-				LARGE_INTEGER interval;
-				interval.QuadPart = -10000LL * kConnectWaitMs;
-				// StopEvent ends the pause early when the device is going away.
-				const NTSTATUS slept = KeWaitForSingleObject(&ctx->StopEvent, Executive, KernelMode, FALSE, &interval);
-				WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-				if (slept != STATUS_TIMEOUT || ServiceRegistered(ctx) || ctx->SignalingState != ChannelOpen)
-				{
-					break;
-				}
-			}
-			OA2DP_INFO(ctx, "Signaling", "service %s after the wait",
-				ServiceRegistered(ctx) ? "registered" : "absent");
-		}
-
+		// A service that registers after this discovery renegotiates the stream as AAC
+		// (SignalingOnEncoderRegistered), so nothing waits for it here.
 		if (ctx->SignalingState == ChannelOpen)
 		{
 			ResetSession(ctx);
@@ -238,6 +261,15 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	if (ctx->MediaOpenRetry && ctx->SignalingState == ChannelOpen)
 	{
 		ContinueMediaOpenRetry(ctx);
+	}
+
+	if (InterlockedExchange(&ctx->EncoderArrivedPending, 0) != 0)
+	{
+		ctx->AacUpgradeWanted = TRUE;
+	}
+	if (ctx->AacUpgradeWanted && ctx->SignalingState == ChannelOpen)
+	{
+		ContinueAacUpgrade(ctx);
 	}
 
 	ctx->SignalingWorkItemThread = nullptr;

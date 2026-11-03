@@ -109,6 +109,13 @@ public:
 	DiscoveryFailure LastDiscoveryFailure() const noexcept { return discoveryFailure_; }
 	uint8_t DiscoveryError() const noexcept { return discoveryError_; }
 	bool HasDiscoveryError() const noexcept { return hasDiscoveryError_; }
+	// True when the last discovery saw a sink SEP advertising this codec, whether or not
+	// it was selectable at that moment.
+	bool RemoteOffers(CodecType codec) const noexcept
+	{
+		const unsigned value = static_cast<unsigned>(codec);
+		return value < 32 && (remoteCodecs_ & (1u << value)) != 0;
+	}
 
 	// Begins discovery. Returns the length of the command written to out (0 on bad state).
 	size_t Connect(uint8_t* out, size_t cap) noexcept
@@ -120,6 +127,7 @@ public:
 		capsIndex_ = 0;
 		candidateCount_ = 0;
 		candidateIndex_ = 0;
+		remoteCodecs_ = 0;
 		remoteSeid_ = 0;
 		localSeid_ = 0;
 		selectedIeLength_ = 0;
@@ -440,6 +448,9 @@ private:
 
 	void EvaluateCodec(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
 	{
+		if (static_cast<unsigned>(codec) < 32) {
+			remoteCodecs_ |= 1u << static_cast<unsigned>(codec);
+		}
 		if (ie == nullptr || selector_ == nullptr) {
 			return;
 		}
@@ -696,6 +707,7 @@ private:
 	Candidate candidates_[kMaxSinkSeps] = {};
 	size_t candidateCount_ = 0;
 	size_t candidateIndex_ = 0;
+	uint32_t remoteCodecs_ = 0;
 
 	uint8_t remoteSeid_ = 0;
 	uint8_t localSeid_ = 0;
