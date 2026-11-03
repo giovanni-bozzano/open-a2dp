@@ -1,7 +1,5 @@
 # Validation gates
 
-On-demand checklists; live priority/state stays in [STATUS.md](STATUS.md).
-
 ## AAC and fallback
 - Requires an AAC-capable sink; the documented PANTONE and Positive Vibration 2 BT headsets offer SBC only.
 - Start the service before negotiation; confirm AAC offered/selected, audible output and advancing CLI counters.
