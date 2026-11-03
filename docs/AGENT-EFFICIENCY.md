@@ -5,6 +5,7 @@
 | `AGENTS.md` | Short, stable agent rules and code map | Only when constraints/workflows change |
 | `docs/STATUS.md` | Authoritative milestone states, blockers, priorities and exit gates | Only on plan-state changes; no diary |
 | `docs/VALIDATION.md` | On-demand validation gates | Only when requirements change |
+| `docs/HARDWARE-TESTS.md` | Manual hardware/Verifier test procedures | When tested behaviour or tooling changes |
 | `driver/README.md` | Map of independently compiled subsystem sources | When source layout changes |
 | Git commit messages | Individual changes, rationale, tests and validation limits | One logical change per commit |
 | `README.md` | Project introduction and build entry point | Keep status linked, not duplicated |

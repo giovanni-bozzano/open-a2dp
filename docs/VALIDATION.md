@@ -1,5 +1,7 @@
 # Validation gates
 
+Step-by-step procedures, Driver Verifier setup and log checks: [hardware tests](HARDWARE-TESTS.md).
+
 ## AAC and fallback
 - Requires an AAC-capable sink; the documented PANTONE and Positive Vibration 2 BT headsets offer SBC only.
 - Start the service before negotiation; confirm AAC offered/selected, audible output and advancing CLI counters.
