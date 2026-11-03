@@ -2,7 +2,7 @@
 
 namespace OpenA2dpDriver::Audio
 {
-// Endpoint type (shown as "<type> (<device name>)") from the headset's Class of Device.
+// Endpoint type (shown as "<type> (<device name>)") from the device's Class of Device.
 const GUID* EndpointCategory(_In_ BTH_COD cod)
 {
 	if (GET_COD_MAJOR(cod) == COD_MAJOR_AUDIO)

@@ -6,7 +6,7 @@ static void LogSendFailure(DEVICE_CONTEXT* ctx, NTSTATUS status)
 {
 	if (IsLinkLoss(ctx, status))
 	{
-		OA2DP_INFO(ctx, "Signaling", "send stopped, headset link is down (0x%08X)", status);
+		OA2DP_INFO(ctx, "Signaling", "send stopped, device link is down (0x%08X)", status);
 	}
 	else
 	{

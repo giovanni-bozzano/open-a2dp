@@ -10,7 +10,7 @@ NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected)
 
 // The jack is what Windows uses to show the endpoint as plugged or unplugged. The
 // endpoint itself lives as long as the device, so without this it stays listed as
-// available after the headset disconnects.
+// available after the device disconnects.
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 {
 	ACX_JACK_CALLBACKS callbacks;

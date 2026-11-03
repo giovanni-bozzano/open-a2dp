@@ -14,7 +14,7 @@ bugcheck repeats on every boot until it is turned off.
 
 ### 1.1 Kernel log capture
 The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per record:
-`OpenA2dp <LEVEL> [<headset> (<address>)] <Category>: <message>`.
+`OpenA2dp <LEVEL> [<device> (<address>)] <Category>: <message>`.
 
 1. Elevated prompt: `reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Debug Print Filter" /v IHVDRIVER /t REG_DWORD /d 0xF /f`, then reboot.
    With WinDbg attached you can instead run `ed nt!Kd_IHVDRIVER_Mask 0xF` (no reboot).
@@ -41,7 +41,7 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
    `DbgBreakOnError` breaks into the debugger on a framework error; only set it with a
    debugger attached.
 3. Reboot, then confirm: `verifier /querysettings` lists `OpenA2dp.sys`, and
-   `verifier /query` shows it as loaded once a headset is paired.
+   `verifier /query` shows it as loaded once a device is paired.
 4. During and after tests: `verifier /query` shows counters; any violation is a
    bugcheck (typically `0xC4`, `0xC9`, `0x10D` for KMDF). In WinDbg run `!analyze -v`,
    then `!verifier 0x3`, `!deadlock` (lock-order report) and
@@ -51,7 +51,7 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 
 ### 1.3 Baseline before each session
 1. Deploy the build under test and note the commit (`git log -n 1 --oneline`).
-2. Pair the headset; `OpenA2dpCtl list` (elevated) shows it.
+2. Pair the device; `OpenA2dpCtl list` (elevated) shows it.
 3. `sc query OpenA2dpSvc` is `RUNNING` unless the test says otherwise.
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
@@ -66,78 +66,78 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 
 ## 3. Tests
 
-Headset ids: **P** = PANTONE (SBC only), **A** = an AAC-capable sink. Run each test at
+Device ids: **S** = an SBC only sink, **A** = an AAC-capable sink. Run each test at
 least 3 times; teardown tests 10 times.
 
 ### Connection
 
-**T1 PC-initiated connect (P)**
-1. Headset on, not connected. In Windows Bluetooth settings click *Connect*.
-2. Play audio to `<headset> [OpenA2DP]`.
+**T1 PC-initiated connect (S)**
+1. Device on, not connected. In Windows Bluetooth settings click *Connect*.
+2. Play audio to `<device> [OpenA2DP]`.
 - Expect: `signaling channel open`, AVDTP states `Discovering` -> ... -> `Streaming`,
   `media channel open`, `streaming, media MTU`; audible; `packets` advancing,
   `send failures` 0.
 
-**T2 Headset-initiated connect, headset configures (P)**
-1. Disconnect from Windows; power-cycle the headset so it reconnects by itself.
+**T2 Device-initiated connect, device configures (S)**
+1. Disconnect from Windows; power-cycle the device so it reconnects by itself.
 2. Do not play audio for 10 s.
-- Expect: `headset-initiated; waiting for it to configure the stream or for audio`; if
-  the headset configures, the session reaches `Open`/`Streaming` through
+- Expect: `device-initiated; waiting for it to configure the stream or for audio`; if
+  the device configures, the session reaches `Open`/`Streaming` through
   `incoming media channel open` with no `Discovering` from us. Then play: audible.
 
-**T3 Headset-initiated connect, silent headset, then audio (P)**
-1. As T2. If the headset stays `Idle` in `status`, start playback.
-- Expect: `audio started on a silent headset-initiated link; starting discovery`, then
+**T3 Device-initiated connect, silent device, then audio (S)**
+1. As T2. If the device stays `Idle` in `status`, start playback.
+- Expect: `audio started on a silent device-initiated link; starting discovery`, then
   `Streaming` and audio. No discovery before playback (no timer starts it any more).
 
-**T4 Headset-initiated connect with audio started at once (P)**
-1. Have a player ready with the OpenA2DP endpoint as default output. Power the headset
+**T4 Device-initiated connect with audio started at once (S)**
+1. Have a player ready with the OpenA2DP endpoint as default output. Power the device
    on and start playback as soon as the endpoint appears (before AVDTP leaves `Idle`).
    Repeat with playback already running on another endpoint that Windows moves over.
-- Expect: one of `headset-initiated with audio running; starting discovery`,
-  `audio started on a silent headset-initiated link; starting discovery` or the headset's
+- Expect: one of `device-initiated with audio running; starting discovery`,
+  `audio started on a silent device-initiated link; starting discovery` or the device's
   own configuration, then `Streaming`; no `SEP in use` / `no resources` errors and no
   double configuration.
 
-**T5 Pause/resume and output switching (P)**
+**T5 Pause/resume and output switching (S)**
 1. While streaming: pause 30 s, resume; switch default output to speakers and back.
 - Expect: `stream paused` / `stream run`; audio resumes; no WARN/ERROR.
 
 ### Teardown and recovery (deadlock and orphan checks)
 
-**T6 Disconnect during discovery (P)** — connect (T1) and power the headset off within
+**T6 Disconnect during discovery (S)** — connect (T1) and power the device off within
 1 s of `signaling channel open`.
-**T7 Disconnect during media channel open (P)** — power off right after AVDTP `Open`.
-**T8 Disconnect while streaming (P)** — power off during playback.
+**T7 Disconnect during media channel open (S)** — power off right after AVDTP `Open`.
+**T8 Disconnect while streaming (S)** — power off during playback.
 - Expect for T6-T8: `signaling channel remote disconnect` or link-down messages, then
   `signaling channel closed`; no hang (the Bluetooth settings page and `status` stay
   responsive), no Verifier bugcheck; the endpoint becomes unplugged; reconnecting works.
   Acceptable WARNs: `still pending at close; abandoning it`, `closed a channel whose open
   finished after its waiter gave up`.
 
-**T9 Rapid reconnect, media open retry (P)**
+**T9 Rapid reconnect, media open retry (S)**
 1. 10 times: connect, wait for `Streaming` or 3 s, disconnect from Windows.
 - Expect: every cycle ends in `Streaming` or a clean close. If
   `media channel open attempt N failed; aborting the stream to retry` appears, it is
   followed by `stream aborted; rediscovering` and `Streaming`, or after 3 attempts by
   `media channel open failed after 3 attempts` and a clean close.
 
-**T10 Out of range (P)** — walk away while streaming until the link drops, come back.
+**T10 Out of range (S)** — walk away while streaming until the link drops, come back.
 - Expect: as T8; automatic or manual reconnect works.
 
 ### Power and PnP
 
-**T11 Sleep/resume (P)**
+**T11 Sleep/resume (S)**
 1. Sleep while connected and idle; wake. Repeat while streaming.
 - Expect: no hang on sleep or wake; after wake `OpenA2dpCtl list` shows the device, the
   service log shows a new `[svc] opening ... registered`, and reconnect plays audio.
 
-**T12 Disable/enable the device (P)**
+**T12 Disable/enable the device (S)**
 1. While streaming, disable the OpenA2dp device node, wait 5 s, enable it.
 - Expect: disable completes within a few seconds (no hang); `control device removed`;
   after enable the service re-attaches and playback works.
 
-**T13 Unload leak check (P)**
+**T13 Unload leak check (S)**
 1. Note `OAdp` in `poolmon`. Run T1, T8, T12, then disable the device (driver unloads).
 - Expect: `OAdp` allocations return to 0; Verifier reports no leaked pool (an unload
   with outstanding allocations is bugcheck `0xC4`); `!wdfkd.wdfdriverinfo OpenA2dp` in
@@ -150,20 +150,20 @@ it), reattach.
 ### Encoder service
 
 **T15 Service started after the driver**
-1. `sc stop OpenA2dpSvc`; connect (P) so the control device exists; `sc start OpenA2dpSvc`.
+1. `sc stop OpenA2dpSvc`; connect (S) so the control device exists; `sc start OpenA2dpSvc`.
 - Expect: the service log shows `[svc] opening ...` within ~1 s of start and no
   periodic polling lines; `status` shows `encoder registered`. Repeat after T11 (wake):
   the service attaches by interface arrival.
 
 **T16 Service stop/restart while streaming**
-1. Stream SBC (P), `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
-- Expect: SBC continues uninterrupted; `encoder registered` toggles; P does not offer
+1. Stream SBC (S), `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
+- Expect: SBC continues uninterrupted; `encoder registered` toggles; S does not offer
   AAC so no renegotiation is attempted (no `closing the SBC stream`).
 2. Repeat on A while streaming AAC.
 - Expect: `encoder lost while streaming AAC; suspending`; no hang; the service stop
   completes within its bound (`OpenA2dpSvc stopping`).
 
-### AAC (headset A)
+### AAC (device A)
 
 **T17 AAC with the service running before connect**
 1. Service running; `OpenA2dpCtl codec auto`; connect A and play.
@@ -173,7 +173,7 @@ it), reattach.
 **T18 Late registration renegotiates to AAC**
 1. `sc stop OpenA2dpSvc`; connect A and play (SBC).
 2. `sc start OpenA2dpSvc` while playing.
-- Expect: `stream is SBC; renegotiating if the headset offered AAC`,
+- Expect: `stream is SBC; renegotiating if the device offered AAC`,
   `encoder service arrived; closing the SBC stream to negotiate AAC`,
   `stream closed; rediscovering to negotiate AAC`, then `configured codec AAC`; a short
   audio gap, then AAC audio.
@@ -184,7 +184,7 @@ it), reattach.
 
 ### Soak
 
-**T20 Long run** — stream (A if available, else P) for 8 hours with Verifier on.
+**T20 Long run** — stream (A if available, else S) for 8 hours with Verifier on.
 - Expect: no bugcheck, `send failures` and `dropped` stay near 0, memory (`OAdp`) flat.
 
 ## 4. Log check after every test
@@ -199,6 +199,6 @@ On a hang: do not reboot. Break in with the kernel debugger and follow the
 stacks), then save a dump (`.dump /ka`).
 
 ## 5. Reporting
-Per test: id, headset, commit, Verifier on/off, pass/fail, log file and dump if any.
+Per test: id, device, commit, Verifier on/off, pass/fail, log file and dump if any.
 Update the gate in [VALIDATION.md](VALIDATION.md) only when a gate passes or a
 blocker changes.

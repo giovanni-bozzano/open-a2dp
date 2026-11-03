@@ -29,7 +29,7 @@ TEST(Aac_SampleRateField)
 	CHECK_EQ(ie[5], uint8_t{0x00});
 }
 
-TEST(Aac_SelectConfiguration_TypicalHeadset)
+TEST(Aac_SelectConfiguration_TypicalDevice)
 {
 	AacCodec codec;
 	// MPEG-2 LC, 44.1k + 48k, 1/2 channels, VBR, 320 kbps max.

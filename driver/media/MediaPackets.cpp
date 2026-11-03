@@ -14,7 +14,7 @@ static void MediaSendFailed(DEVICE_CONTEXT* ctx, NTSTATUS status)
 {
 	if (IsLinkLoss(ctx, status))
 	{
-		OA2DP_INFO(ctx, "Media", "stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+		OA2DP_INFO(ctx, "Media", "stopped, device link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
 	}
 	else
 	{

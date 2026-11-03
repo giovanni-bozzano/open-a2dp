@@ -6,7 +6,7 @@ OpenA2dp replaces `BthA2dp.sys` per remote A2DP sink device, not the Bluetooth r
 | Component | Responsibility |
 |---|---|
 | `OpenA2dp.sys` (KMDF + ACX) | Audio endpoint, AVDTP, L2CAP BRBs, kernel SBC encoding and RTP transport |
-| `OpenA2dpSvc.exe` | Windows service with a worker per headset; Media Foundation AAC-LC encoding only |
+| `OpenA2dpSvc.exe` | Windows service with a worker per device; Media Foundation AAC-LC encoding only |
 | `common/include/OpenA2dp/` | Kernel-safe ABI, rings, AVDTP/RTP and codec selection; no STL/exceptions |
 | `codecs/` | Codec interfaces, SBC and AAC encoding/negotiation support |
 | `OpenA2dpCtl.exe` | Diagnostic device/status/codec-preference CLI |

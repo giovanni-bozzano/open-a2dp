@@ -393,8 +393,8 @@ void RunLoop()
 	}
 
 	// One worker per control device. The enumeration loop must never block on a
-	// worker: a headset stays connected for hours, and blocking here meant a second
-	// headset that connected meanwhile was never registered, so it always fell back
+	// worker: a device stays connected for hours, and blocking here meant a second
+	// device that connected meanwhile was never registered, so it always fell back
 	// to SBC even with the service running.
 	struct Worker
 	{

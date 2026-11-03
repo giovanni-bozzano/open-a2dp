@@ -3,12 +3,11 @@
 Step-by-step procedures, Driver Verifier setup and log checks: [hardware tests](HARDWARE-TESTS.md).
 
 ## AAC and fallback
-- Requires an AAC-capable sink; the documented PANTONE and Positive Vibration 2 BT headsets offer SBC only.
 - Start the service before negotiation; confirm AAC offered/selected, audible output and advancing CLI counters.
 - Reconnect with the service stopped and confirm SBC; then start the service and confirm the streaming SBC session is CLOSEd and renegotiated as AAC.
 
 ## Event-driven signaling
-- PANTONE: headset-initiated connect stays acceptor until it configures or audio plays; media-open failure recovers via ABORT/rediscover; teardown during discovery, media open and streaming under Driver Verifier deadlock detection.
+- Device-initiated connect stays acceptor until it configures or audio plays; media-open failure recovers via ABORT/rediscover; teardown during discovery, media open and streaming under Driver Verifier deadlock detection.
 - Service started after the driver: it attaches on interface arrival (no polling), including after suspend/resume.
 
 ## Deferred
