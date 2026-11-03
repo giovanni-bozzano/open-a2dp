@@ -9,17 +9,20 @@
 ## Context and tracking
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
 - `docs/STATUS.md` and `docs/VALIDATION.md` are the only live plans: milestone state, blockers, next priorities and validation gates. Update them only when these change; replace stale state rather than append a diary.
+- See `docs/AGENT-EFFICIENCY.md` for reference locations.
+- Use Git for historical evidence.
 - Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs.
-- Architecture lives in `docs/architecture/`; load only the relevant reference via its index. Use Git for historical evidence.
-- Keep stable rules here; designs/workflows stay on demand. Locate symbols with grep/glob, then read the relevant file/range. Split by responsibility, not arbitrary line counts.
+- Architecture lives in `docs/architecture/`; load only the relevant reference via its index. 
+- Keep stable rules here; designs/workflow stay on demand. Locate symbols with grep/glob, then read the relevant file/range. Split by responsibility, not arbitrary line counts.
 - Keep `AGENTS.md`, live status and skills minimal (targets: ≤40 lines here/status, ≤30 per skill). Replace or remove redundant text before adding; never omit safety constraints to meet a target.
 - Preserve unchanged wording and section order to support prefix-cache reuse. No cosmetic rewrites, timestamps, session notes, copied tool output or duplicate instructions. Edit only affected lines when rules, plan state or workflows actually change; load only the needed skill.
 - Run build-and-test after code changes.
 - Keep file responsibilities and private interfaces narrow.
 - Prefer standard independently compiled `.cpp` files with declarations in subsystem-private `*Internal.h` headers. Namespace boundaries stay within each file.
+- Keep the codebase as much as possible event driven.
 
 ## Code map
-- Entry/PnP: `driver/Driver.cpp`; [driver map](driver/README.md) lists subsystem `.cpp` files under `driver/{audio,l2cap,signaling,service,media}/`.
+- Entry/PnP: `driver/Driver.cpp`; `driver/README.md` lists subsystem `.cpp` files under `driver/{audio,l2cap,signaling,service,media}/`.
 - AAC service: `service/main.cpp`.
 - Diagnostics: `tools/OpenA2dpCtl/`.
 - Codecs: `codecs/`.
