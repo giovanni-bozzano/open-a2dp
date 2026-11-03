@@ -1,6 +1,6 @@
 # Validation gates
 
-On-demand checklists; live priority/state stays in [STATUS.md](../STATUS.md). Record run results in Git commits, not here.
+On-demand checklists; live priority/state stays in [STATUS.md](STATUS.md).
 
 ## AAC and fallback
 - Requires an AAC-capable sink; the documented PANTONE and Positive Vibration 2 BT headsets offer SBC only.
