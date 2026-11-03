@@ -16,6 +16,6 @@
 
 ## Next priorities (ordered)
 
-1. Ensure the project is as much event-driven as possible. Remove any code that triggers a state transition based on elapsed time. Verify if this is possible and make a plan for it.
+1. Event-driven migration: phase 1 done; next phase 2 (async media send), then 3-4 with hardware validation. Media clock, AVDTP response timer and teardown bounds stay. See [event model](architecture/Event-Model.md).
 2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink. See [AAC gate](VALIDATION.md#aac-and-fallback).
 3. Implement M5b, then finish M6. See [configuration design](architecture/Codec-Configuration.md).
