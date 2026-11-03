@@ -14,5 +14,3 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 - SBC adds a one-byte payload header with frame count; pack whole frames within media MTU. Example: 44.1 kHz joint stereo, 16 blocks, 8 subbands, bitpool 53 yields 119-byte frames.
 - AAC uses one LATM AudioMuxElement per record/RTP packet with inline stream configuration. No oversized-frame fragmentation; validate against negotiated MTU before sending.
 - Kernel SBC uses integer-only `SbcFixed`. The independent test decoder is a sanity reference, not external interoperability proof; synthesis gain is `-M`, with 73/37-sample delay for 8/4 subbands.
-
-External decoder comparison, AAC sink captures and BlueZ coverage: [hardware gates](../validation/Hardware.md). Live blockers: [status](../STATUS.md).
