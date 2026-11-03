@@ -3,7 +3,7 @@
 // Driver <-> user-mode encoder service ABI (AAC).
 // Kernel-safe and user-mode safe: no STL, no exceptions, no allocation.
 // Layouts and IOCTL codes are versioned by kAbiVersion; the lifecycle,
-// threading and failure rules are in docs/AAC-Service-Boundary.md.
+// threading and failure rules are in docs/architecture/AAC-Service-Boundary.md.
 
 #include <OpenA2dp/RingBuffer.h>
 #include <OpenA2dp/Types.h>

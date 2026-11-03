@@ -10,7 +10,7 @@
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
 - `docs/STATUS.md` is the only live plan: milestone state, blockers, next priorities and validation gates. Update it only when these change; replace stale state rather than append a diary.
 - Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs. Legacy action-log numbers are not required.
-- `docs/A2DP-Driver-Plan.md` and `docs/SESSION-CONTEXT.md` are frozen historical references, not startup context. Read relevant sections only for architecture or historical evidence; do not extend their logs.
+- Architecture lives in `docs/architecture/`; load only the relevant reference via its index. Legacy plan/handoff files are retired; use Git for historical evidence, never recreate action logs.
 - Keep stable rules here; designs/workflows stay on demand. Locate symbols with grep/glob, then read the relevant file/range. Split by responsibility, not arbitrary line counts.
 - Keep `AGENTS.md`, live status and skills minimal (targets: ≤40 lines here/status, ≤30 per skill). Replace or remove redundant text before adding; never omit safety constraints to meet a target.
 - Preserve unchanged wording and section order to support prefix-cache reuse. No cosmetic rewrites, timestamps, session notes, copied tool output or duplicate instructions. Edit only affected lines when rules, plan state or workflows actually change; load only the needed skill.

@@ -2,7 +2,7 @@
 
 // Encoder-service interface (AAC): per-device control device, IOCTLs and the shared
 // PCM/frame rings. The ABI and the lifecycle rules are in
-// common/include/OpenA2dp/Ioctl.h and docs/AAC-Service-Boundary.md.
+// common/include/OpenA2dp/Ioctl.h and docs/architecture/AAC-Service-Boundary.md.
 
 #include "Driver.h"
 

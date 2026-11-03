@@ -1,4 +1,4 @@
-# Codec configuration roadmap (M5b -> M6)
+# Codec configuration design (planned: M5b -> M6)
 
 On-demand scope, not a progress log; live state is in [STATUS.md](../STATUS.md).
 

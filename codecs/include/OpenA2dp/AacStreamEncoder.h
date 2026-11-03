@@ -2,7 +2,7 @@
 
 // Testable core of OpenA2dpSvc.exe: paces, encodes and frames AAC-LC audio.
 //
-// The service owns the AAC media clock (docs/AAC-Service-Boundary.md section 7):
+// The service owns the AAC media clock (docs/architecture/AAC-Service-Boundary.md section 7):
 // on every WAIT_EVENT tick it tells this object how much time has elapsed, and
 // the object pulls exactly that much PCM from the shared PCM ring, encodes it in
 // 1024-sample blocks (padding the last block with silence) and writes one LATM

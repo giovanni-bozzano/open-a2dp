@@ -1,6 +1,6 @@
 # Plan status
 
-Single source of current plan state. Keep this short; change history and test results belong in Git commits. Historical evidence: [original plan](A2DP-Driver-Plan.md), [old handoff](SESSION-CONTEXT.md). These are not live status sources.
+Single source of current plan state. Keep this short; change history and test results belong in Git commits. Design references: [architecture](architecture/README.md).
 
 ## Milestones
 
@@ -20,7 +20,7 @@ Single source of current plan state. Keep this short; change history and test re
 
 1. Validate teardown/read/logging fixes on the VM before feature work; deployment unconfirmed. See [hardware validation](validation/Hardware.md#teardown-and-reconnect).
 2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink. See [AAC gate](validation/Hardware.md#aac-and-fallback).
-3. Implement M5b, then finish M6. See [configuration roadmap](design/Codec-Configuration.md).
+3. Implement M5b, then finish M6. See [configuration design](architecture/Codec-Configuration.md).
 
 ## Deferred validation
 

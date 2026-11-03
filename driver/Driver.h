@@ -186,7 +186,7 @@ struct DEVICE_CONTEXT
 	volatile LONG MediaAcceptPending;
 	volatile LONG StartPending;
 
-	// AVDTP session (Signaling.cpp). SessionLock serializes the session, the
+	// AVDTP session (signaling/). SessionLock serializes the session, the
 	// write buffer and read resubmission; all of it runs at PASSIVE_LEVEL.
 	WDFWAITLOCK SessionLock;
 	OpenA2dp::Avdtp::SourceSession Session;
@@ -218,7 +218,7 @@ struct DEVICE_CONTEXT
 	L2CAP_CHANNEL_HANDLE MediaChannel;
 	USHORT MediaOutMtu;
 
-	// Media streaming (Media.cpp). MediaLock serializes the encoder, buffers and sends.
+	// Media streaming (media/). MediaLock serializes the encoder, buffers and sends.
 	WDFWAITLOCK MediaLock;
 	WDFTIMER MediaTimer;
 	WDFWORKITEM MediaWorkItem;
@@ -232,7 +232,7 @@ struct DEVICE_CONTEXT
 	INT16 PcmBuffer[16 * 8 * 2];
 	UCHAR MediaBuffer[MediaMaxMtu];
 
-	// ACX render stream (Audio.cpp). AudioLock (spin lock) guards the RT buffer
+	// ACX render stream (audio/). AudioLock (spin lock) guards the RT buffer
 	// and position state; the PCM ring is SPSC (audio timer -> media work item).
 	KSPIN_LOCK AudioLock;
 	WDFTIMER AudioTimer;
@@ -253,8 +253,8 @@ struct DEVICE_CONTEXT
 	OpenA2dp::RingHeader* PcmRingHeader;
 	UCHAR* PcmRingData;
 
-	// Encoder service (Service.cpp): one shared block holds the PCM ring (driver ->
-	// service) and the frame ring (service -> driver). See docs/AAC-Service-Boundary.md.
+	// Encoder service (service/): one shared block holds the PCM ring (driver ->
+	// service) and the frame ring (service -> driver). See docs/architecture/AAC-Service-Boundary.md.
 	WDFDEVICE ControlDevice;
 	WDFMEMORY ServiceMemory;
 	PVOID ServiceRawBase;
@@ -313,7 +313,7 @@ inline const char* OA2dpTagOf(const DEVICE_CONTEXT* ctx)
 	return ctx != nullptr ? ctx->LogTag : "-";
 }
 
-// L2cap.cpp
+// l2cap/
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx);
 
@@ -350,14 +350,14 @@ void L2capCancelSend(_In_ SEND_SLOT* slot);
 // True when a failed send means the headset went away, not a driver fault.
 bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status);
 
-// Media transport channel (L2cap.cpp)
+// Media transport channel (l2cap/)
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx);
 
 _IRQL_requires_(PASSIVE_LEVEL)
 void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx);
 
-// Signaling.cpp
+// signaling/
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx);
 
@@ -388,7 +388,7 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
 
-// Audio.cpp
+// audio/
 // Reports the headset link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.
 void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx);
 
@@ -401,7 +401,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames);
 
-// Media.cpp
+// media/
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx);
 

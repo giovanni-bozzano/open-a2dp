@@ -14,7 +14,7 @@ Current implementation:
 - The audio endpoint is named `<headset> [OpenA2DP]` and typed as headphones or speakers from the headset's Class of Device.
 - `common/include/OpenA2dp`: kernel-safe AVDTP/RTP/ring-buffer/codec-selection headers, including `SbcConfig.h`, `AacConfig.h` and the driver/service ABI `Ioctl.h`.
 - `driver/service/`: driver side of the AAC boundary: per-device control device with a SYSTEM/Administrators SDDL, IOCTL queue, shared PCM/frame rings mapped into the service process, `WAIT_EVENT` ticked by the media timer. See the [driver map](driver/README.md) for all subsystems.
-- `docs/AAC-Service-Boundary.md`: design of the AAC driver/service boundary (rings, IOCTLs, lifecycle).
+- [Architecture references](docs/architecture/README.md): system overview, lifecycle, protocols and [AAC service boundary](docs/architecture/AAC-Service-Boundary.md).
 - `service/main.cpp`: AAC encoder Windows service (`OpenA2dpSvc.exe`).
 - `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and the Media Foundation/LATM encoder used by tests and the service.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.

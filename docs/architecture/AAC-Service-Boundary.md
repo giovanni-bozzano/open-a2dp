@@ -1,9 +1,8 @@
 # OpenA2dp — AAC driver/service boundary
 
-Design reference, not a progress log. Current implementation/validation gates:
-[STATUS.md](STATUS.md). Historical architecture:
-[A2DP-Driver-Plan.md](A2DP-Driver-Plan.md) sections 2 and 5; ABI in
-[`common/include/OpenA2dp/Ioctl.h`](../common/include/OpenA2dp/Ioctl.h).
+Design reference, not a progress log. See [overview](Overview.md) and
+[live status](../STATUS.md). ABI source:
+[`common/include/OpenA2dp/Ioctl.h`](../../common/include/OpenA2dp/Ioctl.h).
 
 ## 1. Scope
 
@@ -19,8 +18,8 @@ v1 assumptions:
 
 Invariants:
 
-1. SBC never depends on the service. If the service is absent, the driver advertises
-   SBC only and behaves exactly as today.
+1. SBC never depends on the service. Both local SEPs remain advertised; AAC selection
+   is refused while the service is absent, so negotiation falls back to SBC.
 2. The service never receives kernel pointers. The driver allocates the rings and maps
    them into the caller; the service only sees one user-mode base address.
 3. Losing the service (crash, kill, hang) must not hang the driver, leak a mapping or
@@ -32,10 +31,10 @@ Invariants:
 
 | Component | IRQL | Responsibility |
 |---|---|---|
-| AVDTP signaling work item (`Signaling.cpp`) | PASSIVE | SEP list, codec selection, `MediaStart`/`MediaStop`, AAC fallback |
-| ACX audio timer (`Audio.cpp`) | DISPATCH | Produces PCM into the PCM ring (unchanged) |
-| Media timer + work item (`Media.cpp`) | PASSIVE | SBC: encodes from the PCM ring. AAC: drains the frame ring, builds RTP, sends, completes `WAIT_EVENT` |
-| Control device + IOCTL queues (`Service.cpp`, new) | PASSIVE | Per-device control device with its own SDDL and default queue: `REGISTER_ENCODER`, `MAP_RINGS`, `GET_STATUS`, `SET_PREFERENCE` sequential; one parked `WAIT_EVENT` |
+| Signaling work item (`driver/signaling/`) | PASSIVE | SEP list, selection, stream lifecycle, AAC fallback |
+| ACX audio timer (`driver/audio/`) | DISPATCH | Produces PCM into the PCM ring |
+| Media work item (`driver/media/`) | PASSIVE | SBC encoding or AAC frame drain, RTP send, `WAIT_EVENT` ticks |
+| Control device (`driver/service/`) | PASSIVE | Parallel IOCTL queue; one parked `WAIT_EVENT`; separate registration/mapping protection |
 | Service main loop | user mode | `WAIT_EVENT` -> pull PCM -> encode -> write frames |
 
 Rules:
@@ -43,17 +42,16 @@ Rules:
 - The IOCTLs live on a per-device **control device**, not on the PnP/ACX device object:
   ACX owns the KS request path there, and the PnP object must keep its default security
   descriptor so the audio engine can open it. The control device carries the restrictive
-  SDDL and its own queue. It is created at self-managed IO start (interface reference
-  string = Bluetooth address, so the service can tell headsets apart) and deleted at
-  suspend/removal, which also closes any service handle.
+  SDDL and its own queue. It is created at self-managed IO start with an address-based
+  named link (section 6) and deleted at suspend/removal. Rundown and an FDO reference
+  protect outstanding handlers/handles; removal delivers device-gone state.
 - `MediaLock` still serializes `MediaStart`/`MediaStop`/the media work item. The frame
   ring is only touched by the media work item (consumer) and the service (producer), so
   no additional kernel lock is needed.
-- `WAIT_EVENT` is completed from the media timer (DISPATCH_LEVEL) or from signaling
-  (PASSIVE). `WdfRequestComplete` is legal at both. The stored request is protected by a
-  spin lock, because the timer can race with cancellation.
-- `REGISTER_ENCODER` and `MAP_RINGS` must run on the sequential queue so registration
-  and mapping cannot interleave with each other or with teardown.
+- `WAIT_EVENT` ticks come from the passive media work item; lifecycle events also
+  release waits. `WaitLock` protects the parked request against cancellation.
+- Registration uses an interlocked claim; `RingLock` serializes map/unmap and records
+  the owning file. Control-device rundown protects IOCTL handlers against teardown.
 
 ## 3. Shared memory
 
@@ -143,12 +141,11 @@ struct.
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
 `Status` (ABI 2) carries `negotiatedCodec` (valid before streaming starts),
-`preferenceFlags` and `preferenceCodec`; `GET_STATUS` reads the session and the preference
-under `SessionLock`.
+`preferenceFlags` and `preferenceCodec`; `GET_STATUS` reads published atomic session
+snapshots rather than waiting on `SessionLock`.
 
-`REGISTER_ENCODER` sets the device flag that makes the AVDTP layer advertise the AAC SEP.
-It is intentionally a separate call from `MAP_RINGS`: a service that can register but
-cannot map must not make the driver advertise AAC.
+`REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
+separate call; if mapping fails, the service must close its handle to clear registration.
 
 The registration returns the authoritative `maxFramePayload` (883 bytes) and the PCM
 format the service must request from Media Foundation. The service must reject a
@@ -195,7 +192,8 @@ ring, and leaves the PCM ring to the ACX endpoint.
 
 Service crash or `CloseHandle` while streaming: the file cleanup clears the registration
 and mapping, stops media, requests AVDTP SUSPEND, and closes the stream. The next
-connection negotiates SBC (the AAC SEP is gone). No driver wait depends on the service.
+connection selects SBC if no encoder is registered (both SEPs remain advertised).
+No driver wait depends on the service.
 
 ## 7. Pacing and timestamps
 
@@ -214,19 +212,19 @@ Consequences:
 - latency is roughly one encode tick plus the driver tick (10-20 ms), on top of the
   existing ~60 ms preroll.
 
-## 8. Negotiation changes (implemented, Action Log #67)
+## 8. Negotiation
 
 `Avdtp::SourceSession` now holds a small array of local SEPs:
 
 - SEID 1: SBC, always present (mandatory fallback);
-- SEID 2: AAC, present only while an encoder is registered (`SetLocalSep`).
+- SEID 2: AAC, always advertised; selectable only while an encoder is registered.
 
 The session answers DISCOVER with every local SEP, answers GET_CAPABILITIES per SEID,
 validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
 `SET_CONFIGURATION` check working for either codec (SBC is checked inside the session,
 other codecs through the `ConfigValidator` callback).
 
-Policy: forced codec (if available) > AAC > SBC. `Signaling.cpp`'s `SelectConfig` has
+Policy: forced codec (if available) > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s `SelectConfig` has
 the AAC branch (`AacConfig::Select`, 44.1 kHz, highest bitrate the sink accepts) and
 scores AAC 2 / SBC 1. Every scored sink SEP is kept as a candidate in descending order;
 when the sink rejects a `SET_CONFIGURATION`, the session configures the next candidate
@@ -241,7 +239,7 @@ exceed `kMaxFramePayload`, and enters the service path.
 
 | Failure | Driver action |
 |---|---|
-| No service registered at negotiation | Advertise SBC only (today's behavior) |
+| No service registered at negotiation | Refuse AAC selection; retain SBC fallback |
 | Service closes the handle while streaming | Stop media, request SUSPEND, close the stream |
 | No frame for 200 ms while streaming | Count `underruns`, log once per second |
 | No frame for 2 s while streaming | Stop media, request SUSPEND (stream fails, reconnect as SBC) |

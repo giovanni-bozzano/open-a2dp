@@ -3,7 +3,7 @@
 // Frame records carried by the service -> driver ring: one AAC/LATM AudioMuxElement
 // per record. Kernel-safe and user-mode safe: no STL, no exceptions, no allocation.
 // The layout and the lifecycle rules are in common/include/OpenA2dp/Ioctl.h and
-// docs/AAC-Service-Boundary.md.
+// docs/architecture/AAC-Service-Boundary.md.
 
 #include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/RingBuffer.h>
