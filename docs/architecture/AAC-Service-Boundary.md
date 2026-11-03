@@ -1,9 +1,5 @@
 # OpenA2dp — AAC driver/service boundary
 
-Design reference, not a progress log. See [overview](Overview.md) and
-[live status](../STATUS.md). ABI source:
-[`common/include/OpenA2dp/Ioctl.h`](../../common/include/OpenA2dp/Ioctl.h).
-
 ## 1. Scope
 
 `OpenA2dpSvc.exe` encodes AAC-LC only. SBC stays in the kernel and must keep working
