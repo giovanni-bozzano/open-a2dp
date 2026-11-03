@@ -8,7 +8,7 @@
 | `driver/README.md` | Map of independently compiled subsystem sources | When source layout changes |
 | Git commit messages | Individual changes, rationale, tests and validation limits | One logical change per commit |
 | `README.md` | Project introduction and build entry point | Keep status linked, not duplicated |
-| `docs/architecture/` | Indexed component, lifecycle, protocol and ABI designs | When the design changes; no progress log |
+| `docs/architecture/` | Indexed component, lifecycle, protocol and ABI designs | When the design changes |
 | `.agents/skills/*/SKILL.md` | On-demand operational workflows | When the workflow changes |
 
 Startup: read the short live status, Git status and five commit subjects. Search before reading implementation/design sections. Keep volatile state out of auto-loaded agent instructions; do not duplicate commit history in Markdown or create per-session handoffs.

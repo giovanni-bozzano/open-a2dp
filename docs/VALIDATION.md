@@ -2,11 +2,6 @@
 
 On-demand checklists; live priority/state stays in [STATUS.md](../STATUS.md). Record run results in Git commits, not here.
 
-## Teardown and reconnect
-- Deployment of the latest teardown/read/logging fixes is unconfirmed; verify the active build first.
-- Verify a plain connect, then repeat disable/re-enable while streaming and disconnected; kill/restart the encoder service during disable.
-- Use one installer/PnP operation at a time. If query-remove hangs, capture targeted native WinDbg stacks/IRPs; do not reboot automatically.
-
 ## AAC and fallback
 - Requires an AAC-capable sink; the documented PANTONE and Positive Vibration 2 BT headsets offer SBC only.
 - Start the service before negotiation; confirm AAC offered/selected, audible output and advancing CLI counters.
