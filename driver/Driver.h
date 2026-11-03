@@ -104,10 +104,11 @@ inline const char* ChannelStateName(LONG state)
 // Bounds on how long a thread of ours may wait for the Bluetooth transport. The
 // transport does not always complete a cancelled request, so no wait on it may be
 // unbounded and nothing it still owns may be freed or reused after a wait gave up.
-inline constexpr ULONG SignalSendTimeoutMs = 1000;
 inline constexpr ULONG BrbControlTimeoutMs = 3000;
 // How long a close waits for a cancelled send to leave the transport.
 inline constexpr ULONG SendCancelGraceMs = 100;
+// AVDTP packets that can wait for the signaling send slot.
+inline constexpr ULONG SignalQueueDepth = 4;
 
 inline constexpr ULONG SendSlotBytes = MediaMaxMtu > OpenA2dp::Avdtp::kMaxSignalPacket
 	? static_cast<ULONG>(MediaMaxMtu)
@@ -127,6 +128,12 @@ struct SEND_SLOT
 	WDFWORKITEM CompletionWorkItem;
 	volatile LONG Status;
 	UCHAR Buffer[SendSlotBytes];
+};
+
+struct SIGNAL_PACKET
+{
+	ULONG Length;
+	UCHAR Data[OpenA2dp::Avdtp::kMaxSignalPacket];
 };
 
 struct DEVICE_CONTEXT
@@ -165,6 +172,13 @@ struct DEVICE_CONTEXT
 	// Asynchronous sends: AVDTP signaling (SessionLock) and media (MediaLock).
 	SEND_SLOT SignalSend;
 	SEND_SLOT MediaSend;
+	// AVDTP packets waiting for SignalSend, in order, under SessionLock. The send
+	// completion enqueues the signaling work item, which submits the next one.
+	SIGNAL_PACKET SignalQueue[SignalQueueDepth];
+	ULONG SignalQueueHead;
+	ULONG SignalQueueCount;
+	// A signaling send was submitted and its completion status has not been logged yet.
+	BOOLEAN SignalSendUnchecked;
 
 	// Lock-free snapshot of the session for GET_STATUS, refreshed under SessionLock.
 	volatile LONG AvdtpStateSnapshot;
@@ -354,13 +368,6 @@ void L2capUnregisterServer(_In_ DEVICE_CONTEXT* ctx);
 
 _IRQL_requires_(PASSIVE_LEVEL)
 void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx);
-
-// Copies the data into the slot and sends it, waiting at most timeoutMs. On a timeout
-// the request is cancelled and STATUS_IO_TIMEOUT returned; the send may still be in
-// flight, which L2capSendIdle reports. STATUS_DEVICE_BUSY when the slot is not idle.
-_IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
-	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs);
 
 // Copies the data into the slot and submits it without waiting. On success the result
 // arrives in slot->Status once Idle is signaled, followed by CompletionWorkItem.

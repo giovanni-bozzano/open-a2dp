@@ -125,6 +125,9 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->MediaOpenCompleted, 0);
 	ctx->MediaOpenAttempts = 0;
 	ctx->MediaOpenRetry = FALSE;
+	// Packets queued for the previous session must not reach the next one.
+	ctx->SignalQueueHead = 0;
+	ctx->SignalQueueCount = 0;
 	PublishStatus(ctx);
 	KeSetEvent(&ctx->SessionChanged, IO_NO_INCREMENT, FALSE);
 }

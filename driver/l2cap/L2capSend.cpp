@@ -59,35 +59,6 @@ NTSTATUS L2capSendAsync(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2C
 	return status;
 }
 
-NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
-	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs)
-{
-	const NTSTATUS status = L2capSendAsync(ctx, slot, channel, data, length);
-	if (!NT_SUCCESS(status))
-	{
-		return status;
-	}
-
-	LARGE_INTEGER timeout;
-	timeout.QuadPart = -static_cast<LONGLONG>(timeoutMs) * 10000;
-	if (KeWaitForSingleObject(&slot->Idle, Executive, KernelMode, FALSE, &timeout) == STATUS_SUCCESS)
-	{
-		return static_cast<NTSTATUS>(slot->Status);
-	}
-
-	// The transport did not finish the send in time. Cancel it and leave it in flight if
-	// it still does not complete: the slot keeps the request, BRB and data alive, and
-	// stays busy until the completion arrives.
-	WdfRequestCancelSentRequest(slot->Request);
-	timeout.QuadPart = -1000000LL;
-	if (KeWaitForSingleObject(&slot->Idle, Executive, KernelMode, FALSE, &timeout) == STATUS_SUCCESS)
-	{
-		return static_cast<NTSTATUS>(slot->Status);
-	}
-	OA2DP_WARN(ctx, "L2CAP", "send did not complete within %u ms; it stays pending in the transport", timeoutMs);
-	return STATUS_IO_TIMEOUT;
-}
-
 bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status)
 {
 	switch (status)

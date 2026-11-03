@@ -90,6 +90,7 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
 	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
 	ctx->SignalingWorkItemThread = KeGetCurrentThread();
+	PumpSignalSends(ctx);
 
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{

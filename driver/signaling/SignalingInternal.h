@@ -42,6 +42,8 @@ void PublishStatus(DEVICE_CONTEXT* ctx);
 void ResetSession(DEVICE_CONTEXT* ctx);
 void ArmConnectDelay(DEVICE_CONTEXT* ctx, LONGLONG milliseconds);
 void Transmit(DEVICE_CONTEXT* ctx, size_t length);
+// Logs the last send's status and submits queued packets while the slot is idle.
+void PumpSignalSends(DEVICE_CONTEXT* ctx);
 void SubmitRead(DEVICE_CONTEXT* ctx);
 void OnReadComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context);
 void OnResponseTimeout(_In_ WDFTIMER timer);

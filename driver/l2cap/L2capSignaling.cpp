@@ -65,7 +65,19 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 		WdfWaitLockRelease(ctx->SessionLock);
 	}
 	L2capCloseMediaChannel(ctx);
+	// The last AVDTP packet (often the CLOSE) may still be in the transport. Cancel it
+	// and give the completion, which takes no lock, a bounded moment before the channel
+	// goes; a send that outlives the grace keeps its slot busy until it completes.
 	L2capCancelSend(&ctx->SignalSend);
+	if (!L2capSendIdle(&ctx->SignalSend))
+	{
+		LARGE_INTEGER grace;
+		grace.QuadPart = -static_cast<LONGLONG>(SendCancelGraceMs) * 10000;
+		if (KeWaitForSingleObject(&ctx->SignalSend.Idle, Executive, KernelMode, FALSE, &grace) != STATUS_SUCCESS)
+		{
+			OA2DP_WARN(ctx, "L2CAP", "signaling send still pending in the transport at close");
+		}
+	}
 
 	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_CLOSE_CHANNEL);
 	NTSTATUS status = STATUS_INSUFFICIENT_RESOURCES;

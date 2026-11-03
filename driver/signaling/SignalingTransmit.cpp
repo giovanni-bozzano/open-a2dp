@@ -9,9 +9,69 @@ void ArmConnectDelay(DEVICE_CONTEXT* ctx, LONGLONG milliseconds)
 	WdfTimerStart(ctx->ConnectDelayTimer, WDF_REL_TIMEOUT_IN_MS(milliseconds));
 }
 
-// Sends what the session produced and arms or stops the response timer. Caller holds SessionLock.
-void Transmit(DEVICE_CONTEXT* ctx, size_t length);
+static void LogSendFailure(DEVICE_CONTEXT* ctx, NTSTATUS status)
+{
+	if (IsLinkLoss(ctx, status))
+	{
+		OA2DP_INFO(ctx, "Signaling", "send stopped, headset link is down (0x%08X)", status);
+	}
+	else
+	{
+		OA2DP_ERROR(ctx, "Signaling", "send failed 0x%08X", status);
+	}
+}
 
+// Submits one packet to the idle send slot. A lost signaling packet surfaces through
+// the response timer (commands) or the peer's own timeout (responses).
+static void SubmitSignal(DEVICE_CONTEXT* ctx, const UCHAR* data, ULONG length)
+{
+	const NTSTATUS status = L2capSendAsync(ctx, &ctx->SignalSend, ctx->SignalingChannel, data, length);
+	if (NT_SUCCESS(status))
+	{
+		ctx->SignalSendUnchecked = TRUE;
+	}
+	else
+	{
+		LogSendFailure(ctx, status);
+	}
+	if (length >= 2 && (data[1] == static_cast<uint8_t>(Avdtp::Signal::Close) ||
+		data[1] == static_cast<uint8_t>(Avdtp::Signal::Abort)))
+	{
+		OA2DP_INFO(ctx, "AVDTP", "%s sent (%u bytes), submit status 0x%08X",
+			data[1] == static_cast<uint8_t>(Avdtp::Signal::Close) ? "CLOSE" : "ABORT", static_cast<unsigned>(length), status);
+	}
+}
+
+void PumpSignalSends(DEVICE_CONTEXT* ctx)
+{
+	if (!L2capSendIdle(&ctx->SignalSend))
+	{
+		return; // its completion enqueues the work item again
+	}
+	if (ctx->SignalSendUnchecked)
+	{
+		ctx->SignalSendUnchecked = FALSE;
+		const NTSTATUS status = static_cast<NTSTATUS>(InterlockedCompareExchange(&ctx->SignalSend.Status, 0, 0));
+		if (!NT_SUCCESS(status))
+		{
+			LogSendFailure(ctx, status);
+		}
+	}
+	if (ctx->SignalingState != ChannelOpen)
+	{
+		ctx->SignalQueueCount = 0;
+		return;
+	}
+	while (ctx->SignalQueueCount != 0 && L2capSendIdle(&ctx->SignalSend))
+	{
+		const SIGNAL_PACKET& packet = ctx->SignalQueue[ctx->SignalQueueHead];
+		ctx->SignalQueueHead = (ctx->SignalQueueHead + 1) % SignalQueueDepth;
+		--ctx->SignalQueueCount;
+		SubmitSignal(ctx, packet.Data, packet.Length);
+	}
+}
+
+// Sends what the session produced and arms or stops the response timer. Caller holds SessionLock.
 void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 {
 	if (length != 0 && ctx->SignalingState != ChannelOpen)
@@ -23,26 +83,22 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 	}
 	if (length != 0)
 	{
-		const NTSTATUS status = L2capSend(ctx, &ctx->SignalSend, ctx->SignalingChannel, ctx->WriteBuffer,
-			static_cast<ULONG>(length), SignalSendTimeoutMs);
-		if (!NT_SUCCESS(status))
+		PumpSignalSends(ctx);
+		if (ctx->SignalQueueCount == 0 && L2capSendIdle(&ctx->SignalSend))
 		{
-			if (IsLinkLoss(ctx, status))
-			{
-				OA2DP_INFO(ctx, "Signaling", "send stopped, headset link is down (0x%08X)", status);
-			}
-			else
-			{
-				OA2DP_ERROR(ctx, "Signaling", "send failed 0x%08X", status);
-			}
+			SubmitSignal(ctx, ctx->WriteBuffer, static_cast<ULONG>(length));
 		}
-		if (length >= 2 && ctx->WriteBuffer[1] == static_cast<uint8_t>(Avdtp::Signal::Close))
+		else if (ctx->SignalQueueCount < SignalQueueDepth)
 		{
-			OA2DP_INFO(ctx, "AVDTP", "CLOSE sent (%u bytes), send status 0x%08X", static_cast<unsigned>(length), status);
+			// Wait for the send in flight; never block SessionLock on the transport.
+			SIGNAL_PACKET& packet = ctx->SignalQueue[(ctx->SignalQueueHead + ctx->SignalQueueCount) % SignalQueueDepth];
+			packet.Length = static_cast<ULONG>(length);
+			RtlCopyMemory(packet.Data, ctx->WriteBuffer, length);
+			++ctx->SignalQueueCount;
 		}
-		if (length >= 2 && ctx->WriteBuffer[1] == static_cast<uint8_t>(Avdtp::Signal::Abort))
+		else
 		{
-			OA2DP_INFO(ctx, "AVDTP", "ABORT sent (%u bytes), send status 0x%08X", static_cast<unsigned>(length), status);
+			OA2DP_ERROR(ctx, "Signaling", "send queue full; dropping a %u-byte packet", static_cast<unsigned>(length));
 		}
 	}
 

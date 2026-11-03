@@ -25,6 +25,7 @@ NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return status;
 	}
+	ctx->SignalSend.CompletionWorkItem = ctx->SignalingWorkItem;
 
 	WDF_TIMER_CONFIG timerConfig;
 	WDF_TIMER_CONFIG_INIT(&timerConfig, OnResponseTimeout);
