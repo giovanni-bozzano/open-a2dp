@@ -5,29 +5,65 @@ namespace OpenA2dpDriver::Media
 void OnMediaTimer(_In_ WDFTIMER timer)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
+	InterlockedExchange(&ctx->MediaTickPending, 1);
 	WdfWorkItemEnqueue(ctx->MediaWorkItem);
 }
 
-// Caller holds MediaLock. False when the previous send has not completed yet, in which
-// case this tick sends nothing and nothing is consumed. A send that stays pending for
-// MediaBusyLimitTicks ticks ends the stream instead of leaving it silently stuck.
-bool MediaSendReady(DEVICE_CONTEXT* ctx)
+// Ends the stream after a failed media send. Caller holds MediaLock.
+static void MediaSendFailed(DEVICE_CONTEXT* ctx, NTSTATUS status)
 {
-	if (L2capSendIdle(&ctx->MediaSend))
+	if (IsLinkLoss(ctx, status))
 	{
-		ctx->MediaBusyTicks = 0;
-		return true;
+		OA2DP_INFO(ctx, "Media", "stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
 	}
-	if (++ctx->MediaBusyTicks == MediaBusyLimitTicks)
+	else
 	{
-		OA2DP_WARN(ctx, "Media", "the previous send is still pending in the transport after %u ms; stopping",
-			MediaBusyLimitTicks * MediaPeriodMs);
+		OA2DP_ERROR(ctx, "Media", "send failed 0x%08X after %u packets", status, ctx->RtpSequence);
 		InterlockedIncrement(&ctx->SendFailures);
-		InterlockedExchange(&ctx->LastMediaError, STATUS_IO_TIMEOUT);
-		ctx->MediaActive = FALSE;
-		SignalingRequestSuspend(ctx);
+		InterlockedExchange(&ctx->LastMediaError, status);
 	}
-	return false;
+	ctx->MediaActive = FALSE;
+	SignalingRequestSuspend(ctx);
+}
+
+// Caller holds MediaLock. True when the slot is free and the previous send succeeded.
+// The send completion enqueues the media work item, so a busy slot needs no retry here.
+bool MediaSendReady(DEVICE_CONTEXT* ctx, bool tick)
+{
+	if (!L2capSendIdle(&ctx->MediaSend))
+	{
+		if (tick && ++ctx->MediaBusyTicks == MediaBusyLimitTicks)
+		{
+			OA2DP_WARN(ctx, "Media", "the previous send is still pending in the transport after %u ms",
+				MediaBusyLimitTicks * MediaPeriodMs);
+		}
+		return false;
+	}
+	ctx->MediaBusyTicks = 0;
+	if (ctx->MediaSendUnchecked)
+	{
+		ctx->MediaSendUnchecked = FALSE;
+		const NTSTATUS status = static_cast<NTSTATUS>(InterlockedCompareExchange(&ctx->MediaSend.Status, 0, 0));
+		if (!NT_SUCCESS(status))
+		{
+			MediaSendFailed(ctx, status);
+			return false;
+		}
+	}
+	return true;
+}
+
+// Submits the packet in MediaBuffer. Caller holds MediaLock and checked MediaSendReady.
+bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
+{
+	const NTSTATUS status = L2capSendAsync(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length);
+	if (!NT_SUCCESS(status))
+	{
+		MediaSendFailed(ctx, status);
+		return false;
+	}
+	ctx->MediaSendUnchecked = TRUE;
+	return true;
 }
 
 // Builds one RTP + SBC media packet into MediaBuffer. Caller holds MediaLock.

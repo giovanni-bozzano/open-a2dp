@@ -14,14 +14,14 @@ service IOCTLs. Elapsed time may only drive the cases below.
 | Phase | Current timing | Event-driven replacement |
 |---|---|---|
 | 1 (done, `146abb2`) | 10 ms polling: teardown CLOSE wait, `RejectBusy`, service worker join | `SessionChanged`, `RejectIdle`, thread-handle waits |
-| 2 | Media send waits up to 500 ms under `MediaLock`; AAC 2 s stall -> suspend | Async media send: completion enqueues `MediaWorkItem`, timer only raises the sample target. Encoder loss is already an event (`OnFileCleanup`, ring fault, `kEventStreamStop`); the stall check becomes an underrun counter only. |
+| 2 (done) | Media send waited up to 500 ms under `MediaLock`; AAC 2 s stall and 3 s pending send -> suspend | Async media send: the completion enqueues `MediaWorkItem`, the timer only raises the sample target and wakes the service. Stall and pending-send checks are diagnostics only; encoder loss (`OnFileCleanup`, ring fault) and link loss (send status, disconnect indication) end the stream. |
 | 3 | Signaling send waits 1 s; media open blocks the work item (3 s) and retries after 200 ms sleeps | Async send queue and async media-open BRB; completions set a flag and enqueue the signaling work item, which sends START. "No resources" -> ABORT, retry configuration on the ABORT response, else close. |
 | 4 | Connect waits 8 x 100 ms for the service; 700 ms delay before discovery on headset-initiated links | Service discovers the device by PnP interface notification instead of 250 ms polling; registration enqueues the signaling work item. Late AAC registration renegotiates (CLOSE -> SET_CONFIGURATION) instead of waiting. Headset-initiated links stay acceptor until its first command or until ACX requests a stream, then discover. |
 
 Phases 3-4 change interoperability behaviour and need PANTONE/AAC-sink validation before
 the timed path is deleted.
 
-## Deadlock rules for every phase
+## Deadlock and ownership rules for every phase
 - Completion routines and timers (up to `DISPATCH_LEVEL`) never take `SessionLock` or
   `MediaLock`; they publish an interlocked flag and enqueue the owning work item.
 - Work items issue asynchronous requests and return; they never wait on the transport
@@ -30,6 +30,10 @@ the timed path is deleted.
 - Each asynchronous operation owns one preallocated request plus an idle event. Teardown
   sets `StopEvent`, cancels, waits bounded on the idle event with no lock held, then
   flushes work items, never from inside the same work item (`SignalingWorkItemThread`).
+- No orphans: requests, BRBs and send buffers are preallocated and device-parented; an
+  operation abandoned after its bound stays owned by its slot until the completion
+  arrives, and is never reused while busy. A work item a completion enqueues is flushed by
+  its stopper (`MediaStop` flushes `MediaWorkItem`) after the active flag is cleared.
 - Event waits clear the event before re-checking state under the lock, so a transition
   between check and wait is never lost.
 - Validate each phase with Driver Verifier deadlock detection and a teardown during

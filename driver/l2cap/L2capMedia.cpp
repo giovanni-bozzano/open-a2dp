@@ -73,8 +73,20 @@ void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	// A send the transport still holds would keep the channel referenced; cancel it first.
+	// A send the transport still holds would keep the channel referenced; cancel it and
+	// give the completion a bounded moment. The completion takes no lock, so waiting
+	// here under SessionLock cannot deadlock. A send that still does not complete keeps
+	// its slot busy (the slot owns the request and data) until it does.
 	L2capCancelSend(&ctx->MediaSend);
+	if (!L2capSendIdle(&ctx->MediaSend))
+	{
+		LARGE_INTEGER grace;
+		grace.QuadPart = -static_cast<LONGLONG>(SendCancelGraceMs) * 10000;
+		if (KeWaitForSingleObject(&ctx->MediaSend.Idle, Executive, KernelMode, FALSE, &grace) != STATUS_SUCCESS)
+		{
+			OA2DP_WARN(ctx, "L2CAP", "media send still pending in the transport at close");
+		}
+	}
 
 	BRB_OP* op = BrbOpCreate(ctx, BRB_L2CA_CLOSE_CHANNEL);
 	NTSTATUS status = STATUS_INSUFFICIENT_RESOURCES;

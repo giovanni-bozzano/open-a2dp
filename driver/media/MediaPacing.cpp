@@ -2,89 +2,55 @@
 
 namespace OpenA2dpDriver::Media
 {
-// SBC: pace from the endpoint clock and encode in the kernel. Caller holds MediaLock.
-void TickSbc(DEVICE_CONTEXT* ctx)
+// SBC: pace from the endpoint clock and encode in the kernel. One packet per run; its
+// completion enqueues the next run, so a backlog drains at transport speed. Caller holds MediaLock.
+void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
 	const ULONGLONG elapsed = KeQueryInterruptTime() - ctx->MediaStartTime;
 	const ULONGLONG target = elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * PrerollMs / 1000;
 
-	for (int i = 0; i < MaxPacketsPerTick && ctx->MediaSamplesSent < target; ++i)
+	if (ctx->MediaSamplesSent >= target || !MediaSendReady(ctx, tick))
 	{
-		if (!ctx->MediaActive || ctx->MediaChannel == nullptr || !MediaSendReady(ctx))
-		{
-			return;
-		}
-		uint32_t samples = 0;
-		const ULONG length = BuildSbcPacket(ctx, samples);
-		if (length == 0)
-		{
-			OA2DP_ERROR(ctx, "Media", "packet build failed");
-			ctx->MediaActive = FALSE;
-			return;
-		}
-		const NTSTATUS status = L2capSend(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length, MediaSendTimeoutMs);
-		if (!NT_SUCCESS(status))
-		{
-			if (IsLinkLoss(ctx, status))
-			{
-				OA2DP_INFO(ctx, "Media", "stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
-			}
-			else
-			{
-				OA2DP_ERROR(ctx, "Media", "send failed 0x%08X after %u packets", status, ctx->RtpSequence);
-				InterlockedIncrement(&ctx->SendFailures);
-				InterlockedExchange(&ctx->LastMediaError, status);
-			}
-			ctx->MediaActive = FALSE;
-			SignalingRequestSuspend(ctx);
-			return;
-		}
-		ctx->MediaSamplesSent += samples;
-		if ((ctx->RtpSequence & 0xFF) == 0)
-		{
-			OA2DP_INFO(ctx, "Media", "%u packets sent", ctx->RtpSequence);
-		}
+		return;
+	}
+	uint32_t samples = 0;
+	const ULONG length = BuildSbcPacket(ctx, samples);
+	if (length == 0)
+	{
+		OA2DP_ERROR(ctx, "Media", "packet build failed");
+		ctx->MediaActive = FALSE;
+		return;
+	}
+	if (!SubmitPacket(ctx, length))
+	{
+		return;
+	}
+	ctx->MediaSamplesSent += samples;
+	if ((ctx->RtpSequence & 0xFF) == 0)
+	{
+		OA2DP_INFO(ctx, "Media", "%u packets sent", ctx->RtpSequence);
 	}
 }
 
-// AAC: drain the frame ring. The service owns the media clock, so there is no target.
-void TickAac(DEVICE_CONTEXT* ctx)
+// AAC: drain the frame ring, one packet per run. The service owns the media clock, so
+// there is no target; clock ticks wake it and account underruns. Caller holds MediaLock.
+void TickAac(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const ULONGLONG now = KeQueryInterruptTime();
-	bool sent = false;
-	for (int i = 0; i < MaxPacketsPerTick; ++i)
+	if (MediaSendReady(ctx, tick))
 	{
-		if (!ctx->MediaActive || ctx->MediaChannel == nullptr || !MediaSendReady(ctx))
-		{
-			break;
-		}
 		uint32_t samples = 0;
 		const ULONG length = BuildAacPacket(ctx, samples);
-		if (length == 0)
+		if (length != 0)
 		{
-			break;
-		}
-		const NTSTATUS status = L2capSend(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length, MediaSendTimeoutMs);
-		if (!NT_SUCCESS(status))
-		{
-			if (IsLinkLoss(ctx, status))
+			if (!SubmitPacket(ctx, length))
 			{
-				OA2DP_INFO(ctx, "Media", "AAC stopped, headset link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+				return;
 			}
-			else
-			{
-				OA2DP_ERROR(ctx, "Media", "AAC send failed 0x%08X after %u packets", status, ctx->RtpSequence);
-				InterlockedIncrement(&ctx->SendFailures);
-				InterlockedExchange(&ctx->LastMediaError, status);
-			}
-			ctx->MediaActive = FALSE;
-			SignalingRequestSuspend(ctx);
-			return;
+			ctx->MediaSamplesSent += samples;
+			ctx->AacLastFrameTime = now;
 		}
-		sent = true;
-		ctx->MediaSamplesSent += samples;
-		ctx->AacLastFrameTime = now;
 	}
 
 	if (!ctx->MediaActive)
@@ -100,22 +66,14 @@ void TickAac(DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	// Wake the service on every tick: for AAC it is the media clock.
-	ServiceTick(ctx);
-	if (sent)
+	if (!tick)
 	{
 		return;
 	}
+	// Wake the service on every clock tick: for AAC it is the media clock.
+	ServiceTick(ctx);
 
 	const ULONGLONG idle = now - ctx->AacLastFrameTime;
-	if (idle >= StallTimeout)
-	{
-		OA2DP_WARN(ctx, "Media", "AAC encoder stalled for %I64u ms, suspending", idle / 10000ull);
-		InterlockedExchange(&ctx->LastMediaError, STATUS_IO_TIMEOUT);
-		ctx->MediaActive = FALSE;
-		SignalingRequestSuspend(ctx);
-		return;
-	}
 	if (idle >= UnderrunTimeout && now - ctx->AacLastUnderrunLog >= UnderrunLogInterval)
 	{
 		ctx->AacLastUnderrunLog = now;
@@ -136,15 +94,18 @@ void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 	}
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 
+	// Runs come from the media clock (timer) and from send completions; only clock
+	// ticks wake the AAC service and count a busy transport.
+	const bool tick = InterlockedExchange(&ctx->MediaTickPending, 0) != 0;
 	if (ctx->MediaActive && ctx->MediaChannel != nullptr)
 	{
 		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeAac)
 		{
-			TickAac(ctx);
+			TickAac(ctx, tick);
 		}
 		else
 		{
-			TickSbc(ctx);
+			TickSbc(ctx, tick);
 		}
 
 		if (!ctx->MediaActive)

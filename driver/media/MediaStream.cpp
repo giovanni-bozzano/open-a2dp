@@ -21,6 +21,8 @@ NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return status;
 	}
+	// Send completions drive the stream: each one enqueues the next packet.
+	ctx->MediaSend.CompletionWorkItem = ctx->MediaWorkItem;
 
 	WDF_TIMER_CONFIG timerConfig;
 	WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, OnMediaTimer, MediaPeriodMs);
@@ -53,6 +55,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 	ctx->Encoder.Reset(params);
 	ctx->MediaBusyTicks = 0;
+	ctx->MediaSendUnchecked = FALSE;
 	ctx->ActiveCodec = Ioctl::kCodecSbc;
 	ctx->ActiveSampleRate = params.sampleRate;
 	ctx->ActiveChannels = params.Channels();
@@ -98,6 +101,10 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_INFO(ctx, "Media", "stopped after %u packets", ctx->RtpSequence);
 	}
 	WdfWaitLockRelease(ctx->MediaLock);
+	// Send completions may still enqueue the work item; such a run sees MediaActive
+	// clear and returns without a lock. Flushing here, with no lock held and never from
+	// the media work item itself, guarantees no run is left once the stream is stopped.
+	WdfWorkItemFlush(ctx->MediaWorkItem);
 
 	InterlockedExchange(&ctx->StreamFault, 0);
 	if (mode == MediaModeAac)

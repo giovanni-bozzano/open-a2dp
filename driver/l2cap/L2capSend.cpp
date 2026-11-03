@@ -15,8 +15,8 @@ void L2capCancelSend(_In_ SEND_SLOT* slot)
 	}
 }
 
-NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
-	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs)
+NTSTATUS L2capSendAsync(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
+	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length)
 {
 	if (length > sizeof(slot->Buffer))
 	{
@@ -55,6 +55,16 @@ NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CH
 	if (!NT_SUCCESS(status))
 	{
 		KeSetEvent(&slot->Idle, IO_NO_INCREMENT, FALSE);
+	}
+	return status;
+}
+
+NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
+	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs)
+{
+	const NTSTATUS status = L2capSendAsync(ctx, slot, channel, data, length);
+	if (!NT_SUCCESS(status))
+	{
 		return status;
 	}
 

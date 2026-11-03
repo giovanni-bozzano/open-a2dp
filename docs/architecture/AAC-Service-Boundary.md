@@ -196,8 +196,8 @@ No driver wait depends on the service.
 The service owns the media clock for AAC. It pulls exactly
 `elapsed * rate + preroll` samples from the PCM ring (the formula the SBC path uses
 today) and encodes in 1024-sample blocks, padding the last block with silence. The
-driver no longer computes a target for AAC; it only drains the frame ring, at most
-`MaxPacketsPerTick` packets per tick, and advances the RTP timestamp by each record's
+driver no longer computes a target for AAC; it only drains the frame ring, one packet
+per media-clock tick or send completion, and advances the RTP timestamp by each record's
 `samples`.
 
 Consequences:
@@ -237,11 +237,10 @@ exceed `kMaxFramePayload`, and enters the service path.
 |---|---|
 | No service registered at negotiation | Refuse AAC selection; retain SBC fallback |
 | Service closes the handle while streaming | Stop media, request SUSPEND, close the stream |
-| No frame for 200 ms while streaming | Count `underruns`, log once per second |
-| No frame for 2 s while streaming | Stop media, request SUSPEND (stream fails, reconnect as SBC) |
+| No frame for 200 ms while streaming | Count `underruns`, log once per second; no state change (encoder loss is the file-cleanup event) |
 | Oversize record | Skip and count `framesDropped`; suspend after 100 consecutive |
 | Corrupt record header (bad magic/size) | Stop media and request SUSPEND immediately; count an error |
-| Media send failure | Existing path: stop media, request SUSPEND |
+| Media send failure | Reported by the send completion: stop media, request SUSPEND |
 | PCM ring full | Existing `AudioDroppedBytes` counter; the service is behind |
 
 `GET_STATUS` exposes `packetsSent`, `framesDropped`, `underruns`, `sendFailures` and

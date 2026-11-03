@@ -5,8 +5,14 @@ namespace OpenA2dpDriver::L2cap
 void OnSendComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context)
 {
 	auto* slot = static_cast<SEND_SLOT*>(context);
+	// Read before Idle is set: from then on the slot may be reused by its owner.
+	const WDFWORKITEM workItem = slot->CompletionWorkItem;
 	InterlockedExchange(&slot->Status, params->IoStatus.Status);
 	KeSetEvent(&slot->Idle, IO_NO_INCREMENT, FALSE);
+	if (workItem != nullptr)
+	{
+		WdfWorkItemEnqueue(workItem);
+	}
 }
 
 NTSTATUS InitSendSlot(_In_ DEVICE_CONTEXT* ctx, _In_ WDF_OBJECT_ATTRIBUTES* attrs, _Inout_ SEND_SLOT* slot)

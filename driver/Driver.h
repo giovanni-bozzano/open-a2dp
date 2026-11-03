@@ -105,8 +105,9 @@ inline const char* ChannelStateName(LONG state)
 // transport does not always complete a cancelled request, so no wait on it may be
 // unbounded and nothing it still owns may be freed or reused after a wait gave up.
 inline constexpr ULONG SignalSendTimeoutMs = 1000;
-inline constexpr ULONG MediaSendTimeoutMs = 500;
 inline constexpr ULONG BrbControlTimeoutMs = 3000;
+// How long a close waits for a cancelled send to leave the transport.
+inline constexpr ULONG SendCancelGraceMs = 100;
 
 inline constexpr ULONG SendSlotBytes = MediaMaxMtu > OpenA2dp::Avdtp::kMaxSignalPacket
 	? static_cast<ULONG>(MediaMaxMtu)
@@ -116,12 +117,14 @@ inline constexpr ULONG SendSlotBytes = MediaMaxMtu > OpenA2dp::Avdtp::kMaxSignal
 // data, so a wait that times out can leave the send in flight without leaving the
 // transport a pointer into a stack frame or a buffer another thread rewrites.
 // Idle is signaled while no send is in flight. Callers serialize access to a slot.
+// CompletionWorkItem, when set, is enqueued after every completion (after Idle is set).
 struct SEND_SLOT
 {
 	WDFREQUEST Request;
 	WDFMEMORY BrbMemory;
 	struct _BRB_L2CA_ACL_TRANSFER Brb;
 	KEVENT Idle;
+	WDFWORKITEM CompletionWorkItem;
 	volatile LONG Status;
 	UCHAR Buffer[SendSlotBytes];
 };
@@ -169,8 +172,13 @@ struct DEVICE_CONTEXT
 	// Set when the session reached Open as the initiator; the signaling work item then
 	// opens the media channel after it has re-armed the read.
 	volatile LONG MediaOpenPending;
-	// Consecutive media ticks that found the previous send still pending.
+	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
+	// Set by the media timer so the work item can tell clock ticks from send completions.
+	volatile LONG MediaTickPending;
+	// A media send was submitted and its completion status has not been checked yet.
+	// Only the media work item touches it, under MediaLock.
+	BOOLEAN MediaSendUnchecked;
 
 	// L2CAP server for headset-initiated connections on the AVDTP PSM. Incoming
 	// signaling connections are accepted through OpenRequest; others are
@@ -345,6 +353,13 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS L2capSend(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
 	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length, _In_ ULONG timeoutMs);
+
+// Copies the data into the slot and submits it without waiting. On success the result
+// arrives in slot->Status once Idle is signaled, followed by CompletionWorkItem.
+// STATUS_DEVICE_BUSY when the slot is not idle; on any failure the slot stays idle.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS L2capSendAsync(_In_ DEVICE_CONTEXT* ctx, _In_ SEND_SLOT* slot, _In_ L2CAP_CHANNEL_HANDLE channel,
+	_In_reads_bytes_(length) const VOID* data, _In_ ULONG length);
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool L2capSendIdle(_In_ SEND_SLOT* slot);
