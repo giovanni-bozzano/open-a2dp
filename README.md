@@ -2,8 +2,6 @@
 
 Open-source A2DP source driver for Windows 11, built to replace `BthA2dp.sys` on a per-device basis. SBC is encoded in the kernel; AAC-LC encoding is planned for a user-mode service.
 
-See [plan status](docs/STATUS.md) for milestones, blockers and next steps, and the [documentation map](docs/AGENT-EFFICIENCY.md) for reference locations. Individual changes and validation results are recorded in Git commits.
-
 ## Status
 
 The live milestone table and validation backlog are maintained only in [docs/STATUS.md](docs/STATUS.md).
@@ -22,16 +20,12 @@ Current implementation:
 
 ## Build
 
-Requires Visual Studio 2026 (v145 toolset) and the WDK NuGet packages pinned in `driver/packages.config`. Use the 64-bit MSBuild.
+Requires Visual Studio 2026 (v145 toolset) and the WDK NuGet packages pinned in `Directory.Packages.props`. Use the 64-bit MSBuild.
 
 ```
-& "D:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
+& MSBuild.exe OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
 out\x64\Debug\CodecTests.exe            # all tests
 out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ```
 
 User-mode binaries (`CodecTests.exe`, `OpenA2dpCtl.exe`, `OpenA2dpSvc.exe`) link the CRT statically, so they also run in the test VM without the Visual C++ debug runtime.
-
-## Known gaps
-
-See [plan status](docs/STATUS.md) for the current hardware blockers, deferred validation and remaining release gates.
