@@ -120,6 +120,11 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->ResponseDeadline = 0;
 	ctx->ConnectDelayDeadline = 0;
 	InterlockedExchange(&ctx->MediaOpenPending, 0);
+	// A stale completion flag is harmless (FinishMediaOpen checks the operation itself);
+	// the operation was reclaimed by the media channel close that preceded this reset.
+	InterlockedExchange(&ctx->MediaOpenCompleted, 0);
+	ctx->MediaOpenAttempts = 0;
+	ctx->MediaOpenRetry = FALSE;
 	PublishStatus(ctx);
 	KeSetEvent(&ctx->SessionChanged, IO_NO_INCREMENT, FALSE);
 }

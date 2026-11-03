@@ -158,8 +158,8 @@ struct DEVICE_CONTEXT
 	WDFWORKITEM DisconnectWorkItem;
 
 	// Signaled once device teardown has begun, after the courtesy CLOSE. Waits that
-	// would otherwise run to their timeout (opening the media channel, the pauses
-	// between attempts) end as soon as it is set, so teardown never waits for them.
+	// would otherwise run to their timeout (the wait for the encoder service, control
+	// BRBs) end as soon as it is set, so teardown never waits for them.
 	KEVENT StopEvent;
 
 	// Asynchronous sends: AVDTP signaling (SessionLock) and media (MediaLock).
@@ -172,6 +172,14 @@ struct DEVICE_CONTEXT
 	// Set when the session reached Open as the initiator; the signaling work item then
 	// opens the media channel after it has re-armed the read.
 	volatile LONG MediaOpenPending;
+	// The media channel open in flight (an L2CAP BRB_OP), owned by SessionLock holders
+	// while the signaling channel is open and by its closer afterwards.
+	PVOID MediaOpenOp;
+	volatile LONG MediaOpenCompleted;
+	// Initiator media-open attempts in this connection. A failed attempt ABORTs the
+	// stream and MediaOpenRetry restarts discovery when the ABORT response arrives.
+	ULONG MediaOpenAttempts;
+	BOOLEAN MediaOpenRetry;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.
@@ -372,9 +380,19 @@ void L2capCancelSend(_In_ SEND_SLOT* slot);
 bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status);
 
 // Media transport channel (l2cap/)
+// Submits the media channel open and returns STATUS_PENDING; the completion sets
+// MediaOpenCompleted and enqueues the signaling work item, which calls
+// L2capFinishMediaOpen. Caller holds SessionLock with the signaling channel open.
 _IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS L2capOpenMediaChannel(_In_ DEVICE_CONTEXT* ctx);
+NTSTATUS L2capStartMediaOpen(_In_ DEVICE_CONTEXT* ctx);
 
+// Collects a completed media open: adopts the channel on success. False while no open
+// has completed. Caller holds SessionLock with the signaling channel open.
+_IRQL_requires_(PASSIVE_LEVEL)
+bool L2capFinishMediaOpen(_In_ DEVICE_CONTEXT* ctx, _Out_ NTSTATUS* status);
+
+// Closes the media channel; an open still in flight is cancelled and either adopted
+// and closed or left to close its own channel when it completes.
 _IRQL_requires_(PASSIVE_LEVEL)
 void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx);
 

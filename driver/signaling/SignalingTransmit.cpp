@@ -96,14 +96,15 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 			}
 			else
 			{
-				// Opening the media channel waits on the transport, so it is not done here
-				// but by the work item once it has re-armed the signaling read.
+				// The work item starts the media channel open once it has re-armed the read;
+				// the open's completion re-enters it to send START.
 				InterlockedExchange(&ctx->MediaOpenPending, 1);
 			}
 		}
 		else if (state == Avdtp::SessionState::Streaming)
 		{
 			OA2DP_INFO(ctx, "AVDTP", "streaming, media MTU %u", ctx->MediaOutMtu);
+			ctx->MediaOpenAttempts = 0;
 			MediaStart(ctx, ctx->Session.SelectedCodec(), ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength());
 		}
 		else if (state == Avdtp::SessionState::Open)

@@ -2,54 +2,87 @@
 
 namespace OpenA2dpDriver::Signaling
 {
-// Opens the media channel after the initiator's OPEN was accepted, then sends START.
-// Runs in the signaling work item with SessionLock held; every wait on the transport
-// is bounded, and StopEvent cuts the waits short when the device is going away.
-void OpenMediaTransport(DEVICE_CONTEXT* ctx)
+// Kicks off the initiator's media channel open; its completion re-enters the work item.
+static void StartMediaOpen(DEVICE_CONTEXT* ctx)
 {
-	// The sink sometimes refuses the first media channel (L2CAP response 4, "no
-	// resources") because a previous session has not fully released it. Retry a few
-	// times before giving up; the sink usually frees the channel within a couple of
-	// hundred milliseconds.
-	NTSTATUS mediaStatus = STATUS_UNSUCCESSFUL;
-	for (int attempt = 0; attempt < 3; ++attempt)
+	++ctx->MediaOpenAttempts;
+	const NTSTATUS status = L2capStartMediaOpen(ctx);
+	if (status != STATUS_PENDING)
 	{
-		if (attempt != 0)
-		{
-			LARGE_INTEGER delay;
-			delay.QuadPart = -10000LL * 200;
-			WdfWaitLockRelease(ctx->SessionLock);
-			const NTSTATUS slept = KeWaitForSingleObject(&ctx->StopEvent, Executive, KernelMode, FALSE, &delay);
-			WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-			// The device may be going away or the channel may have closed while we waited.
-			if (slept != STATUS_TIMEOUT || ctx->SignalingState != ChannelOpen ||
-				ctx->Session.State() != Avdtp::SessionState::Open)
-			{
-				return;
-			}
-		}
-		mediaStatus = L2capOpenMediaChannel(ctx);
-		if (NT_SUCCESS(mediaStatus))
-		{
-			break;
-		}
-		OA2DP_WARN(ctx, "L2CAP", "media channel open attempt %d failed 0x%08X", attempt + 1, mediaStatus);
-		if (mediaStatus == STATUS_CANCELLED)
-		{
-			return; // teardown cut the open short
-		}
+		OA2DP_ERROR(ctx, "L2CAP", "media channel open could not start 0x%08X; tearing down the signaling channel", status);
+		L2capCloseSignalingChannel(ctx);
 	}
+}
 
-	if (NT_SUCCESS(mediaStatus))
+// Collects a finished media channel open. The sink sometimes refuses the first media
+// channel (L2CAP response 4, "no resources") because a previous session has not fully
+// released it. Rather than sleeping and retrying blindly, ABORT the stream and
+// rediscover once the ABORT response arrives: the round trips give the sink the event
+// it needs to free the channel. Give up after a few attempts.
+static void FinishMediaOpen(DEVICE_CONTEXT* ctx)
+{
+	NTSTATUS status;
+	if (!L2capFinishMediaOpen(ctx, &status))
 	{
-		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		return;
 	}
-
-	OA2DP_ERROR(ctx, "L2CAP", "media channel open failed after retries; tearing down the signaling channel");
+	if (NT_SUCCESS(status))
+	{
+		if (ctx->Session.State() == Avdtp::SessionState::Open)
+		{
+			Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		}
+		else
+		{
+			// The session left Open while the channel was opening; the next Idle closes it.
+			OA2DP_INFO(ctx, "L2CAP", "media channel opened in state %s", AvdtpStateName(ctx->Session.State()));
+		}
+		return;
+	}
+	if (ctx->Session.State() != Avdtp::SessionState::Open)
+	{
+		return; // the session moved on while the channel was opening; nothing to recover
+	}
+	if (ctx->MediaOpenAttempts < kMediaOpenAttempts)
+	{
+		OA2DP_WARN(ctx, "L2CAP", "media channel open attempt %u failed; aborting the stream to retry",
+			static_cast<unsigned>(ctx->MediaOpenAttempts));
+		ctx->MediaOpenRetry = TRUE;
+		Transmit(ctx, ctx->Session.Abort(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		if (ctx->Session.State() == Avdtp::SessionState::Aborting)
+		{
+			return;
+		}
+		ctx->MediaOpenRetry = FALSE;
+	}
+	OA2DP_ERROR(ctx, "L2CAP", "media channel open failed after %u attempts; tearing down the signaling channel",
+		static_cast<unsigned>(ctx->MediaOpenAttempts));
 	// Tear the session down so the sink releases its resources and can be reconnected
 	// cleanly instead of leaving a half-open AVDTP session that never reaches Streaming.
 	L2capCloseSignalingChannel(ctx);
+}
+
+// Restarts discovery once the ABORT sent for a failed media open has been answered.
+static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
+{
+	const auto state = ctx->Session.State();
+	if (state == Avdtp::SessionState::Idle)
+	{
+		ctx->MediaOpenRetry = FALSE;
+		OA2DP_INFO(ctx, "Signaling", "stream aborted; rediscovering for media open attempt %u",
+			static_cast<unsigned>(ctx->MediaOpenAttempts + 1));
+		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+	}
+	else if (state == Avdtp::SessionState::Failed)
+	{
+		ctx->MediaOpenRetry = FALSE;
+		OA2DP_ERROR(ctx, "Signaling", "ABORT for the media open retry failed; tearing down the signaling channel");
+		L2capCloseSignalingChannel(ctx);
+	}
+	else if (state != Avdtp::SessionState::Aborting)
+	{
+		ctx->MediaOpenRetry = FALSE; // the headset moved the session on by itself
+	}
 }
 
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
@@ -190,9 +223,19 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	}
 
 	if (InterlockedExchange(&ctx->MediaOpenPending, 0) != 0 && ctx->SignalingState == ChannelOpen &&
-		ctx->Session.State() == Avdtp::SessionState::Open && ctx->MediaChannel == nullptr)
+		ctx->Session.State() == Avdtp::SessionState::Open && ctx->MediaChannel == nullptr && ctx->MediaOpenOp == nullptr)
 	{
-		OpenMediaTransport(ctx);
+		StartMediaOpen(ctx);
+	}
+
+	if (InterlockedExchange(&ctx->MediaOpenCompleted, 0) != 0 && ctx->SignalingState == ChannelOpen)
+	{
+		FinishMediaOpen(ctx);
+	}
+
+	if (ctx->MediaOpenRetry && ctx->SignalingState == ChannelOpen)
+	{
+		ContinueMediaOpenRetry(ctx);
 	}
 
 	ctx->SignalingWorkItemThread = nullptr;

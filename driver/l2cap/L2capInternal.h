@@ -21,6 +21,10 @@ struct BRB_OP
 	BOOLEAN IsOpen;
 	BOOLEAN IsRegister;
 	NTSTATUS Status;
+	// Optional completion notification for operations nobody waits for: the flag is set
+	// and the work item enqueued, unless the owner abandoned the operation.
+	volatile LONG* NotifyFlag;
+	WDFWORKITEM NotifyWorkItem;
 	union
 	{
 		struct _BRB_L2CA_OPEN_CHANNEL Open;

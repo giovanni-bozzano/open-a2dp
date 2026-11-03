@@ -22,6 +22,8 @@ BRB_OP* BrbOpCreate(_In_ DEVICE_CONTEXT* ctx, _In_ BRB_TYPE type)
 	op->Refs = 2;
 	op->IsOpen = type == BRB_L2CA_OPEN_CHANNEL;
 	op->IsRegister = type == BRB_L2CA_REGISTER_SERVER;
+	op->NotifyFlag = nullptr;
+	op->NotifyWorkItem = nullptr;
 	KeInitializeEvent(&op->Done, NotificationEvent, FALSE);
 
 	WDF_OBJECT_ATTRIBUTES attrs;
@@ -50,7 +52,8 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 {
 	auto* op = static_cast<BRB_OP*>(context);
 	op->Status = params->IoStatus.Status;
-	if (InterlockedCompareExchange(&op->State, 1, 0) == 2 && NT_SUCCESS(op->Status))
+	const LONG previous = InterlockedCompareExchange(&op->State, 1, 0);
+	if (previous == 2 && NT_SUCCESS(op->Status))
 	{
 		// The waiter gave up and nobody will ever use this result; do not leak it.
 		if (op->IsOpen)
@@ -63,6 +66,12 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 		}
 	}
 	KeSetEvent(&op->Done, IO_NO_INCREMENT, FALSE);
+	if (previous == 0 && op->NotifyWorkItem != nullptr)
+	{
+		// This routine's reference keeps op alive until the release below.
+		InterlockedExchange(op->NotifyFlag, 1);
+		WdfWorkItemEnqueue(op->NotifyWorkItem);
+	}
 	BrbOpRelease(op);
 }
 

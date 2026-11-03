@@ -69,8 +69,8 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 	OA2DP_INFO(ctx, "Device", "stopping: closing the AVDTP session, then the channels");
 	if (!SignalingAbortSession(ctx))
 	{
-		// The signaling work item is busy, typically opening the media channel. Cut its
-		// waits short so the CLOSE can still go out, then retry once.
+		// The signaling work item is busy, typically waiting for the encoder service.
+		// Cut its waits short so the CLOSE can still go out, then retry once.
 		KeSetEvent(&ctx->StopEvent, IO_NO_INCREMENT, FALSE);
 		(void)SignalingAbortSession(ctx);
 	}

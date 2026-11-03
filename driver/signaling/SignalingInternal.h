@@ -26,6 +26,8 @@ constexpr LONGLONG kIncomingConnectDelayMs = 700;
 // service polls for the control device every 250 ms.
 constexpr unsigned kConnectWaitSteps = 8;
 constexpr LONGLONG kConnectWaitMs = 100;
+// Initiator media channel opens per connection before the signaling channel is torn down.
+constexpr ULONG kMediaOpenAttempts = 3;
 
 EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;
@@ -44,6 +46,5 @@ void SubmitRead(DEVICE_CONTEXT* ctx);
 void OnReadComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context);
 void OnResponseTimeout(_In_ WDFTIMER timer);
 void OnConnectDelay(_In_ WDFTIMER timer);
-void OpenMediaTransport(DEVICE_CONTEXT* ctx);
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem);
 } // namespace OpenA2dpDriver::Signaling

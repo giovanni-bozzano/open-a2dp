@@ -16,6 +16,6 @@
 
 ## Next priorities (ordered)
 
-1. Event-driven migration: phases 1-2 done; next phase 3 (async signaling send and media open), then 4, both with hardware validation. Media clock, AVDTP response timer and teardown bounds stay. See [event model](architecture/Event-Model.md).
+1. Event-driven migration: phases 1, 2 and 3a (async media open) done; next 3b (async signaling send), then 4, all needing hardware validation. Media clock, AVDTP response timer and teardown bounds stay. See [event model](architecture/Event-Model.md).
 2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink. See [AAC gate](VALIDATION.md#aac-and-fallback).
 3. Implement M5b, then finish M6. See [configuration design](architecture/Codec-Configuration.md).
