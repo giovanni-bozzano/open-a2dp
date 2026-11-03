@@ -146,6 +146,15 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	ctx->Device = device;
 
+	// Arrival signal for the encoder service; ServiceStart/ServiceStop toggle it, so
+	// the framework must not enable it on its own at start.
+	status = WdfDeviceCreateDeviceInterface(device, &OpenA2dp::Ioctl::kControlArrivalInterface, nullptr);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	WdfDeviceSetDeviceInterfaceStateEx(device, &OpenA2dp::Ioctl::kControlArrivalInterface, nullptr, FALSE);
+
 	WDF_WORKITEM_CONFIG workConfig;
 	WDF_WORKITEM_CONFIG_INIT(&workConfig, OnDisconnectWorkItem);
 	WDF_OBJECT_ATTRIBUTES workAttrs;

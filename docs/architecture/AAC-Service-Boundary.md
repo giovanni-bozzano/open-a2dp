@@ -165,7 +165,10 @@ Service start (once per control device; device interfaces are not supported on
 control devices, so each one is named `\Device\OpenA2dpCtl<address>` with the
 symbolic link `\DosDevices\OpenA2dpCtl-<address>`):
 
-1. `QueryDosDevice(NULL, ...)` to enumerate the `OpenA2dpCtl-<12 hex address>` links.
+1. `QueryDosDevice(NULL, ...)` to enumerate the `OpenA2dpCtl-<12 hex address>` links,
+   at start, on every `kControlArrivalInterface` arrival (`CM_Register_Notification`;
+   the driver enables that interface on its PnP device only while the control device
+   exists) and when a worker ends. There is no polling.
 2. `CreateFile` on `\\.\OpenA2dpCtl-<address>`.
 3. `GET_VERSION`; refuse to continue on an ABI mismatch.
 4. `REGISTER_ENCODER` (codec AAC, service frame limit).

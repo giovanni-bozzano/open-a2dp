@@ -95,9 +95,10 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{
 		AudioNotifyLinkState(ctx);
-		// The control device appears when the headset connects and the encoder service
-		// polls for it every 250 ms, so the service normally registers after discovery
-		// has already run and AAC is lost for the whole connection. Wait for it briefly,
+		// The control device appears when the device starts and the encoder service
+		// attaches on its arrival notification, but a service started later (or slower
+		// than the headset) registers after discovery has already run and AAC is lost
+		// for the whole connection. Wait for it briefly,
 		// but only when the service is installed: a machine without it must connect
 		// exactly as fast as before. The wait is bounded and the channel can close
 		// underneath us, so re-check both after every step.

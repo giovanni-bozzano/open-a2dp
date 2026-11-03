@@ -23,7 +23,7 @@ constexpr uint8_t kSbcDriverCapabilities[SbcConfig::kIeLength] = {
 // before we start discovery.
 constexpr LONGLONG kIncomingConnectDelayMs = 700;
 // Bounded wait for a service that is installed but has not attached yet. The
-// service polls for the control device every 250 ms.
+// service attaches when the control device's arrival interface is enabled.
 constexpr unsigned kConnectWaitSteps = 8;
 constexpr LONGLONG kConnectWaitMs = 100;
 // Initiator media channel opens per connection before the signaling channel is torn down.

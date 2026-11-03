@@ -73,7 +73,8 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 
 	// The address names the control device and its symbolic link. Device
 	// interfaces are not supported on control devices, so the CLI and the
-	// service enumerate the symbolic links (QueryDosDevice) instead.
+	// service enumerate the symbolic links (QueryDosDevice) instead; the PnP
+	// device's kControlArrivalInterface tells the service when to look.
 	WCHAR address[16];
 	NTSTATUS status = RtlStringCchPrintfW(address, ARRAYSIZE(address), L"%012I64X", ctx->RemoteAddress);
 	if (!NT_SUCCESS(status))
@@ -163,6 +164,8 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	ctx->ControlDevice = control;
 	InterlockedExchange(&ctx->ServiceActive, 1);
 	OA2DP_INFO(ctx, "Service", "control device ready at %ws", linkName);
+	// Wakes the service, which then finds the link; nothing polls for it.
+	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, TRUE);
 }
 
 void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
@@ -175,6 +178,8 @@ void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
+	// The next ServiceStart re-enables it, which is the service's next arrival.
+	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
 	InterlockedExchange(&ctx->ServiceActive, 0);
 	LatchEvents(ctx, Ioctl::kEventDeviceGone);
 

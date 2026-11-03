@@ -6,6 +6,7 @@
 
 #include <windows.h>
 #include <winioctl.h>
+#include <cfgmgr32.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -23,7 +24,6 @@ using namespace OpenA2dp;
 namespace {
 
 constexpr wchar_t kServiceName[] = L"OpenA2dpSvc";
-constexpr DWORD kIdlePollMs = 250;
 // How long a service stop waits for the per-device workers before abandoning them.
 constexpr DWORD kWorkerStopWaitMs = 3000;
 
@@ -359,9 +359,38 @@ void DeviceLoop(const std::wstring& linkName)
 }
 
 // Device discovery and per-device threads. Returns when g_stopEvent is set.
+// Enumeration runs at start, on every control device arrival (the driver enables
+// kControlArrivalInterface once the link exists) and when a worker finishes.
+DWORD CALLBACK OnControlArrival(HCMNOTIFICATION, PVOID context, CM_NOTIFY_ACTION action, PCM_NOTIFY_EVENT_DATA, DWORD)
+{
+	if (action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL) {
+		SetEvent(static_cast<HANDLE>(context));
+	}
+	return ERROR_SUCCESS;
+}
+
 void RunLoop()
 {
 	Log("OpenA2dpSvc starting");
+
+	// Auto-reset: a wake that arrives during an enumeration stays set and causes
+	// another one, so no arrival is lost.
+	HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+	if (wake == nullptr) {
+		Log("[svc] CreateEvent failed: %lu", GetLastError());
+		return;
+	}
+	CM_NOTIFY_FILTER filter = {};
+	filter.cbSize = sizeof(filter);
+	filter.FilterType = CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE;
+	filter.u.DeviceInterface.ClassGuid = Ioctl::kControlArrivalInterface;
+	HCMNOTIFICATION notification = nullptr;
+	const CONFIGRET cr = CM_Register_Notification(&filter, wake, OnControlArrival, &notification);
+	if (cr != CR_SUCCESS) {
+		// Without it only devices present now (or a worker exit) are picked up.
+		Log("[svc] CM_Register_Notification failed: 0x%08X; new devices will not be detected", cr);
+		notification = nullptr;
+	}
 
 	// One worker per control device. The enumeration loop must never block on a
 	// worker: a headset stays connected for hours, and blocking here meant a second
@@ -375,10 +404,10 @@ void RunLoop()
 	};
 	std::vector<Worker> workers;
 
-	// Log the empty state once instead of once per poll.
+	// Log the empty state once instead of once per wake.
 	bool loggedEmpty = false;
 
-	while (WaitForSingleObject(g_stopEvent, 0) != WAIT_OBJECT_0) {
+	for (;;) {
 		// Reap finished workers so a device that comes back gets a fresh thread.
 		for (auto it = workers.begin(); it != workers.end();) {
 			if (it->Done->load()) {
@@ -391,8 +420,6 @@ void RunLoop()
 			}
 		}
 
-		// Poll often: the control device appears when the headset connects, and the
-		// driver only waits 800 ms for the registration before negotiating.
 		const auto devices = EnumerateControlDevices();
 		for (const auto& dev : devices) {
 			bool known = false;
@@ -410,9 +437,10 @@ void RunLoop()
 			worker.Link = dev;
 			worker.Done = std::make_shared<std::atomic<bool>>(false);
 			auto done = worker.Done;
-			worker.Thread = std::thread([dev, done]() {
+			worker.Thread = std::thread([dev, done, wake]() {
 				DeviceLoop(dev);
 				done->store(true);
+				SetEvent(wake); // reap it now rather than at the next arrival
 			});
 			workers.push_back(std::move(worker));
 		}
@@ -426,9 +454,15 @@ void RunLoop()
 			loggedEmpty = false;
 		}
 
-		if (WaitForSingleObject(g_stopEvent, kIdlePollMs) == WAIT_OBJECT_0) {
+		const HANDLE waits[2] = {g_stopEvent, wake};
+		if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) {
 			break;
 		}
+	}
+
+	// No arrival callback runs after this returns.
+	if (notification != nullptr) {
+		CM_Unregister_Notification(notification);
 	}
 
 	// A stop cancels the parked WAIT_EVENT, so the workers return promptly. A worker
@@ -436,6 +470,7 @@ void RunLoop()
 	// service from stopping: wait on each thread a bounded time, then detach what is left
 	// and let the process exit take it down.
 	const ULONGLONG joinDeadline = GetTickCount64() + kWorkerStopWaitMs;
+	bool abandoned = false;
 	for (auto& worker : workers) {
 		if (!worker.Thread.joinable()) {
 			continue;
@@ -448,7 +483,12 @@ void RunLoop()
 			Log("[svc] %s did not stop within %lu ms; abandoning it", WstrToUtf8(worker.Link).c_str(),
 				static_cast<unsigned long>(kWorkerStopWaitMs));
 			worker.Thread.detach();
+			abandoned = true;
 		}
+	}
+	// An abandoned worker still signals wake when it ends; the process exit closes it then.
+	if (!abandoned) {
+		CloseHandle(wake);
 	}
 
 	Log("OpenA2dpSvc stopping");

@@ -9,7 +9,7 @@
   <ItemDefinitionGroup>
 	<Link>
 	  <SubSystem>Console</SubSystem>
-	  <AdditionalDependencies>mfplat.lib;mfuuid.lib;mf.lib;wmcodecdspuuid.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <AdditionalDependencies>mfplat.lib;mfuuid.lib;mf.lib;wmcodecdspuuid.lib;ole32.lib;cfgmgr32.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	</Link>
   </ItemDefinitionGroup>
   <ItemGroup>
