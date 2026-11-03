@@ -1,0 +1,44 @@
+#include "ServiceInternal.h"
+
+namespace OpenA2dpDriver::Service
+{
+void OnFileCreate(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJECT fileObject)
+{
+	// Remember the device so the IOCTL handlers can find the context.
+	GetServiceFileContext(fileObject)->Device = GetControlDeviceContext(device)->Device;
+	WdfRequestComplete(request, STATUS_SUCCESS);
+}
+
+void OnFileCleanup(WDFFILEOBJECT fileObject)
+{
+	SERVICE_FILE_CONTEXT* file = GetServiceFileContext(fileObject);
+	WDFDEVICE control = WdfFileObjectGetDevice(fileObject);
+	// Once ServiceStop has run there is nothing left to undo: it released the wait,
+	// unmapped the rings and cleared the registration itself.
+	DEVICE_CONTEXT* ctx = EnterControl(control);
+	if (ctx == nullptr)
+	{
+		return;
+	}
+
+	// Release a parked WAIT_EVENT first: the closing thread must not block on it.
+	// Only the registered handle owns the wait; closing another handle is unrelated.
+	// The event is not latched: it belongs to the handle that is going away.
+	if (file->Registered)
+	{
+		ReleaseWait(ctx, Ioctl::kEventDeviceGone);
+		file->Registered = FALSE;
+		InterlockedExchange(&ctx->EncoderRegistered, 0);
+		if (InterlockedCompareExchange(&ctx->ServiceActive, 0, 0) != 0 &&
+			InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeAac)
+		{
+			OA2DP_WARN(ctx, "Service", "encoder lost while streaming AAC; suspending");
+			MediaStop(ctx);
+			SignalingRequestSuspend(ctx);
+		}
+	}
+	file->Mapped = FALSE;
+	UnmapRings(ctx, fileObject);
+	LeaveControl(control);
+}
+} // namespace OpenA2dpDriver::Service

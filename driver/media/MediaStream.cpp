@@ -1,0 +1,109 @@
+#include "MediaInternal.h"
+
+using namespace OpenA2dpDriver::Media;
+
+NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx)
+{
+	WDF_OBJECT_ATTRIBUTES attrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
+	attrs.ParentObject = ctx->Device;
+
+	NTSTATUS status = WdfWaitLockCreate(&attrs, &ctx->MediaLock);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	WDF_WORKITEM_CONFIG workConfig;
+	WDF_WORKITEM_CONFIG_INIT(&workConfig, OnMediaWorkItem);
+	status = WdfWorkItemCreate(&workConfig, &attrs, &ctx->MediaWorkItem);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	WDF_TIMER_CONFIG timerConfig;
+	WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, OnMediaTimer, MediaPeriodMs);
+	return WdfTimerCreate(&timerConfig, &attrs, &ctx->MediaTimer);
+}
+
+void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_bytes_(ieLength) const UCHAR* ie,
+	_In_ SIZE_T ieLength)
+{
+	// Called under SessionLock. A link that is closing, or a device going away, must
+	// not get a stream again after its teardown stopped media.
+	if (ctx->SignalingState != ChannelOpen || KeReadStateEvent(&ctx->StopEvent) != 0)
+	{
+		OA2DP_WARN(ctx, "Media", "not starting, the link is closing");
+		return;
+	}
+	if (codec == Avdtp::CodecType::Aac)
+	{
+		StartAac(ctx, ie, ieLength);
+		return;
+	}
+
+	SbcFixed::Params params;
+	if (!SbcFixed::ParseIe(ie, ieLength, params) || params.sampleRate != AudioSampleRate || params.Channels() != AudioChannels)
+	{
+		OA2DP_WARN(ctx, "Media", "unsupported SBC configuration");
+		return;
+	}
+
+	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
+	ctx->Encoder.Reset(params);
+	ctx->MediaBusyTicks = 0;
+	ctx->ActiveCodec = Ioctl::kCodecSbc;
+	ctx->ActiveSampleRate = params.sampleRate;
+	ctx->ActiveChannels = params.Channels();
+	ctx->ActiveBitrate = 0;
+	ctx->ActiveObjectType = 0;
+	ctx->RtpSequence = 0;
+	ctx->RtpTimestamp = 0;
+	ctx->MediaSamplesSent = 0;
+	ctx->MediaStartTime = KeQueryInterruptTime();
+	InterlockedExchange(&ctx->StreamFault, 0);
+	InterlockedExchange(&ctx->MediaMode, MediaModeSbc);
+	ctx->MediaActive = TRUE;
+	WdfWaitLockRelease(ctx->MediaLock);
+
+	OA2DP_INFO(ctx, "Media", "endpoint PCM, SBC %u Hz blocks %u subbands %u mode %u bitpool %u, frame %u bytes",
+		params.sampleRate, params.blocks, params.subbands, static_cast<unsigned>(params.channelMode),
+		params.bitpool, static_cast<unsigned>(SbcFixed::FrameLength(params)));
+	WdfTimerStart(ctx->MediaTimer, 0);
+}
+
+void MediaStop(_In_ DEVICE_CONTEXT* ctx)
+{
+	// Clear the flag first, atomically and without the lock: the media work item and
+	// its per-packet checks read it, so the stream stops within one packet and the
+	// work item stops taking MediaLock. In the failing hang the lock was held by a work
+	// item that kept running every 10 ms for two minutes while this thread waited.
+	const bool wasActive = InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), 0) != 0;
+	WdfTimerStop(ctx->MediaTimer, TRUE);
+	// MediaLock is only ever held for one bounded work item run, so this wait ends. It
+	// is retried rather than abandoned: stopping without the lock would race a send.
+	for (;;)
+	{
+		LONGLONG lockTimeout = WDF_REL_TIMEOUT_IN_MS(1000);
+		if (WdfWaitLockAcquire(ctx->MediaLock, &lockTimeout) == STATUS_SUCCESS)
+		{
+			break;
+		}
+		OA2DP_WARN(ctx, "Media", "stop: still waiting for the media work item to release the lock");
+	}
+	const LONG mode = InterlockedExchange(&ctx->MediaMode, MediaModeNone);
+	if (wasActive)
+	{
+		OA2DP_INFO(ctx, "Media", "stopped after %u packets", ctx->RtpSequence);
+	}
+	WdfWaitLockRelease(ctx->MediaLock);
+
+	InterlockedExchange(&ctx->StreamFault, 0);
+	if (mode == MediaModeAac)
+	{
+		// The driver consumes the frame ring, so it can discard what is left.
+		ServiceFlushRings(ctx);
+		ServiceStreamStop(ctx);
+	}
+}

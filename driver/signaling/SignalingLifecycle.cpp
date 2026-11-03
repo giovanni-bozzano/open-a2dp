@@ -1,0 +1,88 @@
+#include "SignalingInternal.h"
+
+using namespace OpenA2dpDriver::Signaling;
+
+NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
+{
+	KeInitializeEvent(&ctx->ReadIdle, NotificationEvent, TRUE);
+	ResetSession(ctx);
+
+	WDF_OBJECT_ATTRIBUTES attrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
+	attrs.ParentObject = ctx->Device;
+
+	NTSTATUS status = WdfWaitLockCreate(&attrs, &ctx->SessionLock);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	WDF_WORKITEM_CONFIG workConfig;
+	WDF_WORKITEM_CONFIG_INIT(&workConfig, OnSignalingWorkItem);
+	status = WdfWorkItemCreate(&workConfig, &attrs, &ctx->SignalingWorkItem);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	WDF_TIMER_CONFIG timerConfig;
+	WDF_TIMER_CONFIG_INIT(&timerConfig, OnResponseTimeout);
+	status = WdfTimerCreate(&timerConfig, &attrs, &ctx->ResponseTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	WDF_TIMER_CONFIG delayConfig;
+	WDF_TIMER_CONFIG_INIT(&delayConfig, OnConnectDelay);
+	status = WdfTimerCreate(&delayConfig, &attrs, &ctx->ConnectDelayTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	status = WdfRequestCreate(&attrs, ctx->IoTarget, &ctx->ReadRequest);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	return WdfMemoryCreatePreallocated(&attrs, &ctx->ReadBrb, sizeof(ctx->ReadBrb), &ctx->ReadBrbMemory);
+}
+
+void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->SuspendPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingOnMediaChannelOpen(_In_ DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->StartPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingOnChannelOpen(_In_ DEVICE_CONTEXT* ctx)
+{
+	InterlockedExchange(&ctx->ConnectPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingResetSession(_In_ DEVICE_CONTEXT* ctx)
+{
+	// Called after the signaling channel closed. The session is otherwise left in
+	// whatever state the link died in (Open, Streaming), which both misreports the
+	// connection and refuses a fresh SET_CONFIGURATION on reconnect. The signaling
+	// work item reaches here through the media-open failure teardown while it holds
+	// SessionLock, so only take the lock when this thread is not that work item.
+	const bool lockHeld = ctx->SignalingWorkItemThread == KeGetCurrentThread();
+	if (!lockHeld)
+	{
+		WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+	}
+	ResetSession(ctx);
+	if (!lockHeld)
+	{
+		WdfWaitLockRelease(ctx->SessionLock);
+	}
+}
