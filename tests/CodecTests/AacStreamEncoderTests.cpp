@@ -1,5 +1,6 @@
 #include "TestFramework.h"
 
+#include <OpenA2dp/AacCodec.h>
 #include <OpenA2dp/AacStreamEncoder.h>
 #include <OpenA2dp/FrameRecord.h>
 
@@ -32,7 +33,8 @@ public:
 	uint32_t sampleRate = 44100;
 	uint16_t channels = 2;
 	uint32_t samplesPerFrame = Ioctl::kAacSamplesPerFrame;
-	size_t frameBytes = 100;
+	size_t maxFrameBytes = 100; // declared worst-case capacity
+	size_t frameBytes = 100;    // bytes the encoder actually produces
 	size_t latmOverhead = 3;
 	int primingFrames = 0;
 	int failOnCall = -1; // 0-based Encode call that fails
@@ -43,7 +45,7 @@ public:
 
 	PcmFormat InputFormat() const noexcept override { return PcmFormat{sampleRate, channels}; }
 	uint32_t SamplesPerFrame() const noexcept override { return samplesPerFrame; }
-	size_t MaxFrameBytes() const noexcept override { return frameBytes; }
+	size_t MaxFrameBytes() const noexcept override { return maxFrameBytes; }
 	size_t FramesPerPacket(size_t) const noexcept override { return 1; }
 
 	HRESULT Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept override
@@ -152,10 +154,93 @@ TEST(AacStream_StartRejectsUnusableEncoder)
 	wrongChannels->channels = 1;
 	CHECK(!stream.Start(std::move(wrongChannels), AacStreamParams{}, pcm.view, 0));
 
-	auto tooLarge = MakeEncoder();
-	tooLarge->frameBytes = Ioctl::kMaxFramePayload + 1;
-	CHECK(!stream.Start(std::move(tooLarge), AacStreamParams{}, pcm.view, 0));
+	auto noCapacity = MakeEncoder();
+	noCapacity->maxFrameBytes = 0;
+	CHECK(!stream.Start(std::move(noCapacity), AacStreamParams{}, pcm.view, 0));
 	CHECK(!stream.Active());
+}
+
+TEST(AacStream_StartAcceptsWorstCaseCapacity)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	// A real stereo AAC encoder declares the ISO 14496-3 bound, which is larger
+	// than one media payload; each frame it actually emits is smaller.
+	auto encoder = MakeEncoder();
+	encoder->maxFrameBytes = 768 * 2;
+	encoder->frameBytes = 557;
+	FakeEncoder* fake = encoder.get();
+
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	WritePcm(pcm, 0, 4096);
+	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
+
+	CHECK_EQ(stream.Stats().records, uint64_t{7});
+	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
+	CHECK_EQ(fake->calls, 7);
+}
+
+TEST(AacStream_RealEncoderStartsAndProducesRecords)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	Aac::Params config;
+	config.sampleRate = 44100;
+	config.channels = 2;
+	config.bitrate = 192000;
+	config.objectType = Aac::kObjectMpeg2Lc;
+
+	uint8_t ie[Aac::kIeLength] = {};
+	Aac::WriteIe(config, ie);
+
+	A2dpCodecConfig codecConfig;
+	codecConfig.codec = CodecType::Aac;
+	codecConfig.ieLength = Aac::kIeLength;
+	std::memcpy(codecConfig.ie, ie, sizeof(ie));
+
+	AacCodec codec;
+	std::unique_ptr<IA2dpEncoder> encoder;
+	REQUIRE(SUCCEEDED(codec.CreateEncoder(codecConfig, encoder)));
+	// The regression this test covers: the real stereo encoder declares the
+	// ISO 14496-3 worst-case capacity, larger than one media payload.
+	CHECK(encoder->MaxFrameBytes() > Ioctl::kMaxFramePayload);
+
+	AacStreamParams params;
+	params.sampleRate = config.sampleRate;
+	params.channels = config.channels;
+	params.bitrate = config.bitrate;
+	params.objectType = config.objectType;
+
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), params, pcm.view, 0));
+	WritePcm(pcm, 0, 8192);
+	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
+
+	CHECK(stream.Stats().records > 0);
+	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
+}
+
+TEST(AacStream_OversizeActualFrameIsFatal)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	// Capacity alone is not a promise: an actual frame that cannot fit the media
+	// payload must still stop the stream instead of writing a corrupt record.
+	auto encoder = MakeEncoder();
+	encoder->maxFrameBytes = 768 * 2;
+	encoder->frameBytes = Ioctl::kMaxFramePayload + 1;
+	encoder->latmOverhead = 0;
+
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	WritePcm(pcm, 0, 4096);
+	CHECK(!stream.Pump(100000, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{0});
+	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{1});
 }
 
 TEST(AacStream_PumpEncodesPreroll)

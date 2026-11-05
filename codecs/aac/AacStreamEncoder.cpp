@@ -30,11 +30,13 @@ bool AacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStr
 	const PcmFormat format = encoder->InputFormat();
 	const uint32_t samplesPerFrame = encoder->SamplesPerFrame();
 	const size_t maxFrameBytes = encoder->MaxFrameBytes();
-	// FrameRecord::Read rejects a record whose sample count is implausible, and a
-	// media packet cannot carry a payload larger than the MTU allows.
+	// FrameRecord::Read rejects a record whose sample count is implausible.
+	// MaxFrameBytes() is the encoder's worst-case output capacity, not the size of
+	// the next frame: a real AAC encoder reports the ISO 14496-3 bound (768 bytes
+	// per channel), which is larger than the media payload. Actual payload size is
+	// enforced by BuildMediaPayload in EncodeBlock, so only reject a zero capacity.
 	if (format.sampleRate != params.sampleRate || format.channels != params.channels ||
-		samplesPerFrame == 0 || samplesPerFrame > 4096 || maxFrameBytes == 0 ||
-		maxFrameBytes > Ioctl::kMaxFramePayload) {
+		samplesPerFrame == 0 || samplesPerFrame > 4096 || maxFrameBytes == 0) {
 		return false;
 	}
 
