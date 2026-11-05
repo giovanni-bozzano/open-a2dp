@@ -10,7 +10,7 @@
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
 - `docs/STATUS.md` and `docs/VALIDATION.md` are the only live plans: milestone state, blockers, next priorities and validation gates. Update them only when these change; replace stale state rather than append a diary.
 - See `docs/AGENT-EFFICIENCY.md` for reference locations.
-- Use Git for historical evidence.
+- Use Git for historical evidence. Do not log validation, build, and test status in Git commit messages.
 - Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs.
 - Architecture lives in `docs/architecture/`; load only the relevant reference via its index. 
 - Keep stable rules here; designs/workflow stay on demand. Locate symbols with grep/glob, then read the relevant file/range. Split by responsibility, not arbitrary line counts.
