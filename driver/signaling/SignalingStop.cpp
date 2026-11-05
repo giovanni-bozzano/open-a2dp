@@ -16,7 +16,7 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx)
 		return false;
 	}
 	const auto state = ctx->Session.State();
-	// A normal CLOSE lets the device release its SEP; ABORT alone can leave the device reporting it in use.
+	// A normal CLOSE lets the sink release its SEP; ABORT alone can leave the sink reporting it in use.
 	size_t length = ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer));
 	const bool closing = length != 0;
 	if (!closing)
@@ -31,7 +31,7 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx)
 	}
 	WdfWaitLockRelease(ctx->SessionLock);
 
-	// Give the device up to 1 s in total to answer, so the command takes effect before the
+	// Give the sink up to 1 s in total to answer, so the command takes effect before the
 	// channel closes. The read work item applies the response and sets SessionChanged;
 	// this thread waits for that without holding SessionLock. Clearing the event before
 	// the check means a transition after the check sets it again, so none is missed.

@@ -7,7 +7,7 @@ with no service installed, running or reachable.
 
 v1 assumptions:
 
-- one service process per machine, one registration per device device instance;
+- one service process per machine, one registration per sink device instance;
 - AAC-LC, MPEG-2/4, 44.1 kHz, stereo, CBR up to 192 kbps (what `AacConfig` offers);
 - one LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
 - the ACX endpoint stays 44.1 kHz stereo until M5b adds multi-rate.

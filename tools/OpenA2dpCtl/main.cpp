@@ -1,6 +1,6 @@
 // OpenA2dpCtl.exe - diagnostic CLI for the OpenA2dp A2DP source driver.
 //
-// Enumerates the per-device control interfaces (one per device) and uses the
+// Enumerates the per-device control interfaces (one per sink) and uses the
 // IOCTLs in common/include/OpenA2dp/Ioctl.h to report the negotiated codec and
 // to set the codec preference. The tool is a test/diagnostic aid: the end-user
 // configuration path is still the desktop UI described in the plan.
@@ -34,7 +34,7 @@ Commands:
   status    Show the AVDTP/media state, codec, preference and counters (default).
   list      List the present OpenA2dp devices.
   codec     Set the codec preference. It is applied at the next AVDTP
-            negotiation, so reconnect the device after changing it. "auto"
+            negotiation, so reconnect the sink after changing it. "auto"
             prefers AAC while an encoder service is registered, then SBC.
   version   Show the driver ABI and version.
 
@@ -152,7 +152,7 @@ std::string Upper(const std::string& text)
 	return result;
 }
 
-// The driver creates \DosDevices\OpenA2dpCtl-<address> for every device, so the
+// The driver creates \DosDevices\OpenA2dpCtl-<address> for every sink, so the
 // MS-DOS device list is enough to find all control devices.
 std::vector<Device> EnumerateDevices(std::string& error)
 {
@@ -245,7 +245,7 @@ bool FindDevice(const std::vector<Device>& devices, const std::string& spec, siz
 {
 	if (devices.empty())
 	{
-		error = "no OpenA2dp devices found (is the driver bound to a paired device?)";
+		error = "no OpenA2dp devices found (is the driver bound to a paired sink?)";
 		return false;
 	}
 	if (spec.empty())
@@ -663,12 +663,12 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	}
 	if (status.negotiatedCodec != 0 && preference.codec != 0 && status.negotiatedCodec != preference.codec)
 	{
-		std::printf("\nnote: reconnect the device to apply the preference (the current stream is %s).\n",
+		std::printf("\nnote: reconnect the sink to apply the preference (the current stream is %s).\n",
 					CodecName(status.negotiatedCodec));
 	}
 	else if (status.negotiatedCodec != 0 && preference.codec == 0)
 	{
-		std::printf("\nnote: reconnect the device to renegotiate with the automatic order.\n");
+		std::printf("\nnote: reconnect the sink to renegotiate with the automatic order.\n");
 	}
 	return 0;
 }

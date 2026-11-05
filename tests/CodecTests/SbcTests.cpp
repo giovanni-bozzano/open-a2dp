@@ -167,7 +167,7 @@ TEST(Sbc_BitAllocation_UsesWholeBitpool)
 	CHECK_EQ(sum, 53);
 }
 
-TEST(Sbc_SelectConfiguration_TypicalDevice)
+TEST(Sbc_SelectConfiguration_TypicalSink)
 {
 	SbcCodec codec;
 	const uint8_t remote[4] = {0xFF, 0xFF, 2, 53};

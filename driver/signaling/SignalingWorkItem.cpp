@@ -81,7 +81,7 @@ static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
 	}
 	else if (state != Avdtp::SessionState::Aborting)
 	{
-		ctx->MediaOpenRetry = FALSE; // the device moved the session on by itself
+		ctx->MediaOpenRetry = FALSE; // the sink moved the session on by itself
 	}
 }
 
@@ -160,21 +160,21 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 			ResetSession(ctx);
 			if (InterlockedCompareExchange(&ctx->SignalingIncoming, 0, 0) != 0)
 			{
-				// The device connected to us and normally starts its own AVDTP
+				// The sink connected to us and normally starts its own AVDTP
 				// discovery and configuration at once. Starting ours too makes both
-				// sides configure the same stream: the device can then get its own
+				// sides configure the same stream: the sink can then get its own
 				// SET_CONFIGURATION rejected (SEP in use) and refuse the media
 				// channel with "no resources". Listen first; the library accepts the
-				// device's configuration, and we discover only when Windows plays
+				// sink's configuration, and we discover only when Windows plays
 				// audio while the session is still Idle (here or SignalingOnAudioRun).
 				if (AudioRunActive(ctx))
 				{
-					OA2DP_INFO(ctx, "Signaling", "device-initiated with audio running; starting discovery");
+					OA2DP_INFO(ctx, "Signaling", "sink-initiated with audio running; starting discovery");
 					Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 				}
 				else
 				{
-					OA2DP_INFO(ctx, "Signaling", "device-initiated; waiting for it to configure the stream or for audio");
+					OA2DP_INFO(ctx, "Signaling", "sink-initiated; waiting for it to configure the stream or for audio");
 				}
 				SubmitRead(ctx);
 			}
@@ -220,7 +220,7 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		InterlockedCompareExchange(&ctx->SignalingIncoming, 0, 0) != 0 &&
 		ctx->Session.State() == Avdtp::SessionState::Idle)
 	{
-		OA2DP_INFO(ctx, "Signaling", "audio started on a silent device-initiated link; starting discovery");
+		OA2DP_INFO(ctx, "Signaling", "audio started on a silent sink-initiated link; starting discovery");
 		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	}
 

@@ -7,7 +7,7 @@ const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason)
 	switch (reason)
 	{
 	case Avdtp::DiscoveryFailure::None: return "none";
-	case Avdtp::DiscoveryFailure::Rejected: return "device rejected the request";
+	case Avdtp::DiscoveryFailure::Rejected: return "sink rejected the request";
 	case Avdtp::DiscoveryFailure::NoUsableSink: return "no usable sink endpoint";
 	case Avdtp::DiscoveryFailure::MalformedResponse: return "malformed response";
 	case Avdtp::DiscoveryFailure::Timeout: return "no response (timeout)";
@@ -109,7 +109,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, kSbcDriverCapabilities,
 		SbcConfig::kIeLength, &SelectConfig, ctx, &ValidateConfig);
 	// Always advertise AAC. Registering the SEP only when the service happens to be
-	// up already loses a race it usually loses: the device opens the signaling
+	// up already loses a race it usually loses: the sink opens the signaling
 	// channel first, ResetSession runs with EncoderRegistered == 0, and the codec
 	// would then be missing for the whole connection. Whether AAC may be selected is
 	// decided per negotiation in SelectConfig, which is the state that actually

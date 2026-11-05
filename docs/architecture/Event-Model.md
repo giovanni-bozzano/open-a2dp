@@ -19,7 +19,7 @@ service IOCTLs. Elapsed time may only drive the cases below.
 | 3b (done, `2a2ed82`) | Signaling send waited up to 1 s under `SessionLock` (timeout only logged) | `Transmit` submits to the idle slot or appends to a 4-packet FIFO under `SessionLock`; the send completion enqueues the signaling work item, which logs the status and submits the next packet. Close cancels and waits the send-cancel grace; `ResetSession` drops packets of the old session. |
 | 4a (done, `4749fe4`) | Service polled for control devices every 250 ms | The driver enables `kControlArrivalInterface` on its PnP device once the control link exists (disabled in `ServiceStop`, so each resume is a new arrival); the service enumerates on `CM_Register_Notification` arrival, at start and when a worker ends. |
 | 4b (done, `d89b328`) | Connect waited 8 x 100 ms for the service | REGISTER_ENCODER enqueues the signaling work item. Once the session settles in Streaming with SBC against a sink that advertised AAC (`SourceSession::RemoteOffers`), it sends CLOSE and rediscovers on the response. |
-| 4c (done) | 700 ms delay before discovery on device-initiated links | Stay acceptor: the device's own commands configure the stream. Discover only when the ACX stream runs (`SignalingOnAudioRun`, or already running at connect) while the session is still Idle. |
+| 4c (done) | 700 ms delay before discovery on sink-initiated links | Stay acceptor: the sink's own commands configure the stream. Discover only when the ACX stream runs (`SignalingOnAudioRun`, or already running at connect) while the session is still Idle. |
 
 Phases 3-4 change interoperability behaviour and still need SBC/AAC-sink validation.
 

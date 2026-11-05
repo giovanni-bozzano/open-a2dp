@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 // 2: Status carries the negotiated codec and the current preference.
 constexpr uint32_t kAbiVersion = 2;
 
-// Every OpenA2dp device instance (one per device) exposes a control device.
+// Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
 // mapped by other users. The device is named \Device\OpenA2dpCtl<address> and
 // has the symbolic link \DosDevices\OpenA2dpCtl-<address>; the CLI and the

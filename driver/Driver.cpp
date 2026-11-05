@@ -16,7 +16,7 @@ EVT_WDF_DEVICE_SELF_MANAGED_IO_SUSPEND OnSelfManagedIoSuspend;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP OnDeviceCleanup;
 EVT_WDF_WORKITEM OnDisconnectWorkItem;
 
-// Names the device after the device: "<name> [OpenA2DP]".
+// Names the device after the sink: "<name> [OpenA2DP]".
 void AssignFriendlyName(_In_ DEVICE_CONTEXT* ctx)
 {
 	WCHAR friendlyName[BTH_MAX_NAME_SIZE + 32];
@@ -48,10 +48,10 @@ NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMR
 
 NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 {
-	// Failing to register or reach the device is not fatal; the device stays started.
+	// Failing to register or reach the sink is not fatal; the device stays started.
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	KeClearEvent(&ctx->StopEvent);
-	OA2DP_INFO(ctx, "Device", "starting: registering the AVDTP server and connecting to the device");
+	OA2DP_INFO(ctx, "Device", "starting: registering the AVDTP server and connecting to the sink");
 	ServiceStart(ctx);
 	(void)L2capRegisterServer(ctx);
 	(void)L2capOpenSignalingChannel(ctx);
@@ -185,7 +185,7 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 		return status;
 	}
 
-	// The endpoint type depends on the device's Class of Device; fall back to speakers if unavailable.
+	// The endpoint type depends on the sink's Class of Device; fall back to speakers if unavailable.
 	(void)L2capRetrieveRemoteAddress(ctx);
 
 	status = AudioInitialize(ctx);

@@ -96,8 +96,8 @@ void RespondIncoming(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE handle,
 	ReleaseReject(ctx);
 }
 
-// Server indication: the device opened an L2CAP channel on the AVDTP PSM.
-// The first channel becomes the signaling channel. When the device configured
+// Server indication: the sink opened an L2CAP channel on the AVDTP PSM.
+// The first channel becomes the signaling channel. When the sink configured
 // and opened the stream itself, the next channel is the media transport;
 // anything else is refused.
 void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication, _In_ PINDICATION_PARAMETERS parameters)

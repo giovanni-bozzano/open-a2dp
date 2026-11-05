@@ -396,7 +396,7 @@ try {
         else { Log 'device left untouched (-NoRestart); the new image loads when the device restarts.' }
     } else {
         # 3a. End any active stream. Stopping the Windows Audio service closes every render
-        #     stream, including one to the device, so the device can be disabled. It is
+        #     stream, including one to the sink, so the device can be disabled. It is
         #     restarted after the update (see below), even if the update fails.
         if (-not $KeepAudio) {
             $a = Get-Service audiosrv -ErrorAction SilentlyContinue
@@ -427,19 +427,19 @@ try {
         $unloaded = (-not $failed) -and (Wait-Until $stateStopped 30)
         Log "driver state after disabling the device: $(Get-DriverState)"
 
-        # 3c. Escalate: drop the Bluetooth connection by disabling the device's parent node
+        # 3c. Escalate: drop the Bluetooth connection by disabling the sink's parent node
         #     (BTHENUM only; never the radio). Windows then removes the OpenA2dp child and
-        #     the driver unloads. Needs no cooperation from the device or the driver CLI.
+        #     the driver unloads. Needs no cooperation from the sink or the driver CLI.
         $parents = @()
         if (-not $unloaded) {
-            Log 'driver still loaded; disconnecting the device by disabling its parent Bluetooth node.'
+            Log 'driver still loaded; disconnecting the sink by disabling its parent Bluetooth node.'
             Enable-All $disabled
             $disabled = @()
             foreach ($id in $ids) {
                 $parentId = (Get-PnpDeviceProperty -InstanceId $id -KeyName 'DEVPKEY_Device_Parent' -ErrorAction SilentlyContinue).Data
                 Log "parent of ${id}: $parentId"
                 if ($parentId -notmatch '^BTHENUM\\') {
-                    Log "parent ${parentId} is the Bluetooth bus node, not a per-device node; leaving it alone."
+                    Log "parent ${parentId} is the Bluetooth bus node, not a per-sink node; leaving it alone."
                 } elseif ($parents -notcontains $parentId) {
                     $c = Run 'pnputil.exe' "/disable-device `"$parentId`"" 60
                     if ($c -eq 0) { $parents += $parentId }
@@ -461,7 +461,7 @@ try {
             Enable-All $parents
             Enable-All $disabled
             $script:exitCode = 2
-            throw "The driver is still loaded (state $(Get-DriverState)); the device could not be released and no per-device parent node was available to disconnect. Not installing; no reboot will be attempted."
+            throw "The driver is still loaded (state $(Get-DriverState)); the device could not be released and no per-sink parent node was available to disconnect. Not installing; no reboot will be attempted."
         }
 
         # 5. Install while nothing is loaded.
@@ -485,7 +485,7 @@ try {
         foreach ($d in $present) { Log "device: code=$($d.ConfigManagerErrorCode) $($d.PNPDeviceID)" }
         if (-not $ok) {
             if ($parents.Count -gt 0 -and $present.Count -eq 0) {
-                Log 'warning: the device has not reconnected yet; reconnect it. The new driver loads on connection.'
+                Log 'warning: the sink has not reconnected yet; reconnect it. The new driver loads on connection.'
             } else {
                 throw 'Device is not OK after being re-enabled.'
             }

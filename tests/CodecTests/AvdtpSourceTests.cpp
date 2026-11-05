@@ -536,7 +536,7 @@ TEST(AvdtpSource_AcceptsSinkConfiguration)
 TEST(AvdtpSource_RejectsSinkConfigurationOutsideAdvertisedRates)
 {
 	// Mirrors the driver: only 44.1 kHz (with the stereo-capable modes) is advertised,
-	// because the endpoint cannot play anything else. A device that still configures
+	// because the endpoint cannot play anything else. A sink that still configures
 	// 48 kHz must be refused instead of being let into a stream MediaStart would drop.
 	const uint8_t localIe[4] = {0x27, 0xFF, 0x02, 0xFA};
 	SourceSession s(CodecType::Sbc, localIe, sizeof(localIe), TestSelector, nullptr, TestValidator);

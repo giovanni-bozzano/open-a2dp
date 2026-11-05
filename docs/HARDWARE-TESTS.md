@@ -14,7 +14,7 @@ bugcheck repeats on every boot until it is turned off.
 
 ### 1.1 Kernel log capture
 The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per record:
-`OpenA2dp <LEVEL> [<device> (<address>)] <Category>: <message>`.
+`OpenA2dp <LEVEL> [<sink> (<address>)] <Category>: <message>`.
 
 1. Elevated prompt: `reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Debug Print Filter" /v IHVDRIVER /t REG_DWORD /d 0xF /f`, then reboot.
    With WinDbg attached you can instead run `ed nt!Kd_IHVDRIVER_Mask 0xF` (no reboot).
@@ -41,7 +41,7 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
    `DbgBreakOnError` breaks into the debugger on a framework error; only set it with a
    debugger attached.
 3. Reboot, then confirm: `verifier /querysettings` lists `OpenA2dp.sys`, and
-   `verifier /query` shows it as loaded once a device is paired.
+   `verifier /query` shows it as loaded once a sink is paired.
 4. During and after tests: `verifier /query` shows counters; any violation is a
    bugcheck (typically `0xC4`, `0xC9`, `0x10D` for KMDF). In WinDbg run `!analyze -v`,
    then `!verifier 0x3`, `!deadlock` (lock-order report) and
@@ -51,7 +51,7 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 
 ### 1.3 Baseline before each session
 1. Deploy the build under test and note the commit (`git log -n 1 --oneline`).
-2. Pair the device; `OpenA2dpCtl list` (elevated) shows it.
+2. Pair the sink; `OpenA2dpCtl list` (elevated) shows it.
 3. `sc query OpenA2dpSvc` is `RUNNING` unless the test says otherwise.
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
@@ -66,36 +66,36 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 
 ## 3. Tests
 
-Device ids: **S** = an SBC only sink, **A** = an AAC-capable sink. Run each test at
+Sink ids: **S** = an SBC only sink, **A** = an AAC-capable sink. Run each test at
 least 3 times; teardown tests 10 times.
 
 ### Connection
 
 **T1 PC-initiated connect (S)**
-1. Device on, not connected. In Windows Bluetooth settings click *Connect*.
-2. Play audio to `<device> [OpenA2DP]`.
+1. Sink on, not connected. In Windows Bluetooth settings click *Connect*.
+2. Play audio to `<sink> [OpenA2DP]`.
 - Expect: `signaling channel open`, AVDTP states `Discovering` -> ... -> `Streaming`,
   `media channel open`, `streaming, media MTU`; audible; `packets` advancing,
   `send failures` 0.
 
-**T2 Device-initiated connect, device configures (S)**
-1. Disconnect from Windows; power-cycle the device so it reconnects by itself.
+**T2 Sink-initiated connect, sink configures (S)**
+1. Disconnect from Windows; power-cycle the sink so it reconnects by itself.
 2. Do not play audio for 10 s.
-- Expect: `device-initiated; waiting for it to configure the stream or for audio`; if
-  the device configures, the session reaches `Open`/`Streaming` through
+- Expect: `sink-initiated; waiting for it to configure the stream or for audio`; if
+  the sink configures, the session reaches `Open`/`Streaming` through
   `incoming media channel open` with no `Discovering` from us. Then play: audible.
 
-**T3 Device-initiated connect, silent device, then audio (S)**
-1. As T2. If the device stays `Idle` in `status`, start playback.
-- Expect: `audio started on a silent device-initiated link; starting discovery`, then
+**T3 Sink-initiated connect, silent sink, then audio (S)**
+1. As T2. If the sink stays `Idle` in `status`, start playback.
+- Expect: `audio started on a silent sink-initiated link; starting discovery`, then
   `Streaming` and audio. No discovery before playback (no timer starts it any more).
 
-**T4 Device-initiated connect with audio started at once (S)**
-1. Have a player ready with the OpenA2DP endpoint as default output. Power the device
+**T4 Sink-initiated connect with audio started at once (S)**
+1. Have a player ready with the OpenA2DP endpoint as default output. Power the sink
    on and start playback as soon as the endpoint appears (before AVDTP leaves `Idle`).
    Repeat with playback already running on another endpoint that Windows moves over.
-- Expect: one of `device-initiated with audio running; starting discovery`,
-  `audio started on a silent device-initiated link; starting discovery` or the device's
+- Expect: one of `sink-initiated with audio running; starting discovery`,
+  `audio started on a silent sink-initiated link; starting discovery` or the sink's
   own configuration, then `Streaming`; no `SEP in use` / `no resources` errors and no
   double configuration.
 
@@ -105,7 +105,7 @@ least 3 times; teardown tests 10 times.
 
 ### Teardown and recovery (deadlock and orphan checks)
 
-**T6 Disconnect during discovery (S)** — connect (T1) and power the device off within
+**T6 Disconnect during discovery (S)** — connect (T1) and power the sink off within
 1 s of `signaling channel open`.
 
 **T7 Disconnect during media channel open (S)** — power off right after AVDTP `Open`.
@@ -165,7 +165,7 @@ it), reattach.
 - Expect: `encoder lost while streaming AAC; suspending`; no hang; the service stop
   completes within its bound (`OpenA2dpSvc stopping`).
 
-### AAC (device A)
+### AAC (sink A)
 
 **T17 AAC with the service running before connect**
 1. Service running; `OpenA2dpCtl codec auto`; connect A and play.
@@ -175,7 +175,7 @@ it), reattach.
 **T18 Late registration renegotiates to AAC**
 1. `sc stop OpenA2dpSvc`; connect A and play (SBC).
 2. `sc start OpenA2dpSvc` while playing.
-- Expect: `stream is SBC; renegotiating if the device offered AAC`,
+- Expect: `stream is SBC; renegotiating if the sink offered AAC`,
   `encoder service arrived; closing the SBC stream to negotiate AAC`,
   `stream closed; rediscovering to negotiate AAC`, then `configured codec AAC`; a short
   audio gap, then AAC audio.
@@ -201,6 +201,6 @@ On a hang: do not reboot. Break in with the kernel debugger and follow the
 stacks), then save a dump (`.dump /ka`).
 
 ## 5. Reporting
-Per test: id, device, commit, Verifier on/off, pass/fail, log file and dump if any.
+Per test: id, sink, commit, Verifier on/off, pass/fail, log file and dump if any.
 Update the gate in [VALIDATION.md](VALIDATION.md) only when a gate passes or a
 blocker changes.

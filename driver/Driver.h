@@ -21,7 +21,7 @@
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcFixed.h>
 
-// Log format: "OpenA2dp <LEVEL> [<device name> (<address>)] <Category>: <message>".
+// Log format: "OpenA2dp <LEVEL> [<sink name> (<address>)] <Category>: <message>".
 // ctx may be nullptr before a device exists (the tag is then "-"). Every level is
 // emitted at DPFLTR_INFO_LEVEL on purpose: a debug-filter mask that shows the
 // driver's messages at all must never hide the warnings and errors among them; the
@@ -208,7 +208,7 @@ struct DEVICE_CONTEXT
 	// Only the media work item touches it, under MediaLock.
 	BOOLEAN MediaSendUnchecked;
 
-	// L2CAP server for device-initiated connections on the AVDTP PSM. Incoming
+	// L2CAP server for sink-initiated connections on the AVDTP PSM. Incoming
 	// signaling connections are accepted through OpenRequest; others are
 	// refused through RejectRequest (RejectBusy guards it).
 	L2CAP_SERVER_HANDLE ServerHandle;
@@ -247,8 +247,8 @@ struct DEVICE_CONTEXT
 	// for other threads.
 	PKTHREAD SignalingWorkItemThread;
 
-	// True when the device opened the signaling channel, false when we did. A
-	// device that connects to us usually starts its own AVDTP discovery and
+	// True when the sink opened the signaling channel, false when we did. A
+	// sink that connects to us usually starts its own AVDTP discovery and
 	// configuration at the same moment, so we let it go first and only discover
 	// once Windows runs the audio stream while the session is still Idle.
 	volatile LONG SignalingIncoming;
@@ -279,7 +279,7 @@ struct DEVICE_CONTEXT
 	WDFTIMER AudioTimer;
 	ACXSTREAM AudioStream;
 	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
-	// while the device link is down (AudioNotifyLinkState).
+	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
@@ -388,7 +388,7 @@ bool L2capSendIdle(_In_ SEND_SLOT* slot);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void L2capCancelSend(_In_ SEND_SLOT* slot);
 
-// True when a failed send means the device went away, not a driver fault.
+// True when a failed send means the sink went away, not a driver fault.
 bool IsLinkLoss(_In_ DEVICE_CONTEXT* ctx, _In_ NTSTATUS status);
 
 // Media transport channel (l2cap/)
@@ -422,7 +422,7 @@ void SignalingOnChannelOpen(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 void SignalingResetSession(_In_ DEVICE_CONTEXT* ctx);
 
-// Called when the device opened the media channel (acceptor role); sends START if needed.
+// Called when the sink opened the media channel (acceptor role); sends START if needed.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnMediaChannelOpen(_In_ DEVICE_CONTEXT* ctx);
 
@@ -430,7 +430,7 @@ void SignalingOnMediaChannelOpen(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 void SignalingStop(_In_ DEVICE_CONTEXT* ctx);
 
-// Best-effort AVDTP CLOSE (ABORT as fallback) before teardown, so the device frees its SEP.
+// Best-effort AVDTP CLOSE (ABORT as fallback) before teardown, so the sink frees its SEP.
 // Bounded. Returns false when the session lock stayed busy and nothing was sent.
 _IRQL_requires_(PASSIVE_LEVEL)
 bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
@@ -448,7 +448,7 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx);
 
 // audio/
-// Reports the device link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.
+// Reports the sink link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.
 void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx);
 
 // Creates the ACX render circuit (speaker endpoint) for this device.
