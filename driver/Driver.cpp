@@ -51,6 +51,9 @@ NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 	// Failing to register or reach the sink is not fatal; the device stays started.
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	KeClearEvent(&ctx->StopEvent);
+	// A recovery budget belongs to the connection that armed it.
+	ctx->CodecSwitchRecover = FALSE;
+	ctx->CodecSwitchReconnects = 0;
 	OA2DP_INFO(ctx, "Device", "starting: registering the AVDTP server and connecting to the sink");
 	ServiceStart(ctx);
 	(void)L2capRegisterServer(ctx);

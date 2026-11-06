@@ -186,7 +186,11 @@ it), reattach.
 2. `OpenA2dpCtl codec sbc` while playing. Expect
    `AAC stream selected but the preference wants SBC; closing to renegotiate`,
    `stream closed; rediscovering to negotiate SBC`, then `configured codec SBC`; a short
-   audio gap, SBC audio, and no sink reconnect.
+   audio gap, SBC audio, and no sink reconnect. If the sink drops the A2DP connection on
+   that CLOSE (`signaling channel remote disconnect`), expect
+   `signaling channel closed during the codec switch; reconnecting (1/3)` and the same
+   renegotiation without touching the sink; only a sink that keeps dropping the channel
+   reaches `(3/3)` and stays disconnected.
 3. `OpenA2dpCtl codec aac` while playing. Expect the reverse switch to AAC the same way.
 4. With SBC playing, `OpenA2dpCtl codec aac`/`auto` when AAC cannot be selected (no
    encoder service, or the sink does not offer AAC): no renegotiation, SBC continues.

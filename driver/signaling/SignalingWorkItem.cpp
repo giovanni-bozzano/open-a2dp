@@ -132,7 +132,9 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec)
 // A codec selection input changed (SET_PREFERENCE or REGISTER_ENCODER). Every session
 // transition re-runs the work item, so the decision waits for a settled state:
 // Streaming with the wrong codec is CLOSEd and, once the CLOSE is answered,
-// rediscovered. Any other outcome drops the request.
+// rediscovered. Any other outcome drops the request. The close handshake is resumed
+// through CodecSwitchClosing, because the latched event is consumed when the CLOSE
+// goes out and no new event marks the response.
 static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 {
 	const auto state = ctx->Session.State();
@@ -174,6 +176,13 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
 	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
+	if (ctx->CodecSwitchClosing)
+	{
+		// Until a stream runs the new codec, a teardown by the sink still belongs to
+		// this switch and is recovered by reconnecting.
+		ctx->CodecSwitchRecover = TRUE;
+		ctx->CodecSwitchReconnects = 0;
+	}
 }
 
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
@@ -305,7 +314,8 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	{
 		ctx->CodecSwitchWanted = TRUE;
 	}
-	if (ctx->CodecSwitchWanted && ctx->SignalingState == ChannelOpen)
+	// A close in flight keeps the decision alive with no event of its own.
+	if ((ctx->CodecSwitchWanted || ctx->CodecSwitchClosing) && ctx->SignalingState == ChannelOpen)
 	{
 		ContinueCodecSwitch(ctx);
 	}

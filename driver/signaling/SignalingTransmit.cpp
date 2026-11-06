@@ -112,6 +112,12 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 	if (state != ctx->LoggedState)
 	{
 		ctx->LoggedState = state;
+		if (state == Avdtp::SessionState::Streaming || state == Avdtp::SessionState::Failed)
+		{
+			// The renegotiation either produced a stream or gave up; a later teardown is
+			// no longer part of it.
+			ctx->CodecSwitchRecover = FALSE;
+		}
 		OA2DP_INFO(ctx, "AVDTP", "state %s (%u), remote SEID %u", AvdtpStateName(state), static_cast<unsigned>(state), ctx->Session.RemoteSeid());
 		if (state == Avdtp::SessionState::Failed && ctx->SignalingState == ChannelOpen)
 		{

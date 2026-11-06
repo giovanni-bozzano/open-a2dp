@@ -5,7 +5,7 @@ Step-by-step procedures, Driver Verifier setup and log checks: [hardware tests](
 ## AAC and fallback
 - Start the service before negotiation; confirm AAC offered/selected, audible output and advancing CLI counters.
 - Reconnect with the service stopped and confirm SBC; then start the service and confirm the streaming SBC session is CLOSEd and renegotiated as AAC.
-- While streaming, switch `OpenA2dpCtl codec` between SBC and AAC (and `auto`) and confirm the active stream is CLOSEd, rediscovered and renegotiated without reconnecting; only a supported target may be selected.
+- While streaming, switch `OpenA2dpCtl codec` between SBC and AAC (and `auto`) and confirm the active stream is CLOSEd, rediscovered and renegotiated without reconnecting; only a supported target may be selected. A sink that drops the signaling channel on the CLOSE must still finish the switch: the driver reopens the channel (bounded) and rediscovers.
 
 ## Event-driven signaling
 - Sink-initiated connect stays acceptor until it configures or audio plays; media-open failure recovers via ABORT/rediscover; teardown during discovery, media open and streaming under Driver Verifier deadlock detection.

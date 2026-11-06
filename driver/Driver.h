@@ -53,6 +53,10 @@ inline constexpr LONG MediaModeNone = 0;
 inline constexpr LONG MediaModeSbc = 1;
 inline constexpr LONG MediaModeAac = 2;
 
+// Signaling-channel reopens allowed when a sink answers a codec-switch CLOSE by
+// dropping the A2DP connection; zeroed whenever a new switch sends its CLOSE.
+inline constexpr ULONG CodecSwitchReconnectLimit = 3;
+
 inline constexpr LONG ChannelClosed = 0;
 inline constexpr LONG ChannelOpening = 1;
 inline constexpr LONG ChannelOpen = 2;
@@ -198,9 +202,14 @@ struct DEVICE_CONTEXT
 	// The signaling work item then checks, once the session is settled, whether the
 	// negotiated codec still matches the current preference (CodecSwitchWanted);
 	// CodecSwitchClosing restarts discovery when the CLOSE it sent for that is answered.
+	// Some sinks drop the whole signaling channel on that CLOSE, so CodecSwitchRecover
+	// keeps the switch alive across the teardown and L2capCloseSignalingChannel reopens
+	// the channel, at most CodecSwitchReconnectLimit times per switch.
 	volatile LONG CodecSwitchPending;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
+	BOOLEAN CodecSwitchRecover;
+	ULONG CodecSwitchReconnects;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.

@@ -94,4 +94,24 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->SignalingState, ChannelClosed);
 	SignalingResetSession(ctx);
 	AudioNotifyLinkState(ctx);
+	// Some sinks answer the CLOSE that renegotiates the codec by dropping the whole
+	// signaling channel. Reopen it so the rediscovery still applies the new preference
+	// instead of needing a manual reconnect. Bounded per switch and never during
+	// teardown; the open's completion restarts discovery through the normal path.
+	if (ctx->CodecSwitchRecover && KeReadStateEvent(&ctx->StopEvent) == 0)
+	{
+		if (ctx->CodecSwitchReconnects < CodecSwitchReconnectLimit)
+		{
+			++ctx->CodecSwitchReconnects;
+			OA2DP_INFO(ctx, "L2CAP", "signaling channel closed during the codec switch; reconnecting (%u/%u)",
+				static_cast<unsigned>(ctx->CodecSwitchReconnects), static_cast<unsigned>(CodecSwitchReconnectLimit));
+			(void)L2capOpenSignalingChannel(ctx);
+		}
+		else
+		{
+			ctx->CodecSwitchRecover = FALSE;
+			OA2DP_WARN(ctx, "L2CAP", "codec switch: the sink dropped the signaling channel %u times; leaving it disconnected",
+				static_cast<unsigned>(ctx->CodecSwitchReconnects));
+		}
+	}
 }
