@@ -296,6 +296,31 @@ TEST(AacStream_DoesNotOutrunTheClock)
 	CHECK_EQ(stream.Stats().records, uint64_t{4});
 }
 
+TEST(AacStream_PartialTickStillEncodesAWholeBlock)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	auto encoder = MakeEncoder();
+	FakeEncoder* fake = encoder.get();
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	WritePcm(pcm, 0, 8192);
+
+	// Consume the preroll first, then let one 10 ms tick make 441 samples due. A record
+	// still covers 1024 samples of real PCM: filling the other 583 with silence would
+	// put a gap inside every block at the tick rate.
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{3});
+	REQUIRE(stream.Pump(10000, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{4});
+	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{4 * kBlockBytes});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+	REQUIRE(fake->blocks.size() == size_t{4});
+	CHECK_EQ(fake->blocks[3][0], int16_t{3 * Ioctl::kAacSamplesPerFrame * 2});
+	CHECK(fake->blocks[3][441] != int16_t{0});
+}
+
 TEST(AacStream_HonoursRecordLimit)
 {
 	TestRing pcm(64 * 1024);

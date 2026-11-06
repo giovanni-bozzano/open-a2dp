@@ -89,23 +89,22 @@ bool AacStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView&
 
 	const uint64_t target = TargetSamples(nowUs);
 	for (size_t i = 0; i < maxRecords && producedSamples_ < target; ++i) {
-		const uint64_t due = target - producedSamples_;
-		const uint32_t dueSamples = static_cast<uint32_t>(std::min<uint64_t>(due, samplesPerFrame_));
-		if (!EncodeBlock(pcm, frames, dueSamples)) {
+		if (!EncodeBlock(pcm, frames)) {
 			return false;
 		}
 	}
 	return true;
 }
 
-bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames,
-								   uint32_t dueSamples) noexcept
+bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) noexcept
 {
-	// A whole 1024-sample block is always encoded; a short block is zero-filled,
-	// so a late or empty PCM ring becomes silence instead of a stalled stream.
+	// Every record covers a whole 1024-sample block; a short read is zero-filled, so
+	// a late or empty PCM ring becomes silence instead of a stalled stream. Reading
+	// only the samples due since the last tick would be wrong: the sink plays each
+	// record as 1024 samples, so the padding would insert silence into the middle of
+	// the audio at the tick rate instead of delaying it.
 	std::memset(pcmBlock_.data(), 0, pcmBlock_.size());
-	const uint32_t wanted = dueSamples * bytesPerSample_;
-	uint32_t available = std::min(pcm.ReadableBytes(), wanted);
+	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(pcmBlock_.size()));
 	available -= available % bytesPerSample_;
 	if (available != 0 && !pcm.Read(pcmBlock_.data(), available)) {
 		available = 0;

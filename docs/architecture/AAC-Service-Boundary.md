@@ -196,11 +196,14 @@ No driver wait depends on the service.
 
 ## 7. Pacing and timestamps
 
-The service owns the media clock for AAC. It pulls exactly
-`elapsed * rate + preroll` samples from the PCM ring (the formula the SBC path uses
-today) and encodes in 1024-sample blocks, padding the last block with silence. The
-driver no longer computes a target for AAC; it only drains the frame ring, one packet
-per media-clock tick or send completion, and advances the RTP timestamp by each record's
+The service owns the media clock for AAC. `elapsed * rate + preroll` (the formula the SBC
+path uses today) says how much audio must have been encoded by now; whenever it exceeds
+what has been produced, a whole 1024-sample block is encoded and a full block of PCM is
+pulled from the ring, zero-filling only what the ring does not hold. A record always
+covers 1024 samples: reading just the samples due since the last tick and padding the
+rest would insert silence into the middle of the audio at the tick rate. The driver no
+longer computes a target for AAC; it only drains the frame ring, one packet per
+media-clock tick or send completion, and advances the RTP timestamp by each record's
 `samples`.
 
 Consequences:

@@ -4,10 +4,11 @@
 //
 // The service owns the AAC media clock (docs/architecture/AAC-Service-Boundary.md section 7):
 // on every WAIT_EVENT tick it tells this object how much time has elapsed, and
-// the object pulls exactly that much PCM from the shared PCM ring, encodes it in
-// 1024-sample blocks (padding the last block with silence) and writes one LATM
-// AudioMuxElement per frame into the shared frame ring. Everything here is
-// clock-injected, so the pacing rules are unit-tested with fake time.
+// the object encodes a whole 1024-sample block whenever the clock has made one
+// due, pulling a full block of PCM from the shared PCM ring (zero-filling only
+// when the ring is short) and writing one LATM AudioMuxElement per frame into
+// the shared frame ring. Everything here is clock-injected, so the pacing rules
+// are unit-tested with fake time.
 //
 // No OS calls, no threads: the service supplies the encoder, the clock and the
 // rings. The driver only adds RTP headers.
@@ -75,9 +76,10 @@ public:
 	const AacStreamStats& Stats() const noexcept { return stats_; }
 
 private:
-	// Encodes one 1024-sample block, using at most `dueSamples` real samples and
-	// zero-filling the rest. Returns false on a fatal encoder error.
-	bool EncodeBlock(RingBufferView& pcm, RingBufferView& frames, uint32_t dueSamples) noexcept;
+	// Encodes one whole 1024-sample block, reading a full block of PCM and
+	// zero-filling only what the ring does not hold. Returns false on a fatal
+	// encoder error.
+	bool EncodeBlock(RingBufferView& pcm, RingBufferView& frames) noexcept;
 
 	std::unique_ptr<IA2dpEncoder> encoder_;
 	AacStreamParams params_;
