@@ -248,6 +248,25 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		return;
 	}
 
+	case Ioctl::kIoctlGetPreference:
+	{
+		Ioctl::Preference* out = nullptr;
+		NTSTATUS status = WdfRequestRetrieveOutputBuffer(
+			request, sizeof(Ioctl::Preference), reinterpret_cast<PVOID*>(&out), nullptr);
+		if (!NT_SUCCESS(status))
+		{
+			Complete(request, status);
+			return;
+		}
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+		*out = ctx->Preference;
+		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+		out->abiVersion = Ioctl::kAbiVersion;
+		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Preference));
+		return;
+	}
+
 	case Ioctl::kIoctlSetPreference:
 	{
 		Ioctl::Preference* in = nullptr;
@@ -269,22 +288,47 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_INVALID_PARAMETER);
 			return;
 		}
+		if (in->sbcBitpool != 0 &&
+			(in->sbcBitpool < Ioctl::kSbcMinBitpool || in->sbcBitpool > Ioctl::kSbcMaxBitpool))
+		{
+			Complete(request, STATUS_INVALID_PARAMETER);
+			return;
+		}
 		bool changed = false;
+		bool selectionChanged = false;
+		bool parametersChanged = false;
 		{
 			KIRQL irql;
 			KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
-			changed = ctx->Preference.flags != in->flags || ctx->Preference.codec != in->codec;
+			selectionChanged =
+				ctx->Preference.flags != in->flags || ctx->Preference.codec != in->codec;
+			parametersChanged = ctx->Preference.sbcBitpool != in->sbcBitpool ||
+								ctx->Preference.aacBitrate != in->aacBitrate;
+			// aacSampleRate is stored but does not affect selection until the endpoint
+			// is multi-rate, so on its own it must be saved without renegotiating.
+			changed = selectionChanged || parametersChanged ||
+					  ctx->Preference.aacSampleRate != in->aacSampleRate;
 			ctx->Preference = *in;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 		}
 		if (changed)
 		{
-			OA2DP_INFO(ctx, "Service", "codec preference changed (flags 0x%08X, codec %u)",
-				in->flags, static_cast<unsigned>(in->codec));
+			if (parametersChanged)
+			{
+				// A parameter-only change keeps the codec, so the work item needs this
+				// marker to tell that the running stream is stale.
+				InterlockedIncrement(&ctx->PreferenceParameters);
+			}
+			OA2DP_INFO(ctx, "Service",
+				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, AAC bitrate %u)", in->flags,
+				static_cast<unsigned>(in->codec), in->sbcBitpool, in->aacBitrate);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
 			ConfigSavePreference(ctx);
-			SignalingOnPreferenceChanged(ctx);
+			if (selectionChanged || parametersChanged)
+			{
+				SignalingOnPreferenceChanged(ctx);
+			}
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;

@@ -210,6 +210,11 @@ struct DEVICE_CONTEXT
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;
 	ULONG CodecSwitchReconnects;
+	// Bumped by SET_PREFERENCE whenever a stored parameter changes. The work item
+	// compares it with the value the running stream was negotiated with, so a bitpool
+	// or bitrate change renegotiates the codec without one being forced.
+	volatile LONG PreferenceParameters;
+	LONG AppliedPreferenceParameters;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.

@@ -26,7 +26,8 @@ constexpr const char* kUsage = R"(OpenA2dpCtl - inspect and configure the OpenA2
 Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--watch [--interval <ms>]]
   OpenA2dpCtl list
-  OpenA2dpCtl codec <auto|sbc|aac> [--device <mac|index>]
+  OpenA2dpCtl codec <auto|sbc|aac> [--bitrate <bps>] [--bitpool <n>]
+                     [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
 
@@ -37,12 +38,17 @@ Commands:
             when the device starts. If a stream is active it is renegotiated
             immediately; otherwise the preference applies at the next AVDTP
             negotiation. "auto" prefers AAC while an encoder service is
-            registered, then SBC.
+            registered, then SBC. --bitrate and --bitpool cap the AAC bitrate
+            and the SBC bitpool; 0 restores the driver default, and the sink's
+            advertised limits still apply.
   version   Show the driver ABI and version.
 
 Options:
   --device <spec>   Select a device by Bluetooth address (AA:BB:CC:DD:EE:FF),
                     1-based list index, or a partial address.
+  --bitrate <bps>   AAC bitrate cap for `codec` (0 = driver default).
+  --bitpool <n>     SBC bitpool cap for `codec`, 0 or 2..250 (0 = driver
+                    default). The sink's minimum and maximum still win.
   --watch           Refresh status until interrupted.
   --interval <ms>   Refresh period for --watch (default 1000).
 
@@ -431,7 +437,46 @@ bool ReadStatus(HANDLE handle, Ioctl::Status& status, std::string& error)
 	return true;
 }
 
-void PrintStatus(const Device& device, const Ioctl::Status& status)
+bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& error)
+{
+	if (!ReadIoctl(handle, Ioctl::kIoctlGetPreference, preference, error))
+	{
+		return false;
+	}
+	if (preference.abiVersion != Ioctl::kAbiVersion)
+	{
+		error = "driver ABI " + std::to_string(preference.abiVersion) + " does not match the tool ABI " +
+				std::to_string(Ioctl::kAbiVersion) + "; update both from the same build";
+		return false;
+	}
+	return true;
+}
+
+void PrintPreference(const Ioctl::Preference& preference)
+{
+	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0)
+	{
+		std::printf("  preference      force %s\n", CodecName(preference.codec));
+	}
+	else
+	{
+		std::printf("  preference      auto (AAC > SBC)\n");
+	}
+	if (preference.sbcBitpool != 0)
+	{
+		std::printf("  SBC bitpool     %u\n", preference.sbcBitpool);
+	}
+	if (preference.aacBitrate != 0)
+	{
+		std::printf("  AAC bitrate     %u bps\n", preference.aacBitrate);
+	}
+	if (preference.aacSampleRate != 0)
+	{
+		std::printf("  AAC rate        %u Hz (used once the endpoint is multi-rate)\n", preference.aacSampleRate);
+	}
+}
+
+void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl::Preference& preference)
 {
 	std::printf("%s\n", DeviceLabel(device).c_str());
 	std::printf("  AVDTP           %s\n", AvdtpStateName(status.avdtpState));
@@ -453,14 +498,7 @@ void PrintStatus(const Device& device, const Ioctl::Status& status)
 	{
 		std::printf("  codec           none\n");
 	}
-	if ((status.preferenceFlags & Ioctl::kPreferenceForceCodec) != 0)
-	{
-		std::printf("  preference      force %s\n", CodecName(status.preferenceCodec));
-	}
-	else
-	{
-		std::printf("  preference      auto (AAC > SBC)\n");
-	}
+	PrintPreference(preference);
 	std::printf("  encoder         %s\n", status.encoderRegistered != 0 ? "registered" : "not registered");
 	std::printf("  rings           PCM %u/%u B, frames %u/%u B\n", status.pcmBufferedBytes, status.pcmCapacity,
 				status.frameBufferedBytes, status.frameCapacity);
@@ -494,7 +532,8 @@ int CommandStatus(const std::vector<Device>& devices, const std::string& spec, b
 	do
 	{
 		Ioctl::Status status = {};
-		if (!ReadStatus(handle, status, error))
+		Ioctl::Preference preference = {};
+		if (!ReadStatus(handle, status, error) || !ReadPreference(handle, preference, error))
 		{
 			std::fprintf(stderr, "%s\n", error.c_str());
 			result = 1;
@@ -504,7 +543,7 @@ int CommandStatus(const std::vector<Device>& devices, const std::string& spec, b
 		{
 			std::printf("\x1b[2J\x1b[H");
 		}
-		PrintStatus(device, status);
+		PrintStatus(device, status, preference);
 		if (watch)
 		{
 			std::fflush(stdout);
@@ -598,26 +637,10 @@ int CommandVersion(const std::vector<Device>& devices, const std::string& spec)
 	return 0;
 }
 
-int CommandCodec(const std::vector<Device>& devices, const std::string& spec, const std::string& codecArg)
+int CommandCodec(const std::vector<Device>& devices, const std::string& spec, const std::string& codecArg,
+				 bool hasBitrate, uint32_t bitrate, bool hasBitpool, uint32_t bitpool)
 {
-	Ioctl::Preference preference = {};
-	preference.abiVersion = Ioctl::kAbiVersion;
-	if (codecArg == "auto")
-	{
-		preference.flags = 0;
-		preference.codec = 0;
-	}
-	else if (codecArg == "sbc")
-	{
-		preference.flags = Ioctl::kPreferenceForceCodec;
-		preference.codec = Ioctl::kCodecSbc;
-	}
-	else if (codecArg == "aac")
-	{
-		preference.flags = Ioctl::kPreferenceForceCodec;
-		preference.codec = Ioctl::kCodecAac;
-	}
-	else
+	if (codecArg != "auto" && codecArg != "sbc" && codecArg != "aac")
 	{
 		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc or aac\n", codecArg.c_str());
 		return 2;
@@ -636,6 +659,35 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
+	}
+
+	// Start from the stored preference so a codec change keeps the parameters that
+	// the command does not name.
+	Ioctl::Preference preference = {};
+	if (!ReadPreference(handle, preference, error))
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+	preference.abiVersion = Ioctl::kAbiVersion;
+	if (codecArg == "auto")
+	{
+		preference.flags = 0;
+		preference.codec = 0;
+	}
+	else
+	{
+		preference.flags = Ioctl::kPreferenceForceCodec;
+		preference.codec = codecArg == "aac" ? Ioctl::kCodecAac : Ioctl::kCodecSbc;
+	}
+	if (hasBitrate)
+	{
+		preference.aacBitrate = bitrate;
+	}
+	if (hasBitpool)
+	{
+		preference.sbcBitpool = bitpool;
 	}
 
 	DWORD bytes = 0;
@@ -657,7 +709,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	std::printf("Preference set to %s on %s.\n",
 				codecArg == "auto" ? "auto (AAC > SBC)" : (codecArg == "aac" ? "AAC" : "SBC"),
 				DeviceLabel(device).c_str());
-	PrintStatus(device, status);
+	PrintStatus(device, status, preference);
 
 	if (preference.codec == Ioctl::kCodecAac && status.encoderRegistered == 0)
 	{
@@ -667,11 +719,11 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac : status.encoderRegistered != 0;
 	const bool wantsSbc = force ? preference.codec == Ioctl::kCodecSbc : status.encoderRegistered == 0;
-	const bool renegotiates = streaming && ((wantsAac && status.codec != Ioctl::kCodecAac) ||
-											 (wantsSbc && status.codec == Ioctl::kCodecAac));
-	if (renegotiates)
+	const bool codecChanges = (wantsAac && status.codec != Ioctl::kCodecAac) ||
+							  (wantsSbc && status.codec == Ioctl::kCodecAac);
+	if (streaming && (codecChanges || hasBitrate || hasBitpool))
 	{
-		std::printf("\nnote: the active stream will renegotiate to apply the preference "
+		std::printf("\nnote: the active stream renegotiates to apply the preference "
 					"(the status above may lag until the sink answers).\n");
 	}
 	return 0;
@@ -685,6 +737,10 @@ int main(int argc, char** argv)
 	std::string command = "status";
 	std::string deviceSpec;
 	std::string codecArg;
+	bool hasBitrate = false;
+	uint32_t bitrate = 0;
+	bool hasBitpool = false;
+	uint32_t bitpool = 0;
 	bool watch = false;
 	unsigned interval = 1000;
 	size_t position = 0;
@@ -706,6 +762,37 @@ int main(int argc, char** argv)
 		if (arg == "--device" && position + 1 < args.size())
 		{
 			deviceSpec = args[++position];
+		}
+		else if (arg == "--bitrate" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			const unsigned long parsed = IsDecimal(value) ? std::strtoul(value.c_str(), nullptr, 10) : 1000001;
+			if (!IsDecimal(value) || parsed > 1000000)
+			{
+				std::fprintf(stderr, "--bitrate takes bits per second, 0 to restore the default\n");
+				return 2;
+			}
+			hasBitrate = true;
+			bitrate = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--bitpool" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			if (!IsDecimal(value))
+			{
+				std::fprintf(stderr, "--bitpool takes 0 (default) or %u..%u\n", Ioctl::kSbcMinBitpool,
+						Ioctl::kSbcMaxBitpool);
+				return 2;
+			}
+			const unsigned long parsed = std::strtoul(value.c_str(), nullptr, 10);
+			if (parsed != 0 && (parsed < Ioctl::kSbcMinBitpool || parsed > Ioctl::kSbcMaxBitpool))
+			{
+				std::fprintf(stderr, "--bitpool takes 0 (default) or %u..%u\n", Ioctl::kSbcMinBitpool,
+						Ioctl::kSbcMaxBitpool);
+				return 2;
+			}
+			hasBitpool = true;
+			bitpool = static_cast<uint32_t>(parsed);
 		}
 		else if (arg == "--watch")
 		{
@@ -742,6 +829,11 @@ int main(int argc, char** argv)
 		std::fprintf(stderr, "codec needs an argument: auto, sbc or aac\n\n%s", kUsage);
 		return 2;
 	}
+	if (command != "codec" && (hasBitrate || hasBitpool))
+	{
+		std::fprintf(stderr, "--bitrate and --bitpool apply to `codec`\n\n%s", kUsage);
+		return 2;
+	}
 
 	std::string error;
 	const std::vector<Device> devices = EnumerateDevices(error);
@@ -761,7 +853,7 @@ int main(int argc, char** argv)
 	}
 	if (command == "codec")
 	{
-		return CommandCodec(devices, deviceSpec, codecArg);
+		return CommandCodec(devices, deviceSpec, codecArg, hasBitrate, bitrate, hasBitpool, bitpool);
 	}
 	return CommandStatus(devices, deviceSpec, watch, interval);
 }

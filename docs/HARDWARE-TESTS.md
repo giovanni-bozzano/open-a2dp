@@ -203,8 +203,18 @@ it), reattach.
 2. `OpenA2dpCtl codec auto`; repeat: AAC where an encoder is registered, SBC otherwise.
 - The value lives under
   `HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters\Devices\<address>`
-  (`CodecPreferenceFlags`, `CodecPreferenceCodec`); deleting that subkey returns the sink
-  to auto.
+  (`CodecPreferenceFlags`, `CodecPreferenceCodec`, `CodecPreferenceSbcBitpool`); deleting
+  that subkey returns the sink to auto.
+
+**T22 Codec parameters (S/A)**
+1. `OpenA2dpCtl status` lists `SBC bitpool` or `AAC bitrate` once one is stored.
+2. While SBC streams, `OpenA2dpCtl codec sbc --bitpool 35`. Expect
+   `SBC parameters changed; closing to renegotiate`, then the CLOSE/rediscovery path of
+   T19 and the same renegotiation timeout. A sink that advertises a lower maximum, or a
+   minimum above 35, still configures its own range.
+3. `OpenA2dpCtl codec auto --bitpool 0` restores the driver default (53) the same way.
+4. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same close path, and
+   `status` reports 128000 bps; a sink advertising less gets its maximum.
 
 ### Soak
 

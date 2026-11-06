@@ -168,12 +168,27 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		return; // Idle/Failed: the next discovery already sees the current preference
 	}
 	Avdtp::CodecType desired;
-	if (!DesiredCodec(ctx, desired) || ctx->Session.SelectedCodec() == desired)
+	if (!DesiredCodec(ctx, desired))
 	{
 		return;
 	}
-	OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
-		CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
+	const bool codecDiffers = ctx->Session.SelectedCodec() != desired;
+	const LONG parameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
+	const bool parametersDiffer = ctx->AppliedPreferenceParameters != parameters;
+	if (!codecDiffers && !parametersDiffer)
+	{
+		return;
+	}
+	if (codecDiffers)
+	{
+		OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
+			CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
+	}
+	else
+	{
+		OA2DP_INFO(ctx, "Signaling", "%s parameters changed; closing to renegotiate", CodecName(desired));
+	}
+	ctx->AppliedPreferenceParameters = parameters;
 	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
 	if (ctx->CodecSwitchClosing)

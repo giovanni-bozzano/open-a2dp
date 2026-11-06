@@ -1,6 +1,7 @@
 #include "TestFramework.h"
 #include "SbcReferenceDecoder.h"
 
+#include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/SbcCodec.h>
 
 #include <cmath>
@@ -193,6 +194,52 @@ TEST(Sbc_SelectConfiguration_PreferenceAndLimits)
 	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks8 | kSubbands4 | kAllocSnr});
 	CHECK_EQ(cfg.ie[2], uint8_t{10});
 	CHECK_EQ(cfg.ie[3], uint8_t{30});
+}
+
+TEST(Sbc_SelectConfiguration_ClampsBitpoolPreference)
+{
+	SbcCodec codec;
+	// 44.1 kHz joint stereo, 16 blocks, 8 subbands, sink bitpool 11..53.
+	const uint8_t remote[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 11, 53};
+	A2dpCodecConfig cfg;
+
+	CodecPreference low;
+	low.sbcMaxBitpool = 4; // below what the sink accepts
+	REQUIRE(codec.SelectConfiguration(remote, 4, low, cfg));
+	CHECK_EQ(cfg.ie[2], uint8_t{11});
+	CHECK_EQ(cfg.ie[3], uint8_t{11});
+
+	CodecPreference high;
+	high.sbcMaxBitpool = 120; // above what the sink accepts
+	REQUIRE(codec.SelectConfiguration(remote, 4, high, cfg));
+	CHECK_EQ(cfg.ie[3], uint8_t{53});
+
+	REQUIRE(codec.SelectConfiguration(remote, 4, CodecPreference{}, cfg));
+	CHECK_EQ(cfg.ie[3], uint8_t{53});
+}
+
+// Every bitpool the preference can request must still produce frames that fit one RTP
+// payload, otherwise a stored value makes the stream unsendable.
+TEST(Sbc_SelectedFramesFitMediaPayload)
+{
+	SbcCodec codec;
+	const uint8_t remote[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 250};
+	const uint8_t presets[] = {2, 35, 53, 250};
+	for (const uint8_t bitpool : presets)
+	{
+		CodecPreference pref;
+		pref.sbcMaxBitpool = bitpool;
+		A2dpCodecConfig cfg;
+		REQUIRE(codec.SelectConfiguration(remote, 4, pref, cfg));
+		FrameParams params;
+		REQUIRE(ParseConfiguredIe(cfg.ie, cfg.ieLength, params));
+		CHECK_EQ(params.bitpool, bitpool);
+		CHECK(FrameLength(params) <= Ioctl::kMaxFramePayload);
+		std::unique_ptr<IA2dpEncoder> encoder;
+		REQUIRE(SUCCEEDED(codec.CreateEncoder(cfg, encoder)));
+		CHECK(encoder->MaxFrameBytes() <= Ioctl::kMaxFramePayload);
+		CHECK(encoder->FramesPerPacket(Ioctl::kMaxFramePayload) >= 1);
+	}
 }
 
 TEST(Sbc_SelectConfiguration_RejectsNoCommonMode)

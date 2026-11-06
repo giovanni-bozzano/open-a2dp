@@ -62,6 +62,28 @@ TEST(Aac_SelectConfiguration_RespectsSinkBitrateAndRate)
 	CHECK_EQ(p.bitrate, uint32_t{128000});
 }
 
+TEST(Aac_SelectConfiguration_BitratePreference)
+{
+	AacCodec codec;
+	// MPEG-2 LC, 44.1k + 48k, mono + stereo, CBR, 192 kbps max.
+	const uint8_t remote[6] = {0x80, 0x01, 0x8C, 0x02, 0xEE, 0x00};
+	const struct
+	{
+		uint32_t requested;
+		uint32_t expected;
+	} cases[] = {{96000, 96000}, {150000, 128000}, {192000, 192000}, {400000, 192000}};
+	for (const auto& c : cases)
+	{
+		CodecPreference pref;
+		pref.aacBitrate = c.requested;
+		A2dpCodecConfig cfg;
+		REQUIRE(codec.SelectConfiguration(remote, 6, pref, cfg));
+		Params p;
+		REQUIRE(ParseConfiguredIe(cfg.ie, cfg.ieLength, p));
+		CHECK_EQ(p.bitrate, c.expected);
+	}
+}
+
 TEST(Aac_SelectConfiguration_RejectsUnsupported)
 {
 	AacCodec codec;

@@ -18,7 +18,8 @@
 namespace OpenA2dp::Ioctl {
 
 // 2: Status carries the negotiated codec and the current preference.
-constexpr uint32_t kAbiVersion = 2;
+// 3: Preference carries an SBC bitpool, and GET_PREFERENCE returns it.
+constexpr uint32_t kAbiVersion = 3;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -74,6 +75,10 @@ constexpr uint32_t kEventDeviceGone = 1u << 4;  // device removing; close the ha
 // SET_PREFERENCE flags.
 constexpr uint32_t kPreferenceForceCodec = 1u << 0;
 
+// sbcBitpool is 0 (default) or within the SBC bitpool range the selector accepts.
+constexpr uint32_t kSbcMinBitpool = 2;
+constexpr uint32_t kSbcMaxBitpool = 250;
+
 // Frame record flags.
 constexpr uint32_t kFrameFlagDiscontinuity = 1u << 0; // first record after a gap
 constexpr uint16_t kFrameRecordMagic = 0x4B46;        // 'FK'
@@ -87,6 +92,7 @@ constexpr ULONG kIoctlMapRings = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUF
 constexpr ULONG kIoctlWaitEvent = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlGetStatus = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlSetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr ULONG kIoctlGetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 struct VersionInfo {
 	uint32_t abiVersion;      // kAbiVersion
@@ -182,9 +188,12 @@ struct Preference {
 	uint32_t flags;         // kPreference*
 	uint32_t codec;         // kCodec*
 	uint32_t aacBitrate;    // 0 = driver default (highest supported <= sink max)
-	uint32_t aacSampleRate; // 0 = driver default
-	uint32_t reserved[3];
+	uint32_t aacSampleRate; // 0 = driver default; unused until the endpoint is multi-rate
+	uint32_t sbcBitpool;    // 0 = driver default; clamped to the sink's range
+	uint32_t reserved[2];
 };
+
+static_assert(sizeof(Preference) == 32, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");

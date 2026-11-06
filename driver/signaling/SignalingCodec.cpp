@@ -53,7 +53,12 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 			playable[i] = remoteIe[i];
 		}
 		playable[0] &= kSbcDriverCapabilities[0];
-		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, 0, SbcMaxBitpool, configIe))
+		// A stored bitpool caps the request; the selector still lifts it to the sink's
+		// minimum and caps it at what the sink advertises for the chosen mode.
+		const uint8_t bitpool = preference.sbcBitpool != 0
+			? static_cast<uint8_t>(preference.sbcBitpool)
+			: SbcMaxBitpool;
+		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, 0, bitpool, configIe))
 		{
 			return 0;
 		}
@@ -68,7 +73,10 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		{
 			return 0;
 		}
-		if (!AacConfig::Select(remoteIe, remoteIeLength, AudioSampleRate, 0, configIe))
+		// The endpoint is fixed at 44.1 kHz until multi-rate output exists, so the stored
+		// sample rate cannot be honoured yet; the bitrate preference is clamped to the
+		// supported set and to the sink's maximum.
+		if (!AacConfig::Select(remoteIe, remoteIeLength, AudioSampleRate, preference.aacBitrate, configIe))
 		{
 			return 0;
 		}
@@ -126,6 +134,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->MediaOpenRetry = FALSE;
 	ctx->CodecSwitchWanted = FALSE;
 	ctx->CodecSwitchClosing = FALSE;
+	ctx->AppliedPreferenceParameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	// Packets queued for the previous session must not reach the next one.
 	ctx->SignalQueueHead = 0;
 	ctx->SignalQueueCount = 0;
