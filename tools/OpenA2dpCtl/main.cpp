@@ -483,7 +483,8 @@ void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl:
 	std::printf("  media           %s\n", MediaStateName(static_cast<uint32_t>(status.mediaState)));
 	if (status.mediaState == Ioctl::MediaState::Streaming && status.codec == 0)
 	{
-		std::printf("  codec           SBC, %u Hz, %u ch\n", status.sampleRate, status.channels);
+		std::printf("  codec           SBC, %u Hz, %u ch, %u bps\n", status.sampleRate, status.channels,
+					status.bitrate);
 	}
 	else if (status.codec != 0)
 	{

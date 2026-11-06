@@ -59,7 +59,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->ActiveCodec = Ioctl::kCodecSbc;
 	ctx->ActiveSampleRate = params.sampleRate;
 	ctx->ActiveChannels = params.Channels();
-	ctx->ActiveBitrate = 0;
+	ctx->ActiveBitrate = SbcFixed::Bitrate(params);
 	ctx->ActiveObjectType = 0;
 	ctx->RtpSequence = 0;
 	ctx->RtpTimestamp = 0;
@@ -70,9 +70,10 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->MediaActive = TRUE;
 	WdfWaitLockRelease(ctx->MediaLock);
 
-	OA2DP_INFO(ctx, "Media", "endpoint PCM, SBC %u Hz blocks %u subbands %u mode %u bitpool %u, frame %u bytes",
+	OA2DP_INFO(ctx, "Media",
+		"endpoint PCM, SBC %u Hz blocks %u subbands %u mode %u bitpool %u, frame %u bytes, %u bps",
 		params.sampleRate, params.blocks, params.subbands, static_cast<unsigned>(params.channelMode),
-		params.bitpool, static_cast<unsigned>(SbcFixed::FrameLength(params)));
+		params.bitpool, static_cast<unsigned>(SbcFixed::FrameLength(params)), ctx->ActiveBitrate);
 	WdfTimerStart(ctx->MediaTimer, 0);
 }
 

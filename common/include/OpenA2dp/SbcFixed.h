@@ -81,6 +81,13 @@ inline size_t FrameLength(const Params& p) noexcept
 	return length + (audioBits + 7) / 8;
 }
 
+// Bits per second of the configured stream, for the status report.
+inline uint32_t Bitrate(const Params& p) noexcept
+{
+	return static_cast<uint32_t>(
+		(8ull * FrameLength(p) * p.sampleRate) / (static_cast<uint64_t>(p.subbands) * p.blocks));
+}
+
 inline uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept
 {
 	uint8_t crc = 0x0F;

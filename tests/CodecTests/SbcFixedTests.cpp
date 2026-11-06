@@ -108,6 +108,7 @@ TEST(SbcFixed_ParseIe)
 	CHECK(p.allocation == SbcFixed::Allocation::Loudness);
 	CHECK_EQ(p.bitpool, uint8_t{53});
 	CHECK_EQ(SbcFixed::FrameLength(p), size_t{119});
+	CHECK_EQ(SbcFixed::Bitrate(p), uint32_t{327993}); // 119 bytes per 128 samples at 44.1 kHz
 	CHECK_EQ(SbcFixed::FramesPerPacket(p, 895 - Rtp::kHeaderSize), size_t{7});
 }
 

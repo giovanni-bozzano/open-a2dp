@@ -211,7 +211,8 @@ it), reattach.
 2. While SBC streams, `OpenA2dpCtl codec sbc --bitpool 35`. Expect
    `SBC parameters changed; closing to renegotiate`, then the CLOSE/rediscovery path of
    T19 and the same renegotiation timeout. A sink that advertises a lower maximum, or a
-   minimum above 35, still configures its own range.
+   minimum above 35, still configures its own range. The `codec` line of `status` now
+   reports the resulting SBC bitrate (`32 kbps`-style values change with the bitpool).
 3. `OpenA2dpCtl codec auto --bitpool 0` restores the driver default (53) the same way.
 4. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same close path, and
    `status` reports 128000 bps; a sink advertising less gets its maximum.
