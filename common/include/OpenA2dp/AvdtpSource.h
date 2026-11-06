@@ -149,6 +149,40 @@ public:
 		return SeidCommand(SessionState::Streaming, SessionState::Suspending, Signal::Suspend, out, cap);
 	}
 
+	// Replaces the configuration of the open (not streaming) stream. AVDTP allows
+	// RECONFIGURE only in the Open state, so a streaming SEP is SUSPENDed first. A
+	// rejected RECONFIGURE keeps the previous configuration.
+	size_t Reconfigure(const uint8_t* ie, size_t ieLength, uint8_t* out, size_t cap) noexcept
+	{
+		if (state_ != SessionState::Open || pending_ || remoteSeid_ == 0 || ieLength == 0 ||
+			ieLength > kMaxCodecIe) {
+			return 0;
+		}
+		uint8_t payload[5 + kMaxCodecIe];
+		size_t n = 0;
+		payload[n++] = static_cast<uint8_t>(remoteSeid_ << 2);
+		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaCodec);
+		payload[n++] = static_cast<uint8_t>(2 + ieLength);
+		payload[n++] = static_cast<uint8_t>(static_cast<uint8_t>(MediaType::Audio) << 4);
+		payload[n++] = static_cast<uint8_t>(selectedCodec_);
+		for (size_t i = 0; i < ieLength; ++i) {
+			payload[n++] = ie[i];
+		}
+		const size_t sent = Command(Signal::Reconfigure, payload, n, out, cap);
+		if (sent == 0) {
+			return 0;
+		}
+		backupIeLength_ = selectedIeLength_;
+		for (size_t i = 0; i < selectedIeLength_; ++i) {
+			backupIe_[i] = selectedIe_[i];
+		}
+		selectedIeLength_ = ieLength;
+		for (size_t i = 0; i < ieLength; ++i) {
+			selectedIe_[i] = ie[i];
+		}
+		return sent;
+	}
+
 	size_t Close(uint8_t* out, size_t cap) noexcept
 	{
 		if (state_ != SessionState::Open && state_ != SessionState::Streaming) {
@@ -409,6 +443,18 @@ private:
 				return 0;
 			}
 			break;
+
+		case Signal::Reconfigure:
+			if (state_ != SessionState::Open) {
+				break;
+			}
+			if (!accepted) {
+				selectedIeLength_ = backupIeLength_;
+				for (size_t i = 0; i < backupIeLength_; ++i) {
+					selectedIe_[i] = backupIe_[i];
+				}
+			}
+			return 0;
 
 		case Signal::Close:
 		case Signal::Abort:
@@ -714,6 +760,9 @@ private:
 	CodecType selectedCodec_ = CodecType::Sbc;
 	uint8_t selectedIe_[kMaxCodecIe] = {};
 	size_t selectedIeLength_ = 0;
+	// The configuration a pending RECONFIGURE replaces, restored if the sink rejects it.
+	uint8_t backupIe_[kMaxCodecIe] = {};
+	size_t backupIeLength_ = 0;
 	bool acceptor_ = false;
 };
 

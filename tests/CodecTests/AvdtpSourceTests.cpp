@@ -169,6 +169,41 @@ void ConnectToOpen(SourceSession& s)
 
 } // namespace
 
+TEST(AvdtpSource_ReconfigureKeepsConfigurationOnReject)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	const uint8_t ie[6] = {0x80, 0x00, 0x84, 0x01, 0xF4, 0x00}; // 48 kHz, mono, 128 kbps
+
+	// Only the Open state may reconfigure.
+	CHECK_EQ(s.Reconfigure(ie, 6, cmd, kMaxSignalPacket), size_t{0});
+
+	ConnectToOpen(s);
+	const size_t before = s.SelectedIeLength();
+	size_t n = s.Reconfigure(ie, 6, cmd, kMaxSignalPacket);
+	REQUIRE(n == 2 + 5 + 6);
+	CHECK(Header(cmd).signal == Signal::Reconfigure);
+	CHECK_EQ(cmd[2], uint8_t{5 << 2});
+	CHECK_EQ(cmd[3], uint8_t{static_cast<uint8_t>(ServiceCategory::MediaCodec)});
+	CHECK_EQ(cmd[5], uint8_t{static_cast<uint8_t>(MediaType::Audio) << 4});
+	CHECK_EQ(cmd[6], uint8_t{static_cast<uint8_t>(CodecType::Aac)});
+	CHECK_EQ(s.SelectedIeLength(), size_t{6});
+
+	n = s.OnPacket(rsp, RejectResponse(cmd, rsp), cmd, kMaxSignalPacket);
+	CHECK_EQ(n, size_t{0});
+	CHECK(s.State() == SessionState::Open);
+	CHECK_EQ(s.SelectedIeLength(), before);
+
+	// Accepted: the new configuration stays and the state does not change.
+	n = s.Reconfigure(ie, 6, cmd, kMaxSignalPacket);
+	REQUIRE(n != 0);
+	n = s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	CHECK_EQ(n, size_t{0});
+	CHECK(s.State() == SessionState::Open);
+	CHECK_EQ(s.SelectedIeLength(), size_t{6});
+}
+
 TEST(AvdtpSource_ConnectSelectsBestCodec)
 {
 	SourceSession s = MakeSession();
