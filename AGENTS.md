@@ -4,7 +4,7 @@
 - Windows 11 KMDF, C++20, x64, toolset v145; warnings as errors. No STL or exceptions in `common/include`.
 - Lock order: `SessionLock` -> `MediaLock`. Never hold locks across unbounded transport waits.
 - Debug through native WinDbg MCP tools; no custom debugger scripts.
-- Commit every completed logical change separately after validation; do not batch unrelated work or include pre-existing user changes. Never push automatically.
+- Commit every completed logical change separately after validation; do not batch unrelated work or include pre-existing user changes. Never push automatically. No AI attribution, co-author trailers or "generated with" lines in commit messages.
 
 ## Context and tracking
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
