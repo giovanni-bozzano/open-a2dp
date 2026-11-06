@@ -95,34 +95,63 @@ static bool AudioRunActive(DEVICE_CONTEXT* ctx)
 	return running;
 }
 
-static bool AacAllowedByPreference(DEVICE_CONTEXT* ctx)
+// The codec the current preference selects, or false when it cannot be honoured
+// (for example AAC forced while no encoder service is registered). RemoteOffers is
+// the previous discovery's view; after a reconnect the new discovery decides.
+static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec)
 {
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
-	const Ioctl::Preference preference = ctx->Preference;
-	KeReleaseSpinLock(&ctx->PreferenceLock, irql);
-	return (preference.flags & Ioctl::kPreferenceForceCodec) == 0 || preference.codec == Ioctl::kCodecAac;
+	Ioctl::Preference preference;
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+		preference = ctx->Preference;
+		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+	}
+	const bool forceCodec = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
+	if (forceCodec)
+	{
+		if (preference.codec == Ioctl::kCodecSbc)
+		{
+			codec = Avdtp::CodecType::Sbc;
+			return true;
+		}
+		if (preference.codec != Ioctl::kCodecAac || !ServiceRegistered(ctx) || !ctx->Session.RemoteOffers(Avdtp::CodecType::Aac))
+		{
+			return false;
+		}
+		codec = Avdtp::CodecType::Aac;
+		return true;
+	}
+	// Automatic order: AAC when the sink offers it and an encoder service is up.
+	codec = ServiceRegistered(ctx) && ctx->Session.RemoteOffers(Avdtp::CodecType::Aac)
+		? Avdtp::CodecType::Aac
+		: Avdtp::CodecType::Sbc;
+	return true;
 }
 
-// The encoder service registered after this connection negotiated its codec. Every
-// session transition re-runs the work item, so the decision simply waits for a settled
-// state: Streaming with SBC against a sink that advertised AAC is CLOSEd and, once the
-// CLOSE is answered, rediscovered (now selecting AAC). Any other outcome drops the request.
-static void ContinueAacUpgrade(DEVICE_CONTEXT* ctx)
+// A codec selection input changed (SET_PREFERENCE or REGISTER_ENCODER). Every session
+// transition re-runs the work item, so the decision waits for a settled state:
+// Streaming with the wrong codec is CLOSEd and, once the CLOSE is answered,
+// rediscovered. Any other outcome drops the request.
+static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 {
 	const auto state = ctx->Session.State();
-	if (ctx->AacUpgradeClosing)
+	if (ctx->CodecSwitchClosing)
 	{
 		if (state == Avdtp::SessionState::Closing)
 		{
 			return;
 		}
-		ctx->AacUpgradeClosing = FALSE;
-		ctx->AacUpgradeWanted = FALSE;
-		if (state == Avdtp::SessionState::Idle && ServiceRegistered(ctx) && !ctx->MediaOpenRetry)
+		ctx->CodecSwitchClosing = FALSE;
+		ctx->CodecSwitchWanted = FALSE;
+		if (state == Avdtp::SessionState::Idle && !ctx->MediaOpenRetry)
 		{
-			OA2DP_INFO(ctx, "Signaling", "stream closed; rediscovering to negotiate AAC");
-			Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+			Avdtp::CodecType desired;
+			if (DesiredCodec(ctx, desired))
+			{
+				OA2DP_INFO(ctx, "Signaling", "stream closed; rediscovering to negotiate %s", CodecName(desired));
+				Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+			}
 		}
 		return;
 	}
@@ -131,16 +160,20 @@ static void ContinueAacUpgrade(DEVICE_CONTEXT* ctx)
 	{
 		return; // not settled yet; the next transition re-runs this
 	}
-	ctx->AacUpgradeWanted = FALSE;
-	if (state != Avdtp::SessionState::Streaming || !ServiceRegistered(ctx) ||
-		ctx->Session.SelectedCodec() != Avdtp::CodecType::Sbc || !ctx->Session.RemoteOffers(Avdtp::CodecType::Aac) ||
-		!AacAllowedByPreference(ctx))
+	ctx->CodecSwitchWanted = FALSE;
+	if (state != Avdtp::SessionState::Streaming)
 	{
-		return; // Idle/Failed: the next discovery already sees the service
+		return; // Idle/Failed: the next discovery already sees the current preference
 	}
-	OA2DP_INFO(ctx, "Signaling", "encoder service arrived; closing the SBC stream to negotiate AAC");
+	Avdtp::CodecType desired;
+	if (!DesiredCodec(ctx, desired) || ctx->Session.SelectedCodec() == desired)
+	{
+		return;
+	}
+	OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
+		CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
 	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-	ctx->AacUpgradeClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
+	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
 }
 
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
@@ -268,13 +301,13 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		ContinueMediaOpenRetry(ctx);
 	}
 
-	if (InterlockedExchange(&ctx->EncoderArrivedPending, 0) != 0)
+	if (InterlockedExchange(&ctx->CodecSwitchPending, 0) != 0)
 	{
-		ctx->AacUpgradeWanted = TRUE;
+		ctx->CodecSwitchWanted = TRUE;
 	}
-	if (ctx->AacUpgradeWanted && ctx->SignalingState == ChannelOpen)
+	if (ctx->CodecSwitchWanted && ctx->SignalingState == ChannelOpen)
 	{
-		ContinueAacUpgrade(ctx);
+		ContinueCodecSwitch(ctx);
 	}
 
 	ctx->SignalingWorkItemThread = nullptr;

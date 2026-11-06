@@ -160,7 +160,7 @@ it), reattach.
 **T16 Service stop/restart while streaming**
 1. Stream SBC (S), `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
 - Expect: SBC continues uninterrupted; `encoder registered` toggles; S does not offer
-  AAC so no renegotiation is attempted (no `closing the SBC stream`).
+  AAC so no renegotiation is attempted (no `preference wants AAC` close).
 2. Repeat on A while streaming AAC.
 - Expect: `encoder lost while streaming AAC; suspending`; no hang; the service stop
   completes within its bound (`OpenA2dpSvc stopping`).
@@ -176,13 +176,21 @@ it), reattach.
 1. `sc stop OpenA2dpSvc`; connect A and play (SBC).
 2. `sc start OpenA2dpSvc` while playing.
 - Expect: `stream is SBC; renegotiating if the sink offered AAC`,
-  `encoder service arrived; closing the SBC stream to negotiate AAC`,
+  `SBC stream selected but the preference wants AAC; closing to renegotiate`,
   `stream closed; rediscovering to negotiate AAC`, then `configured codec AAC`; a short
   audio gap, then AAC audio.
-3. Repeat with `OpenA2dpCtl codec sbc`: no renegotiation, SBC continues.
+3. With `OpenA2dpCtl codec sbc` set before step 1, repeat: no renegotiation, SBC continues.
 
-**T19 SBC fallback**
-1. `OpenA2dpCtl codec sbc`, reconnect A: SBC. `OpenA2dpCtl codec auto`, reconnect: AAC.
+**T19 Live codec switch and SBC fallback**
+1. Service running; `OpenA2dpCtl codec auto`; connect A and play: AAC.
+2. `OpenA2dpCtl codec sbc` while playing. Expect
+   `AAC stream selected but the preference wants SBC; closing to renegotiate`,
+   `stream closed; rediscovering to negotiate SBC`, then `configured codec SBC`; a short
+   audio gap, SBC audio, and no sink reconnect.
+3. `OpenA2dpCtl codec aac` while playing. Expect the reverse switch to AAC the same way.
+4. With SBC playing, `OpenA2dpCtl codec aac`/`auto` when AAC cannot be selected (no
+   encoder service, or the sink does not offer AAC): no renegotiation, SBC continues.
+   `codec aac` reports the missing encoder service when that is the reason.
 
 ### Soak
 

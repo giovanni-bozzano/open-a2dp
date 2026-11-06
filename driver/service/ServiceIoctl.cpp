@@ -269,11 +269,19 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_INVALID_PARAMETER);
 			return;
 		}
+		bool changed = false;
 		{
 			KIRQL irql;
 			KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+			changed = ctx->Preference.flags != in->flags || ctx->Preference.codec != in->codec;
 			ctx->Preference = *in;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+		}
+		if (changed)
+		{
+			OA2DP_INFO(ctx, "Service", "codec preference changed (flags 0x%08X, codec %u)",
+				in->flags, static_cast<unsigned>(in->codec));
+			SignalingOnPreferenceChanged(ctx);
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;

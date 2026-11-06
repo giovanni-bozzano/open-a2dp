@@ -194,12 +194,13 @@ struct DEVICE_CONTEXT
 	// stream and MediaOpenRetry restarts discovery when the ABORT response arrives.
 	ULONG MediaOpenAttempts;
 	BOOLEAN MediaOpenRetry;
-	// Set by REGISTER_ENCODER. The signaling work item then checks, once the session is
-	// streaming, whether an SBC stream should be renegotiated as AAC (AacUpgradeWanted);
-	// AacUpgradeClosing restarts discovery when the CLOSE it sent for that is answered.
-	volatile LONG EncoderArrivedPending;
-	BOOLEAN AacUpgradeWanted;
-	BOOLEAN AacUpgradeClosing;
+	// Set by REGISTER_ENCODER or SET_PREFERENCE when a codec selection input changes.
+	// The signaling work item then checks, once the session is settled, whether the
+	// negotiated codec still matches the current preference (CodecSwitchWanted);
+	// CodecSwitchClosing restarts discovery when the CLOSE it sent for that is answered.
+	volatile LONG CodecSwitchPending;
+	BOOLEAN CodecSwitchWanted;
+	BOOLEAN CodecSwitchClosing;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.
@@ -439,9 +440,15 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
 
-// Called when the encoder service registered; may renegotiate an SBC stream as AAC.
+// Called when the encoder service registered; may renegotiate the stream if that
+// makes a different codec selectable.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx);
+
+// Called when SET_PREFERENCE changes the codec preference; renegotiates an active
+// stream immediately instead of waiting for the sink to reconnect.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx);
 
 // Called when Windows runs the render stream; discovers if no stream is configured.
 _IRQL_requires_max_(DISPATCH_LEVEL)

@@ -33,9 +33,10 @@ Usage:
 Commands:
   status    Show the AVDTP/media state, codec, preference and counters (default).
   list      List the present OpenA2dp devices.
-  codec     Set the codec preference. It is applied at the next AVDTP
-            negotiation, so reconnect the sink after changing it. "auto"
-            prefers AAC while an encoder service is registered, then SBC.
+  codec     Set the codec preference. If a stream is active it is
+            renegotiated immediately; otherwise the preference applies at
+            the next AVDTP negotiation. "auto" prefers AAC while an encoder
+            service is registered, then SBC.
   version   Show the driver ABI and version.
 
 Options:
@@ -661,14 +662,16 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		std::printf("\nnote: no encoder service is registered, so AAC is not offered and SBC will be used.\n");
 	}
-	if (status.negotiatedCodec != 0 && preference.codec != 0 && status.negotiatedCodec != preference.codec)
+	const bool streaming = status.mediaState == Ioctl::MediaState::Streaming;
+	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
+	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac : status.encoderRegistered != 0;
+	const bool wantsSbc = force ? preference.codec == Ioctl::kCodecSbc : status.encoderRegistered == 0;
+	const bool renegotiates = streaming && ((wantsAac && status.codec != Ioctl::kCodecAac) ||
+											 (wantsSbc && status.codec == Ioctl::kCodecAac));
+	if (renegotiates)
 	{
-		std::printf("\nnote: reconnect the sink to apply the preference (the current stream is %s).\n",
-					CodecName(status.negotiatedCodec));
-	}
-	else if (status.negotiatedCodec != 0 && preference.codec == 0)
-	{
-		std::printf("\nnote: reconnect the sink to renegotiate with the automatic order.\n");
+		std::printf("\nnote: the active stream will renegotiate to apply the preference "
+					"(the status above may lag until the sink answers).\n");
 	}
 	return 0;
 }
