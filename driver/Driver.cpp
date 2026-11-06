@@ -42,6 +42,9 @@ NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMR
 	if (NT_SUCCESS(status))
 	{
 		AssignFriendlyName(ctx);
+		// The stored preference keys off the sink address, so it is restored here,
+		// before the first negotiation.
+		ConfigLoadPreference(ctx);
 	}
 	return status;
 }

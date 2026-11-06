@@ -281,6 +281,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		{
 			OA2DP_INFO(ctx, "Service", "codec preference changed (flags 0x%08X, codec %u)",
 				in->flags, static_cast<unsigned>(in->codec));
+			// Stored before the renegotiation so the switch survives a reload; the IOCTL
+			// still succeeds in memory if the key cannot be written.
+			ConfigSavePreference(ctx);
 			SignalingOnPreferenceChanged(ctx);
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);

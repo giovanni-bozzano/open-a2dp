@@ -4,6 +4,7 @@
 
 | Folder / prefix | `.cpp` suffix -> responsibility |
 |---|---|
+| `config/Config` | `Registry`: stored codec preference (per-sink key, then the global default) |
 | `l2cap/L2cap` | `Brb`: bounded control BRBs/orphan cleanup; `Callbacks`: sends/open callbacks; `Server`: incoming accepts; `Initialize`: setup/server registration/address; `Signaling`: signaling channel lifecycle; `Send`: send slots/link loss; `Media`: media channel lifecycle |
 | `signaling/Signaling` | `Codec`: selection/session reset; `Transmit`: transitions/transmit; `Read`: reads/timers; `WorkItem`: media open/work item; `Lifecycle`: initialization/channel events; `Stop`: close/abort/stop |
 | `media/Media` | `Packets`: timer/readiness/RTP assembly; `Pacing`: SBC/AAC ticks/work item; `Aac`: private AAC setup; `Stream`: initialize/start/stop |

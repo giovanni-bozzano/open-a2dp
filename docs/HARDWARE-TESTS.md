@@ -195,6 +195,17 @@ it), reattach.
    encoder service, or the sink does not offer AAC): no renegotiation, SBC continues.
    `codec aac` reports the missing encoder service when that is the reason.
 
+**T21 Codec preference persistence (S/A)**
+1. `OpenA2dpCtl codec sbc`, then disable and enable the OpenA2dp device (or reboot).
+   Connect and play.
+- Expect: `codec preference SBC restored from the registry` when the device starts, then
+  `configured codec SBC` with no further `codec` command.
+2. `OpenA2dpCtl codec auto`; repeat: AAC where an encoder is registered, SBC otherwise.
+- The value lives under
+  `HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters\Devices\<address>`
+  (`CodecPreferenceFlags`, `CodecPreferenceCodec`); deleting that subkey returns the sink
+  to auto.
+
 ### Soak
 
 **T20 Long run** — stream (A if available, else S) for 8 hours with Verifier on.

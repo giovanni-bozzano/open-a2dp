@@ -489,3 +489,13 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, OpenA2dp::Avdtp::CodecType codec, _In_
 // Stops the stream and waits for in-flight sends.
 _IRQL_requires_(PASSIVE_LEVEL)
 void MediaStop(_In_ DEVICE_CONTEXT* ctx);
+
+// config/
+// Restores the stored codec preference: the sink's own key first, then the global
+// default. Call once the sink address is known, before negotiation.
+_IRQL_requires_(PASSIVE_LEVEL)
+void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx);
+
+// Stores the current codec preference under the sink's configuration key.
+_IRQL_requires_(PASSIVE_LEVEL)
+void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx);

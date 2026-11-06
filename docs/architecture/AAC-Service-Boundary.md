@@ -132,7 +132,7 @@ struct.
 | `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference and the counters |
-| `SET_PREFERENCE` | `Preference` | – | Volatile in v1; the registry store is M5b step 3. A forced codec must be SBC or AAC. Changing it while streaming CLOSEs and rediscovers the stream when the new selection can be honoured |
+| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC. Changing it while streaming CLOSEs and rediscovers the stream when the new selection can be honoured |
 
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).

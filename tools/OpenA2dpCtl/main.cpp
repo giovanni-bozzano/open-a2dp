@@ -33,10 +33,11 @@ Usage:
 Commands:
   status    Show the AVDTP/media state, codec, preference and counters (default).
   list      List the present OpenA2dp devices.
-  codec     Set the codec preference. If a stream is active it is
-            renegotiated immediately; otherwise the preference applies at
-            the next AVDTP negotiation. "auto" prefers AAC while an encoder
-            service is registered, then SBC.
+  codec     Set the codec preference, stored for this sink and restored
+            when the device starts. If a stream is active it is renegotiated
+            immediately; otherwise the preference applies at the next AVDTP
+            negotiation. "auto" prefers AAC while an encoder service is
+            registered, then SBC.
   version   Show the driver ABI and version.
 
 Options:

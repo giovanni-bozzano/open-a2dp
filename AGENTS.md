@@ -22,7 +22,7 @@
 - Keep the codebase as much as possible event driven.
 
 ## Code map
-- Entry/PnP: `driver/Driver.cpp`; `driver/README.md` lists subsystem `.cpp` files under `driver/{audio,l2cap,signaling,service,media}/`.
+- Entry/PnP: `driver/Driver.cpp`; `driver/README.md` lists subsystem `.cpp` files under `driver/{audio,config,l2cap,signaling,service,media}/`.
 - AAC service: `service/main.cpp`.
 - Diagnostics: `tools/OpenA2dpCtl/`.
 - Codecs: `codecs/`.
