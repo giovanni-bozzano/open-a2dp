@@ -2,9 +2,8 @@
 
 Manual tests for behaviour host tests cannot cover: the Bluetooth transport, PnP/power,
 the encoder service and the event-driven signaling (see
-[event model](architecture/Event-Model.md)). Gates and their status live in
-[VALIDATION.md](VALIDATION.md); this file only says how to run them. A test passes only
-when every "Expect" holds and the [log check](#4-log-check-after-every-test) is clean.
+[event model](architecture/Event-Model.md)). A test passes only when every "Expect"
+holds and the [log check](#4-log-check-after-every-test) is clean.
 
 ## 1. Setup (once)
 
@@ -214,5 +213,5 @@ stacks), then save a dump (`.dump /ka`).
 
 ## 5. Reporting
 Per test: id, sink, commit, Verifier on/off, pass/fail, log file and dump if any.
-Update the gate in [VALIDATION.md](VALIDATION.md) only when a gate passes or a
-blocker changes.
+Update the exit gate in [STATUS.md](STATUS.md) only when a gate passes or a blocker
+changes.

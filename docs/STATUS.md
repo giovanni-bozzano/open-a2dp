@@ -17,5 +17,5 @@
 ## Next priorities (ordered)
 
 1. Event-driven migration done (phases 1-4); validate on hardware: media open retry, AAC renegotiation on late service registration, sink-initiated links discovering only on audio run. Media clock, AVDTP response timer and teardown bounds stay. See [event model](architecture/Event-Model.md).
-2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink. See [AAC gate](VALIDATION.md#aac-and-fallback).
+2. Validate AAC end to end, then SBC fallback; blocked on an AAC-capable sink.
 3. Implement M5b, then finish M6. See [configuration design](architecture/Codec-Configuration.md).
