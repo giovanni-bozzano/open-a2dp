@@ -3,6 +3,7 @@
 #include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/SbcCodec.h>
+#include <OpenA2dp/SbcFixed.h>
 
 #include <cstring>
 
@@ -62,13 +63,27 @@ uint32_t BitpoolSelector(void* context, CodecType codec, const uint8_t* remoteIe
 	return 1;
 }
 
-// Mirrors the driver: only AAC has a validator; the session checks SBC itself.
+// Mirrors the driver: the owner validates both codecs; an SBC proposal that the session
+// already accepted as a subset of the local capabilities passes here.
 uint8_t TestValidator(void*, CodecType codec, const uint8_t* ie, size_t ieLength)
 {
 	if (codec != CodecType::Aac) {
-		return static_cast<uint8_t>(ErrorCode::NotSupportedCodecType);
+		return 0;
 	}
 	return AacConfig::Validate(ie, ieLength);
+}
+
+// Mirrors a driver whose endpoint is stereo: a mono proposal must be refused by code.
+uint8_t StereoOnlyValidator(void*, CodecType codec, const uint8_t* ie, size_t ieLength)
+{
+	if (codec != CodecType::Sbc) {
+		return 0;
+	}
+	SbcFixed::Params params;
+	if (!SbcFixed::ParseIe(ie, ieLength, params)) {
+		return static_cast<uint8_t>(ErrorCode::UnsupportedConfiguration);
+	}
+	return params.Channels() == 2 ? 0 : static_cast<uint8_t>(ErrorCode::NotSupportedChannelMode);
 }
 
 // SEID 1 = SBC always; SEID 2 = AAC. The driver always registers both SEPs and
@@ -585,6 +600,34 @@ TEST(AvdtpSource_AbortOverridesPendingCommand)
 	CHECK(s.State() == SessionState::Aborting);
 	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
 	CHECK(s.State() == SessionState::Idle);
+}
+
+TEST(AvdtpSource_RejectsSinkConfigurationTheOwnerRefuses)
+{
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), TestSelector, nullptr,
+					StereoOnlyValidator);
+	uint8_t in[kMaxSignalPacket];
+	uint8_t out[kMaxSignalPacket];
+	const uint8_t mono[4] = {0x28, 0x15, 0x02, 0x35};
+
+	WriteSignalHeader({1, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	in[3] = 2 << 2;
+	const size_t n = 4 + CodecCaps(CodecType::Sbc, mono, 4, in + 4);
+	REQUIRE(s.OnPacket(in, n, out, sizeof(out)) == 4);
+	CHECK(Header(out).messageType == MessageType::ResponseReject);
+	CHECK_EQ(out[2], uint8_t{static_cast<uint8_t>(ServiceCategory::MediaCodec)});
+	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::NotSupportedChannelMode)});
+	CHECK(s.State() == SessionState::Idle);
+
+	// The same sink is accepted once it proposes a configuration the endpoint can serve.
+	WriteSignalHeader({2, PacketType::Single, MessageType::Command, Signal::SetConfiguration}, in, 2);
+	in[2] = kLocalSeid << 2;
+	in[3] = 2 << 2;
+	const size_t accepted = 4 + CodecCaps(CodecType::Sbc, kSbcConfig, 4, in + 4);
+	REQUIRE(s.OnPacket(in, accepted, out, sizeof(out)) == 2);
+	CHECK(Header(out).messageType == MessageType::ResponseAccept);
+	CHECK(s.State() == SessionState::Configured);
 }
 
 TEST(AvdtpSource_AcceptsSinkConfiguration)

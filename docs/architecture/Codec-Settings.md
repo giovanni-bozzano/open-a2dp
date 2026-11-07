@@ -15,6 +15,12 @@ sink must support and the channel counts both codecs can encode. The selected fo
 recorded as the device's `PinSampleRate`/`PinChannels`, drives the position and packet math
 and the PCM buffers, and AVDTP then negotiates a configuration that matches it.
 
+It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
+Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
+would leave both codecs without an encoder (the native Windows A2DP endpoint stops at the
+same two rates). 16-bit is the sample format both encoders consume; wider formats would
+need a sample-format conversion stage on the PCM path.
+
 ## Stored preference
 
 One preference per sink, kept in the registry and restored when the device starts:
@@ -33,6 +39,10 @@ through `SET_PREFERENCE` (`kAbiVersion` 4). Deleting the sink subkey returns it 
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000; clamped to the sink maximum | highest the sink accepts |
+
+192 kbps is the ceiling for a different reason: at 320 kbps the average AAC frame would no
+longer fit one RTP packet (`kMaxFramePayload`, 883 bytes) and the stream drops frames
+because A2DP fragmentation is not implemented.
 | AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
 
 A value the sink does not advertise falls back to the selector's own order instead of
@@ -71,6 +81,8 @@ maximum for the chosen mode.
   unknown falls back to close-and-rediscover.
 - Format change in Windows: applies the next time a stream is opened; the endpoint rate is
   preferred for the new negotiation.
-- Sink that cannot serve the endpoint format: the configuration keeps the sink's value,
-  media start refuses the mismatch (`does not match the endpoint format`) and the stream
-  stays silent rather than playing at the wrong speed.
+- Sink that configures a stream (SET_CONFIGURATION) the endpoint format cannot serve: the
+  driver rejects it with `NotSupportedSamplingFrequency` (0xC4), `NotSupportedChannelMode`
+  (0xC6) or `NotSupportedChannels` (0xD9), so the sink can retry with another
+  configuration. The media-start check (`does not match the endpoint format`) remains as a
+  safety net for a sink that re-proposes the same one.

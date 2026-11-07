@@ -49,9 +49,8 @@ enum class DiscoveryFailure : uint8_t {
 using ConfigSelector = uint32_t (*)(void* context, CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 									uint8_t* configIe, size_t& configIeLength);
 
-// Checks a configuration IE the sink proposed for one of our SEPs. Only used for
-// codecs other than SBC (the session validates SBC itself); returns 0 or an
-// AVDTP ErrorCode.
+// Checks a configuration IE the sink proposed for one of our SEPs, after the session's
+// own capability check. Returns 0 or an AVDTP ErrorCode; the sink may retry.
 using ConfigValidator = uint8_t (*)(void* context, CodecType codec, const uint8_t* ie, size_t ieLength);
 
 class SourceSession {
@@ -716,12 +715,14 @@ private:
 		if (codec != sep->codec) {
 			return Reject(h, ErrorCode::NotSupportedCodecType, out, cap, ServiceCategory::MediaCodec);
 		}
-		if (sep->codec == CodecType::Sbc) {
-			if (!IsSubsetOfLocal(*sep, ie, ieLength)) {
-				return Reject(h, ErrorCode::UnsupportedConfiguration, out, cap, ServiceCategory::MediaCodec);
-			}
-		} else {
-			const uint8_t error = validator_ != nullptr ? validator_(selectorContext_, codec, ie, ieLength) : 0;
+		if (sep->codec == CodecType::Sbc && !IsSubsetOfLocal(*sep, ie, ieLength)) {
+			return Reject(h, ErrorCode::UnsupportedConfiguration, out, cap, ServiceCategory::MediaCodec);
+		}
+		// The owner also checks what the local SEP capabilities cannot express, such as a
+		// format the audio endpoint cannot serve. Rejecting here lets the sink retry with
+		// another configuration instead of the stream failing once media starts.
+		if (validator_ != nullptr) {
+			const uint8_t error = validator_(selectorContext_, codec, ie, ieLength);
 			if (error != 0) {
 				return Reject(h, static_cast<ErrorCode>(error), out, cap, ServiceCategory::MediaCodec);
 			}

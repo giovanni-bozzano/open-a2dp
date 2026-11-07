@@ -96,9 +96,29 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 	return 0;
 }
 
-// Sink-proposed configurations for non-SBC codecs; returns 0 or an AVDTP error.
+// Sink-proposed configurations; returns 0 or an AVDTP error. The sink configures the
+// stream itself here, so this is the only chance to refuse a format the audio endpoint
+// cannot serve: the media path would otherwise start into a mismatch and stay silent.
 uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
 {
+	DEVICE_CONTEXT* ctx = static_cast<DEVICE_CONTEXT*>(context);
+	if (codec == Avdtp::CodecType::Sbc)
+	{
+		SbcFixed::Params params;
+		if (!SbcFixed::ParseIe(ie, ieLength, params))
+		{
+			return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
+		}
+		if (params.sampleRate != ctx->PinSampleRate)
+		{
+			return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
+		}
+		if (params.Channels() != ctx->PinChannels)
+		{
+			return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedChannelMode);
+		}
+		return 0;
+	}
 	if (codec != Avdtp::CodecType::Aac)
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
@@ -106,11 +126,29 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 	// The AAC SEP is always advertised, so a sink can propose an AAC configuration
 	// even while no encoder exists. Refusing it here keeps the stream from opening
 	// into a codec the driver has nothing to encode with.
-	if (!ServiceRegistered(static_cast<DEVICE_CONTEXT*>(context)))
+	if (!ServiceRegistered(ctx))
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
 	}
-	return AacConfig::Validate(ie, ieLength);
+	const uint8_t error = AacConfig::Validate(ie, ieLength);
+	if (error != 0)
+	{
+		return error;
+	}
+	AacConfig::Params params;
+	if (!AacConfig::ParseConfiguredIe(ie, ieLength, params))
+	{
+		return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
+	}
+	if (params.sampleRate != ctx->PinSampleRate)
+	{
+		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
+	}
+	if (params.channels != ctx->PinChannels)
+	{
+		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedChannels);
+	}
+	return 0;
 }
 
 // Refreshes the snapshot GET_STATUS reads without taking SessionLock. Caller holds SessionLock.

@@ -238,9 +238,11 @@ it), reattach.
   mono audio; `status` shows one channel. Repeat on A: AAC negotiates mono.
 4. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 2 ch`, `status`
    reports the 48 kHz bitrate, audio is audible.
-5. A sink that answers the configure with another rate or channel count (non-compliant,
-   one format only) fails loudly with `SBC <rate> Hz <n> ch does not match the endpoint
-   format <rate> Hz <n> ch` and stays silent instead of playing at the wrong speed.
+5. A sink that configures the stream itself with another rate or channel count
+   (non-compliant, one format only) is rejected: our SET_CONFIGURATION response carries
+   0xC4 (sampling frequency), 0xC6 (channel mode) or 0xD9 (channels) and the sink should
+   retry. If it insists, the stream never opens; `does not match the endpoint format` in
+   the media log is the safety net, not the normal path.
 
 ### Soak
 
