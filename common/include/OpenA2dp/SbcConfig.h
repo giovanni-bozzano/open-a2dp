@@ -59,6 +59,34 @@ constexpr uint8_t SampleRateBit(uint32_t rate) noexcept
 	return rate == 16000 ? 0x80 : rate == 32000 ? 0x40 : rate == 44100 ? 0x20 : rate == 48000 ? 0x10 : 0;
 }
 
+// The sample rates and channel modes an advertised capability byte (IE byte 0) offers, as
+// bit masks the driver publishes to the CLI: bit 0 = 44100 Hz / mono, bit 1 = 48000 Hz /
+// stereo. 0 means the sink has not been queried yet.
+constexpr uint32_t AdvertisedRates(uint8_t capabilities) noexcept
+{
+	return (capabilities & 0x20 ? 1u : 0u) | (capabilities & 0x10 ? 2u : 0u);
+}
+
+constexpr uint32_t AdvertisedChannels(uint8_t capabilities) noexcept
+{
+	return (capabilities & 0x08 ? 1u : 0u) | (capabilities & 0x07 ? 2u : 0u);
+}
+
+// Whether the sink's advertised capabilities (byte 0 of its IE, 0 = unknown) cover an
+// endpoint format; 0 means "any" for both fields.
+constexpr bool SupportsFormat(uint8_t capabilities, uint32_t rate, uint8_t channels) noexcept
+{
+	if (capabilities == 0)
+	{
+		return false;
+	}
+	if (rate != 0 && (AdvertisedRates(capabilities) & (rate == 44100 ? 1u : 2u)) == 0)
+	{
+		return false;
+	}
+	return channels == 0 || (AdvertisedChannels(capabilities) & channels) != 0;
+}
+
 // Picks one value per field from the sink capabilities and writes a configured IE.
 // preferredSampleRate: 0 = no preference. Returns false if nothing is compatible.
 constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t preferredSampleRate,

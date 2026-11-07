@@ -287,6 +287,10 @@ struct DEVICE_CONTEXT
 	volatile LONG SignalingIncoming;
 	// Set by the ACX stream run (SignalingOnAudioRun) for the signaling work item.
 	volatile LONG AudioRunPending;
+	// Byte 0 of the SBC capabilities the sink advertised in the last discovery (rates and
+	// channel modes), 0 until one ran. Written by the selector, read by SET_PREFERENCE to
+	// refuse a pinned endpoint format the sink cannot serve.
+	volatile LONG SinkSbcCapabilities;
 
 	// Media transport channel, opened from the signaling work item.
 	L2CAP_CHANNEL_HANDLE MediaChannel;

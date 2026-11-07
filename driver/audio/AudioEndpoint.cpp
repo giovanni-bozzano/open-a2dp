@@ -13,10 +13,22 @@ void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeSpinLock(&ctx->AudioLock);
-	// Until Windows opens a stream the endpoint reports the default format.
-	ctx->PinSampleRate = AudioSampleRate;
+	// The stored preference was restored before the endpoint was created, so a pinned rate
+	// or channel mode also decides the default format reported until Windows opens a stream.
+	Ioctl::Preference preference;
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+		preference = ctx->Preference;
+		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+	}
+	ctx->PinSampleRate = preference.endpointRate != 0 ? preference.endpointRate : AudioSampleRate;
 	ctx->PinChannels = AudioChannels;
-	ctx->PinBytesPerFrame = AudioBytesPerFrame;
+	if (preference.endpointChannels != 0)
+	{
+		ctx->PinChannels = static_cast<USHORT>(preference.endpointChannels);
+	}
+	ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
 	BuildRenderFormats();
 	// The PCM ring lives in the service block and is initialized by ServiceInitialize.
 
@@ -94,13 +106,34 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 	// Every supported format is listed so Windows may open any of them; the one it picks
-	// is what AVDTP negotiates once audio starts.
+	// is what AVDTP negotiates once audio starts. A pinned endpoint rate or channel mode
+	// drops the others, which is how the preference reaches the negotiated stream.
+	bool formatAdded = false;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
+		if (!RenderFormatAllowed(preference, i))
+		{
+			continue;
+		}
 		status = AddFormat(ctx->Device, pins[0], RenderFormats[i]);
 		if (!NT_SUCCESS(status))
 		{
 			return status;
+		}
+		formatAdded = true;
+	}
+	if (!formatAdded)
+	{
+		// A validated preference always leaves one format; fall back rather than expose an
+		// endpoint Windows cannot open.
+		OA2DP_ERROR(ctx, "Audio", "the preference left no render format; listing all of them");
+		for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+		{
+			status = AddFormat(ctx->Device, pins[0], RenderFormats[i]);
+			if (!NT_SUCCESS(status))
+			{
+				return status;
+			}
 		}
 	}
 

@@ -250,6 +250,18 @@ it), reattach.
    0xC4 (sampling frequency), 0xC6 (channel mode) or 0xD9 (channels) and the sink should
    retry. If it insists, the stream never opens; `does not match the endpoint format` in
    the media log is the safety net, not the normal path.
+6. `OpenA2dpCtl codec --rate 48000 --channels 2`: `status` lists the pin
+   (`endpoint 48000 Hz, stereo`), a note says it applies at the next device start, and
+   `sink formats` names what the sink advertised. Reconnect the sink; the endpoint's
+   *Advanced* list then offers only 48 kHz formats, `status` still shows the pin and a
+   restored preference logs `codec preference ... restored from the registry`.
+7. On a sink that advertises only 44.1 kHz or only stereo, `OpenA2dpCtl codec --rate 48000`
+   or `--channels 1` is refused (`SET_PREFERENCE: ... not supported` plus the hint), the
+   driver logs `the sink does not advertise the pinned endpoint format ...`, and `status`
+   still shows the previous preference. Before the first discovery (no `sink formats` line)
+   the pin is accepted and the negotiation check decides.
+8. `OpenA2dpCtl codec --rate 0 --channels 0` restores every served format; after a
+   reconnect the *Advanced* list offers both rates and both channel counts again.
 
 ### Soak
 

@@ -116,6 +116,52 @@ TEST(Negotiation_ForcedCodecUnavailableFallsBack)
 	CHECK(selected.codec == CodecType::Sbc);
 }
 
+// The driver and the CLI share this check: a stale or hand-edited preference must never
+// reach the render format list or the AVDTP selector.
+TEST(Ioctl_PreferenceValidation)
+{
+	Ioctl::Preference preference = {};
+	CHECK(Ioctl::ValidPreference(preference)); // every field at its default
+
+	// kCodecSbc is 0, so a forced preference that leaves the codec at its default means SBC.
+	preference.flags = Ioctl::kPreferenceForceCodec;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.codec = Ioctl::kCodecAac;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.codec = 7;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.flags = 0x1u << 1;
+	CHECK(!Ioctl::ValidPreference(preference)); // unknown flag
+	preference.flags = 0;
+
+	preference.endpointRate = 44100;
+	preference.endpointChannels = 1;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.endpointRate = 96000;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.endpointRate = 48000;
+	preference.endpointChannels = 3;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.endpointChannels = 2;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.endpointRate = 0;
+	preference.endpointChannels = 0;
+
+	preference.sbcBitpool = 1;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.sbcBitpool = Ioctl::kSbcMaxBitpool;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.sbcBitpool = 0;
+	preference.sbcBlocks = 6;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.sbcBlocks = 4;
+	preference.sbcSubbands = 4;
+	preference.sbcAllocation = Ioctl::kSbcAllocationSnr;
+	CHECK(Ioctl::ValidPreference(preference));
+
+	CHECK(sizeof(Ioctl::Preference) == 48); // the CLI and the driver share this layout
+}
+
 TEST(RingBuffer_WrapAround)
 {
 	RingHeader header;

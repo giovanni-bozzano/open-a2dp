@@ -51,4 +51,15 @@ void BuildRenderFormats()
 		format.WaveFormatExt.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
 	}
 }
+
+bool RenderFormatAllowed(_In_ const Ioctl::Preference& preference, _In_ ULONG index)
+{
+	const ULONG rate = AudioRenderRates[index / AudioRenderChannelCount];
+	const USHORT channels = AudioRenderChannels[index % AudioRenderChannelCount];
+	if (preference.endpointRate != 0 && rate != preference.endpointRate)
+	{
+		return false;
+	}
+	return preference.endpointChannels == 0 || channels == preference.endpointChannels;
+}
 } // namespace OpenA2dpDriver::Audio

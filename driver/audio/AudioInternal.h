@@ -68,6 +68,9 @@ NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG posit
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected);
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
 void BuildRenderFormats();
+// Whether the stored preference admits this index of RenderFormats; a pinned rate or
+// channel mode drops the formats Windows could otherwise open instead.
+bool RenderFormatAllowed(_In_ const OpenA2dp::Ioctl::Preference& preference, _In_ ULONG index);
 NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin, _In_ RENDER_FORMAT& format);
 void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
 const GUID* EndpointCategory(_In_ BTH_COD cod);

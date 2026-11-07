@@ -28,7 +28,8 @@ Usage:
   OpenA2dpCtl list
   OpenA2dpCtl codec <auto|sbc|aac> [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
-                     [--allocation <loudness|snr>] [--device <mac|index>]
+                     [--allocation <loudness|snr>] [--rate <44100|48000>]
+                     [--channels <1|2>] [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
 
@@ -43,6 +44,10 @@ Commands:
             and the SBC bitpool; --blocks, --subbands and --allocation pin the
             SBC frame shape. 0 restores the driver default (--allocation
             default), and the sink's advertised limits still apply.
+            --rate and --channels pin the endpoint format Windows opens,
+            which is the rate the stream runs at; they apply once the sink
+            reconnects, because the endpoint formats are built at device
+            start. 0 lets Windows choose among every served format.
   version   Show the driver ABI and version.
 
 Options:
@@ -51,6 +56,9 @@ Options:
   --bitrate <bps>   AAC bitrate cap for `codec` (0 = driver default).
   --bitpool <n>     SBC bitpool cap for `codec`, 0 or 2..250 (0 = driver
                     default). The sink's minimum and maximum still win.
+  --rate <hz>       Endpoint sample rate for `codec`, 0, 44100 or 48000 Hz
+                    (0 = every served rate).
+  --channels <n>    Endpoint channel count for `codec`, 0, 1 or 2 (0 = both).
   --watch           Refresh status until interrupted.
   --interval <ms>   Refresh period for --watch (default 1000).
 
@@ -483,6 +491,17 @@ void PrintPreference(const Ioctl::Preference& preference)
 					preference.sbcSubbands != 0 ? preference.sbcSubbands : 8u,
 					preference.sbcAllocation == Ioctl::kSbcAllocationSnr ? "SNR" : "loudness");
 	}
+	if (preference.endpointRate != 0 || preference.endpointChannels != 0)
+	{
+		char rate[16] = "any rate";
+		if (preference.endpointRate != 0)
+		{
+			std::snprintf(rate, sizeof(rate), "%u Hz", preference.endpointRate);
+		}
+		std::printf("  endpoint        %s, %s\n", rate,
+					preference.endpointChannels == 1 ? "mono"
+					: preference.endpointChannels == 2 ? "stereo" : "any channels");
+	}
 }
 
 void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl::Preference& preference)
@@ -514,6 +533,37 @@ void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl:
 	{
 		std::printf("  media MTU       %u B, %u B payload; AAC up to %u bps\n", status.mediaMtu,
 					status.mediaMtu - Ioctl::kRtpHeaderBytes, status.bitrateLimit);
+	}
+	// The formats the sink advertised, so a `codec --rate/--channels` pin can be aimed at
+	// something the sink will accept instead of being refused.
+	if (status.sinkRates != 0 || status.sinkChannels != 0)
+	{
+		std::string formats;
+		const auto append = [&formats](const char* text)
+		{
+			if (!formats.empty())
+			{
+				formats += ", ";
+			}
+			formats += text;
+		};
+		if ((status.sinkRates & 1) != 0)
+		{
+			append("44100 Hz");
+		}
+		if ((status.sinkRates & 2) != 0)
+		{
+			append("48000 Hz");
+		}
+		if ((status.sinkChannels & 1) != 0)
+		{
+			append("mono");
+		}
+		if ((status.sinkChannels & 2) != 0)
+		{
+			append("stereo");
+		}
+		std::printf("  sink formats    %s\n", formats.c_str());
 	}
 	PrintPreference(preference);
 	std::printf("  encoder         %s\n", status.encoderRegistered != 0 ? "registered" : "not registered");
@@ -666,10 +716,21 @@ struct PreferenceOverrides {
 	uint32_t subbands = 0;
 	bool hasAllocation = false;
 	uint32_t allocation = 0;
+	bool hasRate = false;
+	uint32_t rate = 0;
+	bool hasChannels = false;
+	uint32_t channels = 0;
 
 	bool ParameterChange() const
 	{
 		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation;
+	}
+
+	// The render formats are built at device start, so an endpoint change takes effect
+	// when the sink reconnects, not by renegotiating the active stream.
+	bool EndpointChange() const
+	{
+		return hasRate || hasChannels;
 	}
 };
 
@@ -737,6 +798,14 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		preference.sbcAllocation = overrides.allocation;
 	}
+	if (overrides.hasRate)
+	{
+		preference.endpointRate = overrides.rate;
+	}
+	if (overrides.hasChannels)
+	{
+		preference.endpointChannels = overrides.channels;
+	}
 
 	DWORD bytes = 0;
 	const bool set = IoctlSync(handle, Ioctl::kIoctlSetPreference, &preference, static_cast<DWORD>(sizeof(preference)),
@@ -751,6 +820,12 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	if (!set || !read)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
+		if (!set && overrides.EndpointChange())
+		{
+			std::fprintf(stderr,
+						 "the sink does not advertise that endpoint format; `OpenA2dpCtl status` lists the "
+						 "formats it reported in the last discovery.\n");
+		}
 		return 1;
 	}
 
@@ -773,6 +848,11 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		std::printf("\nnote: the active stream renegotiates to apply the preference "
 					"(the status above may lag until the sink answers).\n");
+	}
+	if (overrides.EndpointChange())
+	{
+		std::printf("\nnote: the endpoint format applies when the device starts again; "
+					"reconnect the sink to open the new rate and channel count.\n");
 	}
 	return 0;
 }
@@ -883,6 +963,30 @@ int main(int argc, char** argv)
 			}
 			overrides.hasAllocation = true;
 			overrides.allocation = allocation;
+		}
+		else if (arg == "--rate" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			const unsigned long parsed = IsDecimal(value) ? std::strtoul(value.c_str(), nullptr, 10) : 1;
+			if (!IsDecimal(value) || !Ioctl::ValidEndpointRate(static_cast<uint32_t>(parsed)))
+			{
+				std::fprintf(stderr, "--rate takes 0 (every rate), 44100 or 48000\n");
+				return 2;
+			}
+			overrides.hasRate = true;
+			overrides.rate = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--channels" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			const unsigned long parsed = IsDecimal(value) ? std::strtoul(value.c_str(), nullptr, 10) : 3;
+			if (!IsDecimal(value) || !Ioctl::ValidEndpointChannels(static_cast<uint32_t>(parsed)))
+			{
+				std::fprintf(stderr, "--channels takes 0 (every channel count), 1 or 2\n");
+				return 2;
+			}
+			overrides.hasChannels = true;
+			overrides.channels = static_cast<uint32_t>(parsed);
 		}
 		else if (arg == "--watch")
 		{

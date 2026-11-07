@@ -15,6 +15,12 @@ sink must support and the channel counts both codecs can encode. The selected fo
 recorded as the device's `PinSampleRate`/`PinChannels`, drives the position and packet math
 and the PCM buffers, and AVDTP then negotiates a configuration that matches it.
 
+Restricting that list is therefore the only way to make a stream run at a chosen rate or
+channel count, which is what the endpoint settings below do: a pinned rate or channel mode
+removes the other formats from the pin, so the engine can only open the pinned one and AVDTP
+negotiates it. The list cannot be empty - the validator only accepts 44.1/48 kHz and 1/2
+channels, and a preference that failed validation is discarded as a whole.
+
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
 would leave both codecs without an encoder (the native Windows A2DP endpoint stops at the
@@ -29,7 +35,14 @@ One preference per sink, kept in the registry and restored when the device start
 - `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
 
 All values are `REG_DWORD`, `0` means "driver default", and `OpenA2dpCtl codec` writes them
-through `SET_PREFERENCE` (`kAbiVersion` 5). Deleting the sink subkey returns it to auto.
+through `SET_PREFERENCE` (`kAbiVersion` 6). Deleting the sink subkey returns it to auto.
+The driver reads it in `OnDeviceAdd`, before the endpoint exists, because the endpoint rate
+and channel mode decide the render formats.
+
+A pin is refused by `SET_PREFERENCE` (`STATUS_NOT_SUPPORTED`) once the sink's advertised SBC
+capabilities are known and do not cover it, rather than stored and left to fail later; the
+`status` line `sink formats` lists the same capabilities for the user. Before the first
+discovery nothing is known, so the pin is stored and the negotiation check refuses it.
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|
@@ -40,6 +53,8 @@ through `SET_PREFERENCE` (`kAbiVersion` 5). Deleting the sink subkey returns it 
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to the MTU ceiling |
 | AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
+| Endpoint rate | `CodecPreferenceEndpointRate` | `--rate hz` | 44100, 48000 | both served rates |
+| Endpoint channels | `CodecPreferenceEndpointChannels` | `--channels n` | 1, 2 | mono and stereo |
 
 The Media Foundation encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps
 are rejected). A2DP sends one access unit per media packet, so the bitrate is also capped
@@ -90,8 +105,15 @@ maximum for the chosen mode.
   unknown falls back to close-and-rediscover.
 - Format change in Windows: applies the next time a stream is opened; the endpoint rate is
   preferred for the new negotiation.
-- Sink that configures a stream (SET_CONFIGURATION) the endpoint format cannot serve: the
-  driver rejects it with `NotSupportedSamplingFrequency` (0xC4), `NotSupportedChannelMode`
-  (0xC6) or `NotSupportedChannels` (0xD9), so the sink can retry with another
-  configuration. The media-start check (`does not match the endpoint format`) remains as a
-  safety net for a sink that re-proposes the same one.
+- Endpoint rate or channel mode change: the render formats are built at device start, so the
+  new set applies when the sink reconnects; the active stream is neither renegotiated nor
+  interrupted. A pinned format the sink does not advertise leaves no usable configuration:
+  the driver refuses its own selection and logs `the sink cannot serve the endpoint format`,
+  so the stream fails instead of running at a rate the endpoint cannot produce. A sink that
+  only supports 44.1 kHz therefore needs `--rate 44100`.
+- Configuration the endpoint format cannot serve, whichever side proposed it: refused at
+  negotiation, not at media start - `NotSupportedSamplingFrequency` (0xC4),
+  `NotSupportedChannelMode` (0xC6), `NotSupportedChannels` (0xD9) or `NotSupportedBitRate`
+  (0xDD) for a bitrate one media packet cannot carry. A sink that proposes one can retry
+  with another configuration. The media-start check (`does not match the endpoint format`)
+  remains as a safety net for a sink that re-proposes the same one.

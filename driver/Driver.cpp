@@ -42,9 +42,6 @@ NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMR
 	if (NT_SUCCESS(status))
 	{
 		AssignFriendlyName(ctx);
-		// The stored preference keys off the sink address, so it is restored here,
-		// before the first negotiation.
-		ConfigLoadPreference(ctx);
 	}
 	return status;
 }
@@ -192,7 +189,11 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	}
 
 	// The endpoint type depends on the sink's Class of Device; fall back to speakers if unavailable.
+	// The stored preference keys off the sink address, so the address is read first; a failed
+	// query leaves only the parameters default. The preference is restored before the endpoint
+	// exists because a pinned rate or channel mode narrows the render formats.
 	(void)L2capRetrieveRemoteAddress(ctx);
+	ConfigLoadPreference(ctx);
 
 	status = AudioInitialize(ctx);
 	if (!NT_SUCCESS(status))

@@ -182,6 +182,28 @@ TEST(Sbc_SelectConfiguration_TypicalSink)
 	CHECK_EQ(codec.ValidateConfiguration(cfg.ie, cfg.ieLength), uint8_t{0});
 }
 
+// A pinned endpoint format is refused at SET_PREFERENCE against the same advertised
+// capabilities the selector uses, so the mask helpers must read the IE the way it does.
+TEST(Sbc_AdvertisedFormatsMatchTheSelector)
+{
+	CHECK_EQ(SbcConfig::AdvertisedRates(0xF0), uint32_t{3});
+	CHECK_EQ(SbcConfig::AdvertisedRates(0x20), uint32_t{1});
+	CHECK_EQ(SbcConfig::AdvertisedRates(0x10), uint32_t{2});
+	CHECK_EQ(SbcConfig::AdvertisedRates(0x0F), uint32_t{0});
+	CHECK_EQ(SbcConfig::AdvertisedChannels(0x0F), uint32_t{3});
+	CHECK_EQ(SbcConfig::AdvertisedChannels(0x08), uint32_t{1});
+	CHECK_EQ(SbcConfig::AdvertisedChannels(0x05), uint32_t{2});
+	CHECK_EQ(SbcConfig::AdvertisedChannels(0xF0), uint32_t{0});
+
+	const uint8_t stereoOnly44 = 0x21; // 44.1 kHz, joint stereo
+	CHECK(SbcConfig::SupportsFormat(stereoOnly44, 44100, 0));
+	CHECK(SbcConfig::SupportsFormat(stereoOnly44, 44100, 2));
+	CHECK(!SbcConfig::SupportsFormat(stereoOnly44, 44100, 1));
+	CHECK(!SbcConfig::SupportsFormat(stereoOnly44, 48000, 0));
+	CHECK(SbcConfig::SupportsFormat(stereoOnly44, 0, 0)); // no pin
+	CHECK(!SbcConfig::SupportsFormat(0, 44100, 2));      // sink not queried yet
+}
+
 TEST(Sbc_SelectConfiguration_PreferenceAndLimits)
 {
 	SbcCodec codec;

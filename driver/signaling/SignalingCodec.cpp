@@ -15,6 +15,47 @@ const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason)
 	return "?";
 }
 
+// A configuration we select has to run at the endpoint format: PCM reaches the encoder at
+// PinSampleRate/PinChannels, so a stream negotiated at another rate or channel count cannot
+// play it. The selectors prefer those values, so a mismatch means the sink does not
+// advertise them - refuse it now, where the log names the cause, instead of leaving the
+// media-start check to fail after the sink has already started.
+uint32_t AcceptSelected(void* context, Avdtp::CodecType codec, const uint8_t* configIe,
+						size_t configIeLength, uint32_t selection)
+{
+	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
+	uint32_t sampleRate = 0;
+	uint32_t channels = 0;
+	if (codec == Avdtp::CodecType::Sbc)
+	{
+		SbcFixed::Params params;
+		if (SbcFixed::ParseIe(configIe, configIeLength, params))
+		{
+			sampleRate = params.sampleRate;
+			channels = params.Channels();
+		}
+	}
+	else
+	{
+		AacConfig::Params params;
+		if (AacConfig::ParseConfiguredIe(configIe, configIeLength, params))
+		{
+			sampleRate = params.sampleRate;
+			channels = params.channels;
+		}
+	}
+	if (sampleRate == ctx->PinSampleRate && channels == ctx->PinChannels)
+	{
+		return selection;
+	}
+	OA2DP_WARN(ctx, "AVDTP",
+		"the sink cannot serve the endpoint format (%u Hz, %u ch): the %s configuration runs at "
+		"%u Hz, %u ch, so no stream is offered",
+		ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels), CodecName(codec), sampleRate,
+		channels);
+	return 0;
+}
+
 // Scores each sink SEP: SBC 1, AAC 2, so AAC wins when both sides support it.
 // Returns 0 for a codec we cannot configure (or that the user forced away from).
 uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
@@ -37,6 +78,9 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 
 	if (codec == Avdtp::CodecType::Sbc)
 	{
+		// Remember the rates and channel modes the sink advertises, so SET_PREFERENCE can
+		// refuse a pinned endpoint format the sink cannot serve instead of storing it.
+		InterlockedExchange(&ctx->SinkSbcCapabilities, remoteIeLength >= 1 ? remoteIe[0] : 0);
 		if (forceCodec && preference.codec != Ioctl::kCodecSbc)
 		{
 			return 0;
@@ -72,7 +116,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 			return 0;
 		}
 		configIeLength = SbcConfig::kIeLength;
-		return 1;
+		return AcceptSelected(ctx, codec, configIe, configIeLength, 1);
 	}
 
 	if (codec == Avdtp::CodecType::Aac)
@@ -93,7 +137,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 			return 0;
 		}
 		configIeLength = AacConfig::kIeLength;
-		return 2;
+		return AcceptSelected(ctx, codec, configIe, configIeLength, 2);
 	}
 
 	return 0;

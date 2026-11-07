@@ -21,7 +21,9 @@ namespace OpenA2dp::Ioctl {
 // 3: Preference carries an SBC bitpool, and GET_PREFERENCE returns it.
 // 4: Preference carries the SBC block length, subbands and allocation.
 // 5: Status carries the media MTU and the AAC bitrate it allows.
-constexpr uint32_t kAbiVersion = 5;
+// 6: Preference carries the endpoint sample rate and channel mode; Status carries the
+//    formats the sink advertises.
+constexpr uint32_t kAbiVersion = 6;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -93,6 +95,19 @@ constexpr bool ValidSbcFrameParameters(uint32_t blocks, uint32_t subbands, uint3
 	const bool allocationOk = allocation == 0 || allocation == kSbcAllocationLoudness ||
 							  allocation == kSbcAllocationSnr;
 	return blocksOk && subbandsOk && allocationOk;
+}
+
+// The endpoint formats a stored preference may pin; 0 means the driver default (every
+// rate and channel count the endpoint serves). Pinning one narrows the render formats
+// Windows may open, which is the only way to force the rate an A2DP stream uses.
+constexpr bool ValidEndpointRate(uint32_t sampleRate) noexcept
+{
+	return sampleRate == 0 || sampleRate == 44100 || sampleRate == 48000;
+}
+
+constexpr bool ValidEndpointChannels(uint32_t channels) noexcept
+{
+	return channels == 0 || channels == 1 || channels == 2;
 }
 
 // Frame record flags.
@@ -202,26 +217,63 @@ struct Status {
 	// sample rate. The bitrate limit is independent of the codec in use.
 	uint32_t mediaMtu;
 	uint32_t bitrateLimit;
+	// Formats the sink advertised in the last discovery, 0 until one ran: a bit per rate
+	// (1 = 44100 Hz, 2 = 48000 Hz) and a bit per channel count (1 = mono, 2 = stereo). A
+	// pinned endpoint format has to be covered by both masks.
+	uint32_t sinkRates;
+	uint32_t sinkChannels;
 };
 
 struct Preference {
 	uint32_t abiVersion;
-	uint32_t flags;         // kPreference*
-	uint32_t codec;         // kCodec*
-	uint32_t aacBitrate;    // 0 = driver default (highest supported <= sink max)
-	uint32_t aacSampleRate; // 0 = driver default; unused until the endpoint is multi-rate
-	uint32_t sbcBitpool;    // 0 = driver default; clamped to the sink's range
-	uint32_t sbcBlocks;     // 0 = driver default; 4, 8, 12 or 16 blocks per frame
-	uint32_t sbcSubbands;   // 0 = driver default; 4 or 8 subbands
-	uint32_t sbcAllocation; // 0 = driver default; kSbcAllocation*
+	uint32_t flags;            // kPreference*
+	uint32_t codec;            // kCodec*
+	uint32_t aacBitrate;       // 0 = driver default (highest supported <= sink max)
+	uint32_t aacSampleRate;    // 0 = driver default; unused until the endpoint is multi-rate
+	uint32_t sbcBitpool;       // 0 = driver default; clamped to the sink's range
+	uint32_t sbcBlocks;        // 0 = driver default; 4, 8, 12 or 16 blocks per frame
+	uint32_t sbcSubbands;      // 0 = driver default; 4 or 8 subbands
+	uint32_t sbcAllocation;    // 0 = driver default; kSbcAllocation*
+	uint32_t endpointRate;     // 0 = driver default; 44100 or 48000 Hz, applied when the device starts
+	uint32_t endpointChannels; // 0 = driver default; 1 or 2, applied when the device starts
 	uint32_t reserved;
 };
 
-static_assert(sizeof(Preference) == 40, "Preference layout is part of the driver/CLI ABI");
+// A hand-edited or stale store must not force a configuration the driver cannot serve.
+// The driver and the CLI share this, so a rejected preference never leaves an endpoint
+// without a render format.
+constexpr bool ValidPreference(const Preference& preference) noexcept
+{
+	if ((preference.flags & ~kPreferenceForceCodec) != 0)
+	{
+		return false;
+	}
+	if (preference.sbcBitpool != 0 &&
+		(preference.sbcBitpool < kSbcMinBitpool || preference.sbcBitpool > kSbcMaxBitpool))
+	{
+		return false;
+	}
+	if (!ValidSbcFrameParameters(preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation))
+	{
+		return false;
+	}
+	if (!ValidEndpointRate(preference.endpointRate) ||
+		!ValidEndpointChannels(preference.endpointChannels))
+	{
+		return false;
+	}
+	if ((preference.flags & kPreferenceForceCodec) == 0)
+	{
+		return true;
+	}
+	return preference.codec == kCodecSbc || preference.codec == kCodecAac;
+}
+
+static_assert(sizeof(Preference) == 48, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 92, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 100, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 
