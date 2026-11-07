@@ -21,6 +21,13 @@ removes the other formats from the pin, so the engine can only open the pinned o
 negotiates it. The list cannot be empty - the validator only accepts 44.1/48 kHz and 1/2
 channels, and a preference that failed validation is discarded as a whole.
 
+The list is also edited while the device runs: `AcxDataFormatListRemoveDataFormat` and
+`AcxDataFormatListAddDataFormat` change the pin's raw format list in place, ACX fires the
+pin's format-change event after that, and Windows re-queries the endpoint instead of needing
+it restarted. The driver keeps one `ACXDATAFORMAT` object per entry so a change is an
+add/remove of objects it already owns, and it assigns the first listed format as the
+endpoint default so the pinned one is what Windows reports and opens.
+
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
 would leave both codecs without an encoder (the native Windows A2DP endpoint stops at the
@@ -105,12 +112,14 @@ maximum for the chosen mode.
   unknown falls back to close-and-rediscover.
 - Format change in Windows: applies the next time a stream is opened; the endpoint rate is
   preferred for the new negotiation.
-- Endpoint rate or channel mode change: the render formats are built at device start, so the
-  new set applies when the sink reconnects; the active stream is neither renegotiated nor
-  interrupted. A pinned format the sink does not advertise leaves no usable configuration:
-  the driver refuses its own selection and logs `the sink cannot serve the endpoint format`,
-  so the stream fails instead of running at a rate the endpoint cannot produce. A sink that
-  only supports 44.1 kHz therefore needs `--rate 44100`.
+- Endpoint rate or channel mode change: the pin's format list is rebuilt in place, so
+  Windows offers the new set without the device restarting. A stream configured for another
+  format is closed and negotiated again (RECONFIGURE cannot change the sampling frequency or
+  channel count); a stream that already runs at the new format is left alone. A pinned format
+  the sink does not advertise leaves no usable configuration: the driver refuses its own
+  selection and logs `the sink cannot serve the endpoint format`, so the stream fails instead
+  of running at a rate the endpoint cannot produce. A sink that only supports 44.1 kHz
+  therefore needs `--rate 44100`.
 - Configuration the endpoint format cannot serve, whichever side proposed it: refused at
   negotiation, not at media start - `NotSupportedSamplingFrequency` (0xC4),
   `NotSupportedChannelMode` (0xC6), `NotSupportedChannels` (0xD9) or `NotSupportedBitRate`

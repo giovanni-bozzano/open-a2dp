@@ -71,7 +71,9 @@ void BuildRenderFormats();
 // Whether the stored preference admits this index of RenderFormats; a pinned rate or
 // channel mode drops the formats Windows could otherwise open instead.
 bool RenderFormatAllowed(_In_ const OpenA2dp::Ioctl::Preference& preference, _In_ ULONG index);
-NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin, _In_ RENDER_FORMAT& format);
+// Creates the ACX format objects for RenderFormats, parented to the streaming pin, so
+// they can be listed and unlisted as the stored endpoint format changes.
+NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
 void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
 const GUID* EndpointCategory(_In_ BTH_COD cod);
 } // namespace OpenA2dpDriver::Audio

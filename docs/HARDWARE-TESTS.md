@@ -250,18 +250,22 @@ it), reattach.
    0xC4 (sampling frequency), 0xC6 (channel mode) or 0xD9 (channels) and the sink should
    retry. If it insists, the stream never opens; `does not match the endpoint format` in
    the media log is the safety net, not the normal path.
-6. `OpenA2dpCtl codec --rate 48000 --channels 2`: `status` lists the pin
-   (`endpoint 48000 Hz, stereo`), a note says it applies at the next device start, and
-   `sink formats` names what the sink advertised. Reconnect the sink; the endpoint's
-   *Advanced* list then offers only 48 kHz formats, `status` still shows the pin and a
-   restored preference logs `codec preference ... restored from the registry`.
+6. `OpenA2dpCtl codec --rate 48000 --channels 2` while Windows plays at 44.1 kHz: `status`
+   lists the pin (`endpoint 48000 Hz, stereo`) and the command notes that the endpoint
+   formats were rebuilt in place. The driver logs `endpoint formats 48000 Hz 2 ch`, then
+   `the endpoint now runs at 48000 Hz 2 ch while the stream is configured for another
+   format; closing to renegotiate`, and the A2DP stream is closed and configured again at
+   48 kHz - the sink stays connected and the endpoint keeps running. *Advanced* in Sound
+   settings now offers only 48 kHz formats, without a reconnect.
 7. On a sink that advertises only 44.1 kHz or only stereo, `OpenA2dpCtl codec --rate 48000`
    or `--channels 1` is refused (`SET_PREFERENCE: ... not supported` plus the hint), the
    driver logs `the sink does not advertise the pinned endpoint format ...`, and `status`
    still shows the previous preference. Before the first discovery (no `sink formats` line)
    the pin is accepted and the negotiation check decides.
-8. `OpenA2dpCtl codec --rate 0 --channels 0` restores every served format; after a
-   reconnect the *Advanced* list offers both rates and both channel counts again.
+8. `OpenA2dpCtl codec --rate 0 --channels 0` lists every served format again in place; the
+   *Advanced* list offers both rates and both channel counts without a reconnect.
+9. While the pin is set and audio plays at the pinned format, pinning the same format is a
+   no-op: no `closing to renegotiate` line and no interruption.
 
 ### Soak
 

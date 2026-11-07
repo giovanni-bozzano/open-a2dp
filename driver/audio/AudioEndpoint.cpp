@@ -105,36 +105,28 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_ERROR(ctx, "Audio", "creating the streaming pin failed 0x%08X", status);
 		return status;
 	}
-	// Every supported format is listed so Windows may open any of them; the one it picks
-	// is what AVDTP negotiates once audio starts. A pinned endpoint rate or channel mode
-	// drops the others, which is how the preference reaches the negotiated stream.
-	bool formatAdded = false;
-	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	// The format list is the set Windows may open the endpoint with, and the format it
+	// picks is what AVDTP negotiates. It is built here from the stored preference and
+	// rebuilt in place when that preference changes (AudioApplyEndpointFormats).
+	WDF_OBJECT_ATTRIBUTES formatAttrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&formatAttrs);
+	formatAttrs.ParentObject = ctx->Device;
+	status = WdfWaitLockCreate(&formatAttrs, &ctx->FormatLock);
+	if (!NT_SUCCESS(status))
 	{
-		if (!RenderFormatAllowed(preference, i))
-		{
-			continue;
-		}
-		status = AddFormat(ctx->Device, pins[0], RenderFormats[i]);
-		if (!NT_SUCCESS(status))
-		{
-			return status;
-		}
-		formatAdded = true;
+		OA2DP_ERROR(ctx, "Audio", "WdfWaitLockCreate failed 0x%08X", status);
+		return status;
 	}
-	if (!formatAdded)
+	ctx->StreamingPin = pins[0];
+	status = CreateRenderFormats(ctx, pins[0]);
+	if (!NT_SUCCESS(status))
 	{
-		// A validated preference always leaves one format; fall back rather than expose an
-		// endpoint Windows cannot open.
-		OA2DP_ERROR(ctx, "Audio", "the preference left no render format; listing all of them");
-		for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
-		{
-			status = AddFormat(ctx->Device, pins[0], RenderFormats[i]);
-			if (!NT_SUCCESS(status))
-			{
-				return status;
-			}
-		}
+		return status;
+	}
+	status = AudioApplyEndpointFormats(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
 	}
 
 	ACX_PIN_CONFIG_INIT_ID(&pinConfig, BridgePinId);

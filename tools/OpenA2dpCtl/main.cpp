@@ -45,9 +45,10 @@ Commands:
             SBC frame shape. 0 restores the driver default (--allocation
             default), and the sink's advertised limits still apply.
             --rate and --channels pin the endpoint format Windows opens,
-            which is the rate the stream runs at; they apply once the sink
-            reconnects, because the endpoint formats are built at device
-            start. 0 lets Windows choose among every served format.
+            which is the rate the stream runs at. The endpoint's format
+            list is rebuilt in place, so the change applies without a
+            reconnect and an active stream renegotiates. 0 lets Windows
+            choose among every served format.
   version   Show the driver ABI and version.
 
 Options:
@@ -844,15 +845,15 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	const bool wantsSbc = force ? preference.codec == Ioctl::kCodecSbc : status.encoderRegistered == 0;
 	const bool codecChanges = (wantsAac && status.codec != Ioctl::kCodecAac) ||
 							  (wantsSbc && status.codec == Ioctl::kCodecAac);
-	if (streaming && (codecChanges || overrides.ParameterChange()))
+	if (streaming && (codecChanges || overrides.ParameterChange() || overrides.EndpointChange()))
 	{
 		std::printf("\nnote: the active stream renegotiates to apply the preference "
 					"(the status above may lag until the sink answers).\n");
 	}
 	if (overrides.EndpointChange())
 	{
-		std::printf("\nnote: the endpoint format applies when the device starts again; "
-					"reconnect the sink to open the new rate and channel count.\n");
+		std::printf("\nnote: the endpoint formats were rebuilt in place, so no reconnect is needed; "
+					"Windows offers only the pinned rate and channel count from now on.\n");
 	}
 	return 0;
 }

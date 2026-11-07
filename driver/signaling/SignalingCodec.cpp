@@ -15,6 +15,48 @@ const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason)
 	return "?";
 }
 
+// The rate and channel count a configuration IE describes; 0 when it does not parse.
+void ConfigFormat(Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength, uint32_t& sampleRate,
+				  uint32_t& channels)
+{
+	sampleRate = 0;
+	channels = 0;
+	if (codec == Avdtp::CodecType::Sbc)
+	{
+		SbcFixed::Params params;
+		if (SbcFixed::ParseIe(ie, ieLength, params))
+		{
+			sampleRate = params.sampleRate;
+			channels = params.Channels();
+		}
+	}
+	else if (codec == Avdtp::CodecType::Aac)
+	{
+		AacConfig::Params params;
+		if (AacConfig::ParseConfiguredIe(ie, ieLength, params))
+		{
+			sampleRate = params.sampleRate;
+			channels = params.channels;
+		}
+	}
+}
+
+// True while the configuration the stream was negotiated with still runs at the endpoint
+// format. A false answer means Windows opened the endpoint at another rate or channel
+// count after the configuration was picked, so the stream has to be renegotiated.
+bool SelectedFormatMatchesPin(DEVICE_CONTEXT* ctx)
+{
+	uint32_t sampleRate = 0;
+	uint32_t channels = 0;
+	ConfigFormat(ctx->Session.SelectedCodec(), ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(),
+				 sampleRate, channels);
+	if (sampleRate == 0)
+	{
+		return true; // an IE we cannot read is not a format change to chase
+	}
+	return sampleRate == ctx->PinSampleRate && channels == ctx->PinChannels;
+}
+
 // A configuration we select has to run at the endpoint format: PCM reaches the encoder at
 // PinSampleRate/PinChannels, so a stream negotiated at another rate or channel count cannot
 // play it. The selectors prefer those values, so a mismatch means the sink does not
@@ -26,24 +68,7 @@ uint32_t AcceptSelected(void* context, Avdtp::CodecType codec, const uint8_t* co
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
 	uint32_t sampleRate = 0;
 	uint32_t channels = 0;
-	if (codec == Avdtp::CodecType::Sbc)
-	{
-		SbcFixed::Params params;
-		if (SbcFixed::ParseIe(configIe, configIeLength, params))
-		{
-			sampleRate = params.sampleRate;
-			channels = params.Channels();
-		}
-	}
-	else
-	{
-		AacConfig::Params params;
-		if (AacConfig::ParseConfiguredIe(configIe, configIeLength, params))
-		{
-			sampleRate = params.sampleRate;
-			channels = params.channels;
-		}
-	}
+	ConfigFormat(codec, configIe, configIeLength, sampleRate, channels);
 	if (sampleRate == ctx->PinSampleRate && channels == ctx->PinChannels)
 	{
 		return selection;

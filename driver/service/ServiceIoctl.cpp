@@ -358,13 +358,19 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				in->sbcAllocation, in->aacBitrate, in->endpointRate, in->endpointChannels);
 			if (endpointChanged)
 			{
-				OA2DP_INFO(ctx, "Service",
-					"the endpoint format applies once the device starts again (reconnect the sink)");
+				// Rebuilt in place, so Windows re-queries the endpoint formats instead of
+				// waiting for the device to restart; an active stream follows through the
+				// renegotiation requested below.
+				const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+				if (!NT_SUCCESS(formatStatus))
+				{
+					OA2DP_WARN(ctx, "Service", "applying the endpoint format failed 0x%08X", formatStatus);
+				}
 			}
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
 			ConfigSavePreference(ctx);
-			if (selectionChanged || parametersChanged)
+			if (selectionChanged || parametersChanged || endpointChanged)
 			{
 				SignalingOnPreferenceChanged(ctx);
 			}

@@ -323,6 +323,14 @@ struct DEVICE_CONTEXT
 	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
 	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
+	// The streaming pin and the render format objects listed on it. A changed endpoint
+	// format is applied by adding and removing those objects in place
+	// (AudioApplyEndpointFormats); FormatLock serializes the rebuilds and FormatsListed
+	// records which RenderFormats indices are listed now (one bit per index).
+	ACXPIN StreamingPin;
+	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
+	WDFWAITLOCK FormatLock;
+	ULONG FormatsListed;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
@@ -486,8 +494,8 @@ void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx);
 
-// Called when SET_PREFERENCE changes the codec preference; renegotiates an active
-// stream immediately instead of waiting for the sink to reconnect.
+// Called when a selection input changes - SET_PREFERENCE, or the endpoint format Windows
+// opened - and renegotiates an active stream instead of waiting for the sink to reconnect.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx);
 
@@ -502,6 +510,11 @@ void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx);
 // Creates the ACX render circuit (speaker endpoint) for this device.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx);
+
+// Rebuilds the streaming pin's format list in place from the stored preference, so a
+// changed endpoint rate or channel mode reaches Windows without the device restarting.
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx);
 
 // Reads up to frames of stereo PCM rendered by Windows; pads the rest with
 // silence. Returns the number of frames that came from the endpoint.

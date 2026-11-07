@@ -292,9 +292,10 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		return;
 	}
 	const bool codecDiffers = ctx->Session.SelectedCodec() != desired;
+	const bool formatDiffers = !SelectedFormatMatchesPin(ctx);
 	const LONG parameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	const bool parametersDiffer = ctx->AppliedPreferenceParameters != parameters;
-	if (!codecDiffers && !parametersDiffer)
+	if (!codecDiffers && !formatDiffers && !parametersDiffer)
 	{
 		return;
 	}
@@ -303,6 +304,17 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
 			CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
+		BeginCodecSwitchClose(ctx);
+		return;
+	}
+	if (formatDiffers)
+	{
+		// RECONFIGURE cannot change the sampling frequency or the channel count of a
+		// configured stream, so it is closed and negotiated again at the new format.
+		OA2DP_INFO(ctx, "Signaling",
+			"the endpoint now runs at %u Hz %u ch while the stream is configured for another format; closing to "
+			"renegotiate",
+			ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels));
 		BeginCodecSwitchClose(ctx);
 		return;
 	}
