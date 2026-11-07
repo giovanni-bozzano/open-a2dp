@@ -25,10 +25,11 @@ constexpr uint32_t kMaxBitrate = kSupportedBitrates[kSupportedBitrateCount - 1];
 
 constexpr uint32_t kSamplesPerFrame = 1024;
 
-// Bytes to keep free in a media payload beyond the average frame: the LATM header (about
-// eleven bytes) and the overshoot of individual CBR frames. Without fragmentation an
-// access unit has to fit one RTP packet, so a bitrate is only usable when it leaves this.
-constexpr size_t kMediaHeadroom = 32;
+// Bytes a media payload needs beyond the average frame: the LATM header and the overshoot
+// of individual CBR frames. Measured on the Media Foundation encoder, the largest access
+// unit is the average frame plus about eleven bytes at every rate and bitrate, so sixteen
+// leaves a small margin. Without fragmentation an access unit has to fit one RTP packet.
+constexpr size_t kMediaHeadroom = 16;
 
 // Highest supported bitrate whose average frame plus kMediaHeadroom fits payloadBytes,
 // which excludes the RTP header. 0 when even the lowest bitrate does not fit.
@@ -134,17 +135,16 @@ constexpr bool ParseConfiguredIe(const uint8_t* ie, size_t len, Params& out) noe
 }
 
 // Everything the driver can play: MPEG-2/4 LC, 44.1/48 kHz, mono/stereo, CBR up to the
-// highest bitrate one media packet carries. That is 256 kbps for the 895-byte A2DP MTU
-// (883 payload bytes, one access unit per packet); the encoder's own ceiling is 320 kbps,
-// which needs a larger MTU.
-constexpr uint32_t kAdvertisedMaxBitrate = 256000;
+// encoder ceiling. Which bitrate a stream actually gets is decided per session by
+// Select with the sink capabilities and the media MTU: 256 kbps at 44.1 kHz and 320 kbps
+// at 48 kHz for the 895-byte MTU (883 payload bytes, one access unit per packet).
 constexpr uint8_t kLocalCapabilities[kIeLength] = {
 	kObjectMpeg2Lc | kObjectMpeg4Lc,
 	static_cast<uint8_t>((SampleRateMask(44100) | SampleRateMask(48000)) >> 4),
 	static_cast<uint8_t>((((SampleRateMask(44100) | SampleRateMask(48000)) & 0x0F) << 4) | kChannels1 | kChannels2),
-	static_cast<uint8_t>((kAdvertisedMaxBitrate >> 16) & 0x7F),
-	static_cast<uint8_t>(kAdvertisedMaxBitrate >> 8),
-	static_cast<uint8_t>(kAdvertisedMaxBitrate),
+	static_cast<uint8_t>((kMaxBitrate >> 16) & 0x7F),
+	static_cast<uint8_t>(kMaxBitrate >> 8),
+	static_cast<uint8_t>(kMaxBitrate),
 };
 
 // Picks one value per field from the sink capabilities and writes a configured IE.

@@ -96,24 +96,26 @@ TEST(Aac_Select_PrefersEndpointChannels)
 	CHECK_EQ(params.channels, uint8_t{2});
 }
 
-// The bitrate the driver advertises to sinks has to be one a single media packet carries.
+// The ceiling the media MTU sets, per endpoint rate: 44.1 kHz cannot carry 320 kbps in one
+// packet, 48 kHz can, and the advertised capability is the encoder ceiling.
 TEST(Aac_LocalCapabilitiesMatchTheMediaMtu)
 {
 	const size_t payload = Ioctl::kMediaMaxMtu - Ioctl::kRtpHeaderBytes;
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 44100), uint32_t{256000});
-	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 48000), uint32_t{256000});
-	CHECK_EQ(AacConfig::ReadBitrate(AacConfig::kLocalCapabilities), uint32_t{256000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 48000), uint32_t{320000});
+	CHECK_EQ(AacConfig::ReadBitrate(AacConfig::kLocalCapabilities), uint32_t{320000});
 }
 
 TEST(Aac_MaxBitrateForMtu)
 {
 	// One 895-byte media packet carries 883 payload bytes; 256 kbps leaves the LATM
-	// header and the CBR overshoot room at both rates, 320 kbps only a larger MTU.
+	// header and the CBR overshoot room at both rates, 320 kbps only at 48 kHz.
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(883, 44100), uint32_t{256000});
-	CHECK_EQ(AacConfig::MaxBitrateForMtu(883, 48000), uint32_t{256000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(883, 48000), uint32_t{320000});
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(1488, 44100), uint32_t{320000});
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(1488, 48000), uint32_t{320000});
-	CHECK_EQ(AacConfig::MaxBitrateForMtu(400, 44100), uint32_t{96000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(400, 44100), uint32_t{128000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(300, 44100), uint32_t{96000});
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(64, 44100), uint32_t{0});
 }
 
@@ -283,52 +285,63 @@ TEST(Aac_MediaFoundation_EncodeSine)
 	CHECK_EQ(encoder->FramesPerPacket(895 - 12), size_t{1});
 }
 
-// 256 kbps is the highest bitrate a 895-byte media packet can carry at 44.1 kHz, so every
-// access unit it produces has to fit the payload without fragmentation.
-TEST(Aac_MediaFoundation_Encode256kFitsMediaPayload)
+// The highest bitrate each endpoint rate can carry has to fit one 895-byte media packet
+// without fragmentation, which is what the selector and the advertised ceiling promise.
+TEST(Aac_MediaFoundation_EncodedFramesFitMediaPayload)
 {
+	const struct {
+		uint32_t sampleRate;
+		uint32_t bitrate;
+	} cases[] = {{44100, 256000}, {48000, 320000}};
+
 	AacCodec codec;
-	Params p;
-	p.sampleRate = 44100;
-	p.channels = 2;
-	p.bitrate = 256000;
-	A2dpCodecConfig cfg;
-	cfg.codec = CodecType::Aac;
-	WriteIe(p, cfg.ie);
-	cfg.ieLength = kIeLength;
+	for (const auto& c : cases) {
+		Params p;
+		p.sampleRate = c.sampleRate;
+		p.channels = 2;
+		p.bitrate = c.bitrate;
+		A2dpCodecConfig cfg;
+		cfg.codec = CodecType::Aac;
+		WriteIe(p, cfg.ie);
+		cfg.ieLength = kIeLength;
 
-	std::unique_ptr<IA2dpEncoder> encoder;
-	const HRESULT hr = codec.CreateEncoder(cfg, encoder);
-	if (FAILED(hr)) {
-		std::printf("    Media Foundation AAC encoder unavailable (hr=0x%08lX)\n",
-					static_cast<unsigned long>(hr));
-	}
-	REQUIRE(SUCCEEDED(hr));
+		std::unique_ptr<IA2dpEncoder> encoder;
+		const HRESULT hr = codec.CreateEncoder(cfg, encoder);
+		if (FAILED(hr)) {
+			std::printf("    Media Foundation AAC encoder unavailable (hr=0x%08lX)\n",
+						static_cast<unsigned long>(hr));
+		}
+		REQUIRE(SUCCEEDED(hr));
 
-	std::vector<int16_t> pcm(1024 * 2);
-	std::vector<uint8_t> au(encoder->MaxFrameBytes() * 2);
-	std::vector<uint8_t> payload(2048);
-	size_t produced = 0;
-	size_t maxPayload = 0;
-	size_t n = 0;
-	for (size_t f = 0; f < 100; ++f) {
-		for (size_t i = 0; i < 1024; ++i, ++n) {
-			const double s = 12000.0 * std::sin(2.0 * std::numbers::pi * 1000.0 * n / 44100.0);
-			pcm[i * 2] = static_cast<int16_t>(s);
-			pcm[i * 2 + 1] = static_cast<int16_t>(-s);
+		std::vector<int16_t> pcm(1024 * 2);
+		std::vector<uint8_t> au(encoder->MaxFrameBytes() * 2);
+		std::vector<uint8_t> payload(2048);
+		size_t produced = 0;
+		size_t maxPayload = 0;
+		size_t n = 0;
+		for (size_t f = 0; f < 100; ++f) {
+			for (size_t i = 0; i < 1024; ++i, ++n) {
+				const double s =
+					12000.0 * std::sin(2.0 * std::numbers::pi * 1000.0 * n / c.sampleRate);
+				pcm[i * 2] = static_cast<int16_t>(s);
+				pcm[i * 2 + 1] = static_cast<int16_t>(-s);
+			}
+			size_t written = 0;
+			REQUIRE(SUCCEEDED(encoder->Encode(pcm.data(), au.data(), au.size(), written)));
+			if (written == 0) {
+				continue;
+			}
+			const size_t sizes[1] = {written};
+			const size_t len = encoder->BuildMediaPayload(au.data(), sizes, 1, payload.data(), payload.size());
+			REQUIRE(len != 0);
+			maxPayload = std::max(maxPayload, len);
+			++produced;
 		}
-		size_t written = 0;
-		REQUIRE(SUCCEEDED(encoder->Encode(pcm.data(), au.data(), au.size(), written)));
-		if (written == 0) {
-			continue;
-		}
-		const size_t sizes[1] = {written};
-		const size_t len = encoder->BuildMediaPayload(au.data(), sizes, 1, payload.data(), payload.size());
-		REQUIRE(len != 0);
-		maxPayload = std::max(maxPayload, len);
-		++produced;
+		std::printf("    %u bps @ %u Hz: %zu AUs, max media payload %zu bytes\n", c.bitrate, c.sampleRate,
+					produced, maxPayload);
+		CHECK(produced > 80);
+		CHECK(maxPayload <= Ioctl::kMaxFramePayload);
+		// The headroom the selector keeps has to cover the measured overhead.
+		CHECK_EQ(AacConfig::MaxBitrateForMtu(Ioctl::kMaxFramePayload, c.sampleRate), c.bitrate);
 	}
-	std::printf("    256 kbps: %zu AUs, max media payload %zu bytes\n", produced, maxPayload);
-	CHECK(produced > 80);
-	CHECK(maxPayload <= Ioctl::kMaxFramePayload);
 }

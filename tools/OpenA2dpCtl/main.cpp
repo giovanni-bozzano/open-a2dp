@@ -508,6 +508,13 @@ void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl:
 	{
 		std::printf("  codec           none\n");
 	}
+	// The bitrate ceiling the media MTU enforces, so a rate the encoder supports but one
+	// packet cannot carry is visible instead of looking like a negotiation failure.
+	if (status.mediaMtu != 0)
+	{
+		std::printf("  media MTU       %u B, %u B payload; AAC up to %u bps\n", status.mediaMtu,
+					status.mediaMtu - Ioctl::kRtpHeaderBytes, status.bitrateLimit);
+	}
 	PrintPreference(preference);
 	std::printf("  encoder         %s\n", status.encoderRegistered != 0 ? "registered" : "not registered");
 	std::printf("  rings           PCM %u/%u B, frames %u/%u B\n", status.pcmBufferedBytes, status.pcmCapacity,

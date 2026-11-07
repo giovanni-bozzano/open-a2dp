@@ -244,6 +244,14 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->underruns = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->Underruns, 0, 0));
 		out->sendFailures = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SendFailures, 0, 0));
 		out->lastError = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->LastMediaError, 0, 0));
+		// What the bitrate is allowed to be: one access unit per media packet, so the
+		// ceiling follows the negotiated MTU and the endpoint's sample rate.
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		const ULONG sampleRate = ctx->PinSampleRate;
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
+		out->bitrateLimit = AacConfig::MaxBitrateForMtu(out->mediaMtu - Rtp::kHeaderSize, sampleRate);
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Status));
 		return;
 	}

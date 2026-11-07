@@ -20,7 +20,8 @@ namespace OpenA2dp::Ioctl {
 // 2: Status carries the negotiated codec and the current preference.
 // 3: Preference carries an SBC bitpool, and GET_PREFERENCE returns it.
 // 4: Preference carries the SBC block length, subbands and allocation.
-constexpr uint32_t kAbiVersion = 4;
+// 5: Status carries the media MTU and the AAC bitrate it allows.
+constexpr uint32_t kAbiVersion = 5;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -196,6 +197,11 @@ struct Status {
 	uint32_t negotiatedCodec;
 	uint32_t preferenceFlags; // kPreference*
 	uint32_t preferenceCodec; // kCodec*
+	// Media channel MTU in use (the negotiated L2CAP MTU, or the largest the driver asks
+	// for while no channel is open) and the AAC bitrate that MTU carries at the endpoint's
+	// sample rate. The bitrate limit is independent of the codec in use.
+	uint32_t mediaMtu;
+	uint32_t bitrateLimit;
 };
 
 struct Preference {
@@ -215,7 +221,7 @@ static_assert(sizeof(Preference) == 40, "Preference layout is part of the driver
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 84, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 92, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

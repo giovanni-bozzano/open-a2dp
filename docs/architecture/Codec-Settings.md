@@ -29,7 +29,7 @@ One preference per sink, kept in the registry and restored when the device start
 - `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
 
 All values are `REG_DWORD`, `0` means "driver default", and `OpenA2dpCtl codec` writes them
-through `SET_PREFERENCE` (`kAbiVersion` 4). Deleting the sink subkey returns it to auto.
+through `SET_PREFERENCE` (`kAbiVersion` 5). Deleting the sink subkey returns it to auto.
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|
@@ -38,16 +38,21 @@ through `SET_PREFERENCE` (`kAbiVersion` 4). Deleting the sink subkey returns it 
 | SBC block length | `CodecPreferenceSbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
-| AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to 256 kbps |
+| AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to the MTU ceiling |
+| AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
 
 The Media Foundation encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps
 are rejected). A2DP sends one access unit per media packet, so the bitrate is also capped
-by what one packet carries: at the 895-byte MTU (883 payload bytes, one LATM element) the
-ceiling is 256 kbps at both 44.1 and 48 kHz — a 256 kbps frame is about 743 bytes at
-44.1 kHz, 683 at 48 kHz. 320 kbps only fits a larger MTU, and fragmentation is not used:
-sources such as the AOSP stack also send a single LATM element per packet and lower the
-bitrate to the MTU instead of fragmenting.
-| AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
+by what one packet carries: at the 895-byte MTU (883 payload bytes) the ceiling is
+256 kbps at 44.1 kHz and 320 kbps at 48 kHz. Measured on the encoder, the largest access
+unit is the average frame plus about eleven bytes - 753 B at 256 kbps/44.1 kHz, 864 B at
+320 kbps/48 kHz - so the selector keeps 16 bytes of headroom and `OpenA2dpCtl status`
+prints the MTU and the ceiling it enforces. Fragmentation is not used: sources such as the
+AOSP stack also send one LATM element per packet and lower the bitrate to the MTU instead.
+
+PCM depth is 16-bit everywhere: the endpoint publishes 16-bit formats, SBC carries 16-bit
+samples by definition, and the Media Foundation AAC encoder rejects 24-bit, 32-bit and
+float input (`0xC00D36B4`), so a 24-bit endpoint would only add a truncation step.
 
 A value the sink does not advertise falls back to the selector's own order instead of
 failing the negotiation; a bitpool is lifted to the sink's minimum and capped at its
@@ -71,7 +76,7 @@ maximum for the chosen mode.
 | Object type | MPEG-2 LC, MPEG-4 LC | MPEG-2 LC first |
 | Sample rate | 44.1, 48 kHz | endpoint format |
 | Channels | 1, 2 | endpoint channel count, else stereo |
-| Bitrate | 96, 128, 160, 192 kbps | preference, capped at the sink maximum |
+| Bitrate | 96, 128, 160, 192, 256, 320 kbps | preference, capped at the sink maximum and the MTU (256 kbps at 44.1 kHz, 320 kbps at 48 kHz) |
 | VBR | off | - |
 
 ## What a change does

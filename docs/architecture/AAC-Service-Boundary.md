@@ -9,10 +9,12 @@ v1 assumptions:
 
 - one service process per machine, one registration per sink device instance;
 - AAC-LC, MPEG-2/4, 44.1/48 kHz, stereo, CBR at 96/128/160/192/256/320 kbps (the set the
-  Media Foundation encoder accepts; 256 kbps is what the 895-byte media MTU carries);
+  Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at 44.1 kHz and
+  320 kbps at 48 kHz);
 - one LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
 - the ACX endpoint offers 16-bit stereo at 44.1 and 48 kHz; the encoder follows the rate
-  Windows opened the stream with.
+  Windows opened the stream with. 16-bit is also the encoder's only input depth: Media
+  Foundation rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`).
 
 Invariants:
 
@@ -133,7 +135,7 @@ struct.
 | `REGISTER_ENCODER` | `RegisterEncoderIn` | `RegisterEncoderOut` | One registration per device; `STATUS_DEVICE_BUSY` if taken, `STATUS_REVISION_MISMATCH` on ABI mismatch |
 | `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
-| `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference and the counters |
+| `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
 | `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. Changing the codec CLOSEs and rediscovers the stream; changing a parameter keeps the codec and applies it in place through SUSPEND/RECONFIGURE/START |
 
@@ -143,7 +145,9 @@ The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `preferenceCodec` (both added in ABI 2); `GET_STATUS` reads published atomic session
 snapshots rather than waiting on `SessionLock`. `Preference` (ABI 4) adds the SBC bitpool,
 block length, subbands and allocation; its AAC sample-rate field is stored but not honoured
-while negotiation follows the rate Windows opened the endpoint with.
+while negotiation follows the rate Windows opened the endpoint with. `Status` (ABI 5) adds
+`mediaMtu` and `bitrateLimit`, the AAC bitrate one media packet carries at the current
+endpoint rate, which is what `OpenA2dpCtl status` shows as the ceiling.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.
@@ -275,8 +279,8 @@ exceed `kMaxFramePayload`, and enters the service path.
 ## 11. Not in v1
 
 - Fragmentation of AAC frames larger than the media MTU: the selector caps the bitrate to
-  what one packet carries (256 kbps at the 895-byte MTU), and oversize records are dropped
-  and counted.
+  what one packet carries (256 kbps at 44.1 kHz, 320 kbps at 48 kHz for the 895-byte MTU),
+  and oversize records are dropped and counted.
 - VBR, mono and rates other than 44.1/48 kHz stereo.
 - More than one service or more than one registration per device.
 - AVRCP absolute volume and the config UI (D4, M5b/M6).
