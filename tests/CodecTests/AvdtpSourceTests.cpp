@@ -40,6 +40,28 @@ uint32_t SbcOnlySelector(void* context, CodecType codec, const uint8_t* ie, size
 	return codec == CodecType::Sbc ? TestSelector(context, codec, ie, ieLength, config, configLength) : 0;
 }
 
+// Mirrors the driver's SBC selection: the request is the context bitpool, lifted to
+// the sink's minimum and capped at its maximum for the chosen mode.
+struct BitpoolState
+{
+	uint8_t bitpool;
+};
+
+uint32_t BitpoolSelector(void* context, CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength, uint8_t* config,
+						 size_t& configLength)
+{
+	if (codec != CodecType::Sbc || remoteIeLength < 4) {
+		return 0;
+	}
+	const auto* state = static_cast<const BitpoolState*>(context);
+	config[0] = remoteIe[0] & kSbcLocalIe[0];
+	config[1] = remoteIe[1] & kSbcLocalIe[1];
+	config[2] = remoteIe[2];
+	config[3] = state->bitpool < remoteIe[2] ? remoteIe[2] : (state->bitpool > remoteIe[3] ? remoteIe[3] : state->bitpool);
+	configLength = 4;
+	return 1;
+}
+
 // Mirrors the driver: only AAC has a validator; the session checks SBC itself.
 uint8_t TestValidator(void*, CodecType codec, const uint8_t* ie, size_t ieLength)
 {
@@ -194,6 +216,7 @@ TEST(AvdtpSource_ReconfigureKeepsConfigurationOnReject)
 	CHECK_EQ(n, size_t{0});
 	CHECK(s.State() == SessionState::Open);
 	CHECK_EQ(s.SelectedIeLength(), before);
+	CHECK(!s.LastReconfigureAccepted());
 
 	// Accepted: the new configuration stays and the state does not change.
 	n = s.Reconfigure(ie, 6, cmd, kMaxSignalPacket);
@@ -202,6 +225,49 @@ TEST(AvdtpSource_ReconfigureKeepsConfigurationOnReject)
 	CHECK_EQ(n, size_t{0});
 	CHECK(s.State() == SessionState::Open);
 	CHECK_EQ(s.SelectedIeLength(), size_t{6});
+	CHECK(s.LastReconfigureAccepted());
+}
+
+TEST(AvdtpSource_RefreshConfigurationRebuildsFromSinkCapabilities)
+{
+	BitpoolState state{0x35};
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), BitpoolSelector, &state);
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+	uint8_t ie[kMaxCodecIe];
+	size_t ieLength = 0;
+
+	CHECK(!s.RefreshConfiguration(ie, ieLength)); // nothing configured yet
+
+	DriveToConfiguration(s, false, cmd, rsp, payload);
+	REQUIRE(Header(cmd).signal == Signal::SetConfiguration);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	REQUIRE(Header(cmd).signal == Signal::Open);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	REQUIRE(s.State() == SessionState::Open);
+	CHECK_EQ(s.SelectedIe()[3], uint8_t{0x35});
+
+	// A lower bitpool is rebuilt from the same sink capabilities, and the session is
+	// unchanged until the sink accepts the RECONFIGURE.
+	state.bitpool = 0x20;
+	REQUIRE(s.RefreshConfiguration(ie, ieLength));
+	CHECK_EQ(ieLength, size_t{4});
+	CHECK_EQ(ie[3], uint8_t{0x20});
+	CHECK(std::memcmp(ie, s.SelectedIe(), ieLength) != 0);
+	CHECK_EQ(s.SelectedIe()[3], uint8_t{0x35});
+
+	// A request above what the sink advertises is capped, as during discovery.
+	state.bitpool = 0xFA;
+	REQUIRE(s.RefreshConfiguration(ie, ieLength));
+	CHECK_EQ(ie[3], uint8_t{0x35});
+
+	// A pending command blocks the rebuild, since RECONFIGURE needs a settled stream.
+	state.bitpool = 0x20;
+	REQUIRE(s.Reconfigure(ie, ieLength, cmd, kMaxSignalPacket) != 0);
+	CHECK(!s.RefreshConfiguration(ie, ieLength));
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	REQUIRE(s.RefreshConfiguration(ie, ieLength));
 }
 
 TEST(AvdtpSource_ConnectSelectsBestCodec)
@@ -563,6 +629,11 @@ TEST(AvdtpSource_AcceptsSinkConfiguration)
 	REQUIRE(s.OnPacket(in, 3, out, sizeof(out)) == 2);
 	CHECK(Header(out).messageType == MessageType::ResponseAccept);
 	CHECK(s.State() == SessionState::Open);
+
+	// Only the sink's configuration IE is known in this role, so it cannot be rebuilt.
+	uint8_t ie[kMaxCodecIe];
+	size_t ieLength = 0;
+	CHECK(!s.RefreshConfiguration(ie, ieLength));
 
 	REQUIRE(s.Start(out, sizeof(out)) == 3);
 	CHECK_EQ(out[2], uint8_t{2 << 2});

@@ -134,6 +134,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->MediaOpenRetry = FALSE;
 	ctx->CodecSwitchWanted = FALSE;
 	ctx->CodecSwitchClosing = FALSE;
+	ctx->ReconfigurePhase = ReconfigureNone;
 	ctx->AppliedPreferenceParameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	// Packets queued for the previous session must not reach the next one.
 	ctx->SignalQueueHead = 0;

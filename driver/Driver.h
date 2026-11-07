@@ -57,6 +57,13 @@ inline constexpr LONG MediaModeAac = 2;
 // dropping the A2DP connection; zeroed whenever a new switch sends its CLOSE.
 inline constexpr ULONG CodecSwitchReconnectLimit = 3;
 
+// Steps of a parameter-only renegotiation (same codec): SUSPEND, RECONFIGURE, START.
+// Each phase waits for the response of the command it sent, then moves on.
+inline constexpr LONG ReconfigureNone = 0;
+inline constexpr LONG ReconfigureSuspending = 1;
+inline constexpr LONG ReconfigureConfiguring = 2;
+inline constexpr LONG ReconfigureStarting = 3;
+
 inline constexpr LONG ChannelClosed = 0;
 inline constexpr LONG ChannelOpening = 1;
 inline constexpr LONG ChannelOpen = 2;
@@ -215,6 +222,9 @@ struct DEVICE_CONTEXT
 	// or bitrate change renegotiates the codec without one being forced.
 	volatile LONG PreferenceParameters;
 	LONG AppliedPreferenceParameters;
+	// Parameter-only change in progress; see the Reconfigure* steps. Applied in place
+	// through RECONFIGURE so the sink connection and the codec stay as they are.
+	LONG ReconfigurePhase;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.

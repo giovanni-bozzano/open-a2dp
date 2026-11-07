@@ -55,8 +55,9 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
 ## 2. Tools used in the steps
-- `OpenA2dpCtl status|list|codec <auto|sbc|aac>` (elevated). `status` shows AVDTP state,
-  media state, codec, encoder registration and counters.
+- `OpenA2dpCtl status|list|codec <auto|sbc|aac> [--bitpool n] [--bitrate bps]`
+  (elevated). `status` shows AVDTP state, media state, codec, encoder registration and
+  counters.
 - Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
 - Device node: Device Manager, or `pnputil /enum-devices /class MEDIA` /
   `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
@@ -209,12 +210,16 @@ it), reattach.
 **T22 Codec parameters (S/A)**
 1. `OpenA2dpCtl status` lists `SBC bitpool` or `AAC bitrate` once one is stored.
 2. While SBC streams, `OpenA2dpCtl codec sbc --bitpool 35`. Expect
-   `SBC parameters changed; closing to renegotiate`, then the CLOSE/rediscovery path of
-   T19 and the same renegotiation timeout. A sink that advertises a lower maximum, or a
-   minimum above 35, still configures its own range. The `codec` line of `status` now
-   reports the resulting SBC bitrate (`32 kbps`-style values change with the bitpool).
+   `SBC parameters changed; suspending to reconfigure`, then
+   `SBC parameters changed; sending RECONFIGURE`, then `Streaming` with the media start
+   line showing `bitpool 35`: no sink disconnect, no `stream closed; rediscovering`.
+   A sink that advertises a lower maximum, or a minimum above 35, still configures its
+   own range. The `codec` line of `status` reports the resulting SBC bitrate.
+   A sink that refuses the RECONFIGURE logs `sink rejected the new parameters; closing to
+   renegotiate` and continues through the T19 close/rediscovery path. A stream that is
+   already `Open` (paused) skips the SUSPEND and only logs the RECONFIGURE line.
 3. `OpenA2dpCtl codec auto --bitpool 0` restores the driver default (53) the same way.
-4. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same close path, and
+4. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same in-place path, and
    `status` reports 128000 bps; a sink advertising less gets its maximum.
 
 ### Soak

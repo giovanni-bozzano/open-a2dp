@@ -129,12 +129,126 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec)
 	return true;
 }
 
-// A codec selection input changed (SET_PREFERENCE or REGISTER_ENCODER). Every session
-// transition re-runs the work item, so the decision waits for a settled state:
-// Streaming with the wrong codec is CLOSEd and, once the CLOSE is answered,
-// rediscovered. Any other outcome drops the request. The close handshake is resumed
-// through CodecSwitchClosing, because the latched event is consumed when the CLOSE
-// goes out and no new event marks the response.
+// Sends the CLOSE half of a switch and arranges the rediscovery that follows its
+// response, for changes AVDTP cannot apply in place (a codec change, or a rejected
+// RECONFIGURE).
+static void BeginCodecSwitchClose(DEVICE_CONTEXT* ctx)
+{
+	ctx->ReconfigurePhase = ReconfigureNone;
+	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
+	if (ctx->CodecSwitchClosing)
+	{
+		// Until a stream runs the new codec, a teardown by the sink still belongs to
+		// this switch and is recovered by reconnecting.
+		ctx->CodecSwitchRecover = TRUE;
+		ctx->CodecSwitchReconnects = 0;
+	}
+	else
+	{
+		ctx->CodecSwitchWanted = TRUE; // no CLOSE was possible; retry on the next event
+	}
+}
+
+// Sends RECONFIGURE from the Open state with the configuration the current parameters
+// select. The sink's advertised capabilities for the SEP in use are re-run through the
+// selector, so the request is clamped to the same range discovery would use.
+static void BeginReconfigure(DEVICE_CONTEXT* ctx)
+{
+	uint8_t ie[Avdtp::kMaxCodecIe];
+	size_t ieLength = 0;
+	if (!ctx->Session.RefreshConfiguration(ie, ieLength))
+	{
+		OA2DP_WARN(ctx, "Signaling", "no configuration can be built from the new parameters; closing to renegotiate");
+		BeginCodecSwitchClose(ctx);
+		return;
+	}
+	OA2DP_INFO(ctx, "AVDTP", "%s parameters changed; sending RECONFIGURE (%u bytes)",
+		CodecName(ctx->Session.SelectedCodec()), static_cast<unsigned>(ieLength));
+	Transmit(ctx, ctx->Session.Reconfigure(ie, ieLength, ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+	if (ctx->Session.HasPendingCommand())
+	{
+		ctx->ReconfigurePhase = ReconfigureConfiguring;
+	}
+	else
+	{
+		ctx->CodecSwitchWanted = TRUE; // could not send; retry on the next event
+	}
+}
+
+// Continues a parameter-only change through SUSPEND -> RECONFIGURE -> START. The
+// stream keeps its codec, SEP and media channel, so the sink does not rediscover and
+// the connection is not dropped.
+static void ContinueReconfigure(DEVICE_CONTEXT* ctx)
+{
+	const auto state = ctx->Session.State();
+	if (ctx->ReconfigurePhase == ReconfigureSuspending)
+	{
+		if (state == Avdtp::SessionState::Suspending)
+		{
+			return; // response still out
+		}
+		ctx->ReconfigurePhase = ReconfigureNone;
+		if (state == Avdtp::SessionState::Streaming)
+		{
+			OA2DP_WARN(ctx, "Signaling", "sink refused to suspend; closing to apply the parameters");
+			BeginCodecSwitchClose(ctx);
+		}
+		else if (state == Avdtp::SessionState::Open)
+		{
+			BeginReconfigure(ctx);
+		}
+		return;
+	}
+	if (ctx->ReconfigurePhase == ReconfigureConfiguring)
+	{
+		if (state != Avdtp::SessionState::Open)
+		{
+			ctx->ReconfigurePhase = ReconfigureNone; // the session moved on; nothing to resume
+			return;
+		}
+		if (ctx->Session.HasPendingCommand())
+		{
+			return; // response still out
+		}
+		if (!ctx->Session.LastReconfigureAccepted())
+		{
+			OA2DP_WARN(ctx, "Signaling", "sink rejected the new parameters; closing to renegotiate");
+			BeginCodecSwitchClose(ctx);
+			return;
+		}
+		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		if (ctx->Session.HasPendingCommand())
+		{
+			ctx->ReconfigurePhase = ReconfigureStarting;
+		}
+		else
+		{
+			ctx->ReconfigurePhase = ReconfigureNone;
+			BeginCodecSwitchClose(ctx);
+		}
+		return;
+	}
+	// ReconfigureStarting
+	if (state == Avdtp::SessionState::Starting)
+	{
+		return; // response still out
+	}
+	ctx->ReconfigurePhase = ReconfigureNone;
+	if (state == Avdtp::SessionState::Open)
+	{
+		OA2DP_WARN(ctx, "Signaling", "sink refused to restart the reconfigured stream; closing to renegotiate");
+		BeginCodecSwitchClose(ctx);
+	}
+	// Streaming: the media start on the transition already picked up the new IE.
+}
+
+// A codec or parameter selection input changed (SET_PREFERENCE or REGISTER_ENCODER).
+// Every session transition re-runs the work item, so the decision waits for a settled
+// state: a different codec closes and rediscovers, while changed parameters are applied
+// in place. Any other outcome drops the request. Both handshakes are resumed through
+// their phase flag, because the latched event is consumed when the command goes out
+// and no new event marks the response.
 static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 {
 	const auto state = ctx->Session.State();
@@ -157,15 +271,20 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		}
 		return;
 	}
-	if (state != Avdtp::SessionState::Streaming && state != Avdtp::SessionState::Idle &&
-		state != Avdtp::SessionState::Failed)
+	if (ctx->ReconfigurePhase != ReconfigureNone)
+	{
+		ContinueReconfigure(ctx);
+		return;
+	}
+	if (state != Avdtp::SessionState::Streaming && state != Avdtp::SessionState::Open &&
+		state != Avdtp::SessionState::Idle && state != Avdtp::SessionState::Failed)
 	{
 		return; // not settled yet; the next transition re-runs this
 	}
 	ctx->CodecSwitchWanted = FALSE;
-	if (state != Avdtp::SessionState::Streaming)
+	if (state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed)
 	{
-		return; // Idle/Failed: the next discovery already sees the current preference
+		return; // the next discovery already sees the current preference
 	}
 	Avdtp::CodecType desired;
 	if (!DesiredCodec(ctx, desired))
@@ -179,25 +298,39 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		return;
 	}
+	ctx->AppliedPreferenceParameters = parameters;
 	if (codecDiffers)
 	{
 		OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
 			CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
+		BeginCodecSwitchClose(ctx);
+		return;
 	}
-	else
+	if (state == Avdtp::SessionState::Streaming)
 	{
-		OA2DP_INFO(ctx, "Signaling", "%s parameters changed; closing to renegotiate", CodecName(desired));
+		OA2DP_INFO(ctx, "Signaling", "%s parameters changed; suspending to reconfigure", CodecName(desired));
+		// Stop the encoder before the sink suspends so no packet describes the old
+		// configuration once the new one is negotiated.
+		MediaStop(ctx);
+		Transmit(ctx, ctx->Session.Suspend(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		if (ctx->Session.State() == Avdtp::SessionState::Suspending)
+		{
+			ctx->ReconfigurePhase = ReconfigureSuspending;
+		}
+		else
+		{
+			ctx->CodecSwitchWanted = TRUE; // could not send; retry on the next event
+		}
+		return;
 	}
-	ctx->AppliedPreferenceParameters = parameters;
-	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
-	if (ctx->CodecSwitchClosing)
+	// Open: the stream is already suspended, so RECONFIGURE applies directly. Wait
+	// for the media transport first, since START would otherwise have no channel.
+	if (ctx->MediaChannel == nullptr)
 	{
-		// Until a stream runs the new codec, a teardown by the sink still belongs to
-		// this switch and is recovered by reconnecting.
-		ctx->CodecSwitchRecover = TRUE;
-		ctx->CodecSwitchReconnects = 0;
+		ctx->CodecSwitchWanted = TRUE; // retried when the channel open completes
+		return;
 	}
+	BeginReconfigure(ctx);
 }
 
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
@@ -329,8 +462,10 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	{
 		ctx->CodecSwitchWanted = TRUE;
 	}
-	// A close in flight keeps the decision alive with no event of its own.
-	if ((ctx->CodecSwitchWanted || ctx->CodecSwitchClosing) && ctx->SignalingState == ChannelOpen)
+	// A close or a reconfigure step in flight keeps the decision alive with no event
+	// of its own; the response re-enters the work item through the read completion.
+	if ((ctx->CodecSwitchWanted || ctx->CodecSwitchClosing || ctx->ReconfigurePhase != ReconfigureNone) &&
+		ctx->SignalingState == ChannelOpen)
 	{
 		ContinueCodecSwitch(ctx);
 	}

@@ -106,6 +106,8 @@ public:
 	bool HasPendingCommand() const noexcept { return pending_; }
 	// True when the sink configured the stream; the sink then opens the media channel.
 	bool IsAcceptor() const noexcept { return acceptor_; }
+	// Outcome of the last RECONFIGURE; only meaningful once its response arrived.
+	bool LastReconfigureAccepted() const noexcept { return lastReconfigureAccepted_; }
 	DiscoveryFailure LastDiscoveryFailure() const noexcept { return discoveryFailure_; }
 	uint8_t DiscoveryError() const noexcept { return discoveryError_; }
 	bool HasDiscoveryError() const noexcept { return hasDiscoveryError_; }
@@ -131,6 +133,8 @@ public:
 		remoteSeid_ = 0;
 		localSeid_ = 0;
 		selectedIeLength_ = 0;
+		selectedRemoteIeLength_ = 0;
+		lastReconfigureAccepted_ = false;
 		acceptor_ = false;
 		discoveryFailure_ = DiscoveryFailure::None;
 		hasDiscoveryError_ = false;
@@ -172,6 +176,7 @@ public:
 		if (sent == 0) {
 			return 0;
 		}
+		lastReconfigureAccepted_ = false;
 		backupIeLength_ = selectedIeLength_;
 		for (size_t i = 0; i < selectedIeLength_; ++i) {
 			backupIe_[i] = selectedIe_[i];
@@ -181,6 +186,31 @@ public:
 			selectedIe_[i] = ie[i];
 		}
 		return sent;
+	}
+
+	// Rebuilds the configuration IE for the selected sink SEP from the capabilities
+	// that SEP advertised and the selector's current input, without changing the
+	// session. This is what a RECONFIGURE should carry after a parameter change: the
+	// same negotiation as discovery, applied to the SEP already in use. False when the
+	// stream was configured by the sink (acceptor role), where only the sink's own
+	// configuration IE is known, or when nothing usable can be built.
+	bool RefreshConfiguration(uint8_t* ie, size_t& ieLength) noexcept
+	{
+		if (state_ != SessionState::Open || pending_ || selector_ == nullptr || selectedRemoteIeLength_ == 0) {
+			return false;
+		}
+		uint8_t config[kMaxCodecIe];
+		size_t configLength = 0;
+		const uint32_t score = selector_(selectorContext_, selectedCodec_, selectedRemoteIe_, selectedRemoteIeLength_,
+										  config, configLength);
+		if (score == 0 || configLength == 0 || configLength > kMaxCodecIe) {
+			return false;
+		}
+		for (size_t i = 0; i < configLength; ++i) {
+			ie[i] = config[i];
+		}
+		ieLength = configLength;
+		return true;
 	}
 
 	size_t Close(uint8_t* out, size_t cap) noexcept
@@ -260,6 +290,10 @@ private:
 		CodecType codec;
 		uint8_t ie[kMaxCodecIe] = {};
 		size_t ieLength;
+		// What this SEP advertised, kept so a later RECONFIGURE can re-run the
+		// selector against the same capabilities.
+		uint8_t remoteIe[kMaxCodecIe] = {};
+		size_t remoteIeLength;
 	};
 
 	size_t Command(Signal signal, const uint8_t* payload, size_t payloadLength, uint8_t* out, size_t cap) noexcept
@@ -351,6 +385,10 @@ private:
 		selectedIeLength_ = c.ieLength;
 		for (size_t i = 0; i < c.ieLength; ++i) {
 			selectedIe_[i] = c.ie[i];
+		}
+		selectedRemoteIeLength_ = c.remoteIeLength;
+		for (size_t i = 0; i < c.remoteIeLength; ++i) {
+			selectedRemoteIe_[i] = c.remoteIe[i];
 		}
 
 		uint8_t payload[8 + kMaxCodecIe];
@@ -448,6 +486,7 @@ private:
 			if (state_ != SessionState::Open) {
 				break;
 			}
+			lastReconfigureAccepted_ = accepted;
 			if (!accepted) {
 				selectedIeLength_ = backupIeLength_;
 				for (size_t i = 0; i < backupIeLength_; ++i) {
@@ -532,6 +571,10 @@ private:
 		c.ieLength = configLength;
 		for (size_t i = 0; i < configLength; ++i) {
 			c.ie[i] = config[i];
+		}
+		c.remoteIeLength = ieLength <= kMaxCodecIe ? ieLength : kMaxCodecIe;
+		for (size_t i = 0; i < c.remoteIeLength; ++i) {
+			c.remoteIe[i] = ie[i];
 		}
 		++candidateCount_;
 	}
@@ -694,6 +737,9 @@ private:
 		for (size_t i = 0; i < selectedIeLength_; ++i) {
 			selectedIe_[i] = ie[i];
 		}
+		// Only the sink's proposed configuration is known here, not its
+		// capabilities, so RefreshConfiguration cannot rebuild it.
+		selectedRemoteIeLength_ = 0;
 		state_ = SessionState::Configured;
 		return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
 	}
@@ -763,6 +809,10 @@ private:
 	// The configuration a pending RECONFIGURE replaces, restored if the sink rejects it.
 	uint8_t backupIe_[kMaxCodecIe] = {};
 	size_t backupIeLength_ = 0;
+	bool lastReconfigureAccepted_ = false;
+	// Capabilities of the selected sink SEP (initiator role only).
+	uint8_t selectedRemoteIe_[kMaxCodecIe] = {};
+	size_t selectedRemoteIeLength_ = 0;
 	bool acceptor_ = false;
 };
 
