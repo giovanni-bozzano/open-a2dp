@@ -13,6 +13,11 @@ void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeSpinLock(&ctx->AudioLock);
+	// Until Windows opens a stream the endpoint reports the default format.
+	ctx->PinSampleRate = AudioSampleRate;
+	ctx->PinChannels = AudioChannels;
+	ctx->PinBytesPerFrame = AudioBytesPerFrame;
+	BuildRenderFormats();
 	// The PCM ring lives in the service block and is initialized by ServiceInitialize.
 
 	WDF_OBJECT_ATTRIBUTES attrs;
@@ -88,10 +93,15 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_ERROR(ctx, "Audio", "creating the streaming pin failed 0x%08X", status);
 		return status;
 	}
-	status = AddFormat(ctx->Device, pins[0]);
-	if (!NT_SUCCESS(status))
+	// Every supported rate is listed so Windows may open any of them; the one it picks
+	// is what AVDTP negotiates once audio starts.
+	for (ULONG i = 0; i < AudioRenderRateCount; ++i)
 	{
-		return status;
+		status = AddFormat(ctx->Device, pins[0], RenderFormats[i]);
+		if (!NT_SUCCESS(status))
+		{
+			return status;
+		}
 	}
 
 	ACX_PIN_CONFIG_INIT_ID(&pinConfig, BridgePinId);

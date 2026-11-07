@@ -13,12 +13,12 @@ namespace OpenA2dpDriver::Signaling
 {
 constexpr LONGLONG ResponseTimeoutMs = 3000;
 constexpr uint8_t SbcMaxBitpool = 53;
-// What the driver can actually play. The endpoint is fixed at 44.1 kHz stereo and
-// MediaStart refuses anything else, so advertising 16/32/48 kHz or mono only invites
-// a sink to configure a stream we then cannot start.
-// Byte 0: 44.1 kHz (0x20) | dual channel (0x04) | stereo (0x02) | joint stereo (0x01).
+// What the driver can actually play. The endpoint serves 16-bit stereo at 44.1 or 48 kHz
+// and MediaStart refuses any other rate or channel count, so 16/32 kHz and mono are not
+// advertised: that would let a sink configure a stream we then cannot start.
+// Byte 0: 44.1 kHz (0x20) | 48 kHz (0x10) | dual (0x04) | stereo (0x02) | joint (0x01).
 constexpr uint8_t kSbcDriverCapabilities[SbcConfig::kIeLength] = {
-	0x27, 0xFF, SbcConfig::kMinBitpool, SbcConfig::kMaxBitpool};
+	0x37, 0xFF, SbcConfig::kMinBitpool, SbcConfig::kMaxBitpool};
 // Initiator media channel opens per connection before the signaling channel is torn down.
 constexpr ULONG kMediaOpenAttempts = 3;
 

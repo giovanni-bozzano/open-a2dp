@@ -32,7 +32,7 @@ struct RENDER_FORMAT
 	WAVEFORMATEXTENSIBLE WaveFormatExt;
 };
 
-extern RENDER_FORMAT RenderFormat;
+extern RENDER_FORMAT RenderFormats[AudioRenderRateCount];
 
 EVT_ACX_CIRCUIT_CREATE_STREAM OnCreateStream;
 EVT_ACX_JACK_RETRIEVE_PRESENCE_STATE OnRetrieveJackPresence;
@@ -67,6 +67,8 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket);
 NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG positionInBlocks, _Out_ PULONGLONG qpcPosition);
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected);
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
-NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin);
+void BuildRenderFormats();
+NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin, _In_ RENDER_FORMAT& format);
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
 const GUID* EndpointCategory(_In_ BTH_COD cod);
 } // namespace OpenA2dpDriver::Audio

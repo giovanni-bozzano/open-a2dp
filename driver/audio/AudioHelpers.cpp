@@ -21,29 +21,31 @@ const GUID* EndpointCategory(_In_ BTH_COD cod)
 	return &KSNODETYPE_SPEAKER;
 }
 
-RENDER_FORMAT RenderFormat = {
+RENDER_FORMAT RenderFormats[AudioRenderRateCount];
+
+// One 16-bit stereo PCM format per render rate; everything else is identical.
+void BuildRenderFormats()
+{
+	for (ULONG i = 0; i < AudioRenderRateCount; ++i)
 	{
-		sizeof(RENDER_FORMAT),
-		0,
-		0,
-		0,
-		STATICGUIDOF(KSDATAFORMAT_TYPE_AUDIO),
-		STATICGUIDOF(KSDATAFORMAT_SUBTYPE_PCM),
-		STATICGUIDOF(KSDATAFORMAT_SPECIFIER_WAVEFORMATEX),
-	},
-	{
-		{
-			WAVE_FORMAT_EXTENSIBLE,
-			AudioChannels,
-			AudioSampleRate,
-			AudioSampleRate * AudioBytesPerFrame,
-			AudioBytesPerFrame,
-			16,
-			sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX),
-		},
-		{16},
-		KSAUDIO_SPEAKER_STEREO,
-		STATICGUIDOF(KSDATAFORMAT_SUBTYPE_PCM),
-	},
-};
+		RENDER_FORMAT& format = RenderFormats[i];
+		RtlZeroMemory(&format, sizeof(format));
+		format.DataFormat.FormatSize = sizeof(RENDER_FORMAT);
+		format.DataFormat.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
+		format.DataFormat.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+		format.DataFormat.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
+
+		WAVEFORMATEX& wave = format.WaveFormatExt.Format;
+		wave.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+		wave.nChannels = AudioChannels;
+		wave.nSamplesPerSec = AudioRenderRates[i];
+		wave.wBitsPerSample = 16;
+		wave.nBlockAlign = AudioBytesPerFrame;
+		wave.nAvgBytesPerSec = AudioRenderRates[i] * AudioBytesPerFrame;
+		wave.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+		format.WaveFormatExt.Samples.wValidBitsPerSample = 16;
+		format.WaveFormatExt.dwChannelMask = KSAUDIO_SPEAKER_STEREO;
+		format.WaveFormatExt.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+	}
+}
 } // namespace OpenA2dpDriver::Audio

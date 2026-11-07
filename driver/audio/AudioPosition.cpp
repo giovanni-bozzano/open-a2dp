@@ -26,8 +26,8 @@ ULONGLONG CurrentPositionLocked(DEVICE_CONTEXT* ctx, ULONGLONG* qpc)
 	{
 		return ctx->AudioBasePosition;
 	}
-	const ULONGLONG frames = (now - ctx->AudioStartQpc) * AudioSampleRate / frequency;
-	return ctx->AudioBasePosition + frames * AudioBytesPerFrame;
+	const ULONGLONG frames = (now - ctx->AudioStartQpc) * ctx->PinSampleRate / frequency;
+	return ctx->AudioBasePosition + frames * ctx->PinBytesPerFrame;
 }
 
 // Moves newly consumed bytes from the RT buffer into the PCM ring and reports

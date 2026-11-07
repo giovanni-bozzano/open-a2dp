@@ -80,8 +80,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->abiVersion = Ioctl::kAbiVersion;
 		out->codec = Ioctl::kCodecAac;
 		out->maxFramePayload = Ioctl::kMaxFramePayload;
-		out->pcmSampleRate = AudioSampleRate;
-		out->pcmChannels = AudioChannels;
+		out->pcmSampleRate = ctx->PinSampleRate;
+		out->pcmChannels = ctx->PinChannels;
 		OA2DP_INFO(ctx, "Service", "encoder registered (max frame %u bytes)", out->maxFramePayload);
 		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeSbc)
 		{

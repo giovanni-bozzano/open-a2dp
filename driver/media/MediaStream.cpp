@@ -46,9 +46,17 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	}
 
 	SbcFixed::Params params;
-	if (!SbcFixed::ParseIe(ie, ieLength, params) || params.sampleRate != AudioSampleRate || params.Channels() != AudioChannels)
+	if (!SbcFixed::ParseIe(ie, ieLength, params))
 	{
 		OA2DP_WARN(ctx, "Media", "unsupported SBC configuration");
+		return;
+	}
+	// The encoder reads the PCM the ACX stream produced, so the negotiated format must be
+	// the one Windows opened the endpoint with.
+	if (params.sampleRate != ctx->PinSampleRate || params.Channels() != ctx->PinChannels)
+	{
+		OA2DP_WARN(ctx, "Media", "SBC %u Hz %u ch does not match the endpoint format %u Hz %u ch",
+			params.sampleRate, params.Channels(), ctx->PinSampleRate, ctx->PinChannels);
 		return;
 	}
 

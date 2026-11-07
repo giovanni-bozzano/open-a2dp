@@ -46,10 +46,36 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 	return status;
 }
 
-NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin)
+// Records the PCM format of the ACX stream Windows opened. The encoder input and the
+// position math follow it, so a pin at 48 kHz is negotiated and encoded at 48 kHz.
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
+{
+	ULONG sampleRate = AudioSampleRate;
+	USHORT channels = AudioChannels;
+	if (format != nullptr)
+	{
+		const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
+		if (wave != nullptr && wave->WaveFormatEx.nSamplesPerSec != 0 && wave->WaveFormatEx.nChannels != 0)
+		{
+			sampleRate = wave->WaveFormatEx.nSamplesPerSec;
+			channels = wave->WaveFormatEx.nChannels;
+		}
+	}
+
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	ctx->PinSampleRate = sampleRate;
+	ctx->PinChannels = channels;
+	ctx->PinBytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+
+	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch", sampleRate, channels);
+}
+
+NTSTATUS AddFormat(_In_ WDFDEVICE device, _In_ ACXPIN pin, _In_ RENDER_FORMAT& renderFormat)
 {
 	ACX_DATAFORMAT_CONFIG config;
-	ACX_DATAFORMAT_CONFIG_INIT_KS(&config, &RenderFormat);
+	ACX_DATAFORMAT_CONFIG_INIT_KS(&config, &renderFormat);
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
 	attrs.ParentObject = pin;

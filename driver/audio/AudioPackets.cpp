@@ -5,13 +5,14 @@ namespace OpenA2dpDriver::Audio
 NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_ ULONG packetSize, _Out_ PACX_RTPACKET* packets)
 {
 	*packets = nullptr;
-	if (packetCount == 0 || packetCount > AudioMaxPacketCount || packetSize == 0 || packetSize % AudioBytesPerFrame != 0)
+	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	if (packetCount == 0 || packetCount > AudioMaxPacketCount || packetSize == 0 ||
+		ctx->PinBytesPerFrame == 0 || packetSize % ctx->PinBytesPerFrame != 0)
 	{
-		OA2DP_WARN(GetStreamContext(stream)->Device, "Audio", "allocate %u packets of %u bytes rejected", packetCount, packetSize);
+		OA2DP_WARN(ctx, "Audio", "allocate %u packets of %u bytes rejected", packetCount, packetSize);
 		return STATUS_NOT_SUPPORTED;
 	}
 
-	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	// Whole pages, zeroed, so no stale kernel memory is mapped to user mode.
 	const SIZE_T bufferSize = ROUND_TO_PAGES(static_cast<SIZE_T>(packetSize) * packetCount);
 
@@ -119,7 +120,8 @@ NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG posit
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	*positionInBlocks = CurrentPositionLocked(ctx, qpcPosition) / AudioBytesPerFrame;
+	const USHORT bytesPerFrame = ctx->PinBytesPerFrame;
+	*positionInBlocks = bytesPerFrame == 0 ? 0 : CurrentPositionLocked(ctx, qpcPosition) / bytesPerFrame;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return STATUS_SUCCESS;
 }

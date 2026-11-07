@@ -3,7 +3,7 @@
 namespace OpenA2dpDriver::Audio
 {
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,
-	_In_ ACXDATAFORMAT, _In_ const GUID*, _In_ ACXOBJECTBAG)
+	_In_ ACXDATAFORMAT format, _In_ const GUID*, _In_ ACXOBJECTBAG)
 {
 	ACX_STREAM_CALLBACKS streamCallbacks;
 	ACX_STREAM_CALLBACKS_INIT(&streamCallbacks);
@@ -46,6 +46,7 @@ NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACX
 
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	GetStreamContext(stream)->Device = ctx;
+	AudioSetPinFormat(ctx, format);
 
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);

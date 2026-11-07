@@ -11,9 +11,10 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 		OA2DP_WARN(ctx, "Media", "invalid AAC configuration");
 		return;
 	}
-	if (params.sampleRate != AudioSampleRate || params.channels != AudioChannels)
+	if (params.sampleRate != ctx->PinSampleRate || params.channels != ctx->PinChannels)
 	{
-		OA2DP_WARN(ctx, "Media", "unsupported AAC format %u Hz %u ch", params.sampleRate, params.channels);
+		OA2DP_WARN(ctx, "Media", "AAC %u Hz %u ch does not match the endpoint format %u Hz %u ch",
+			params.sampleRate, params.channels, ctx->PinSampleRate, ctx->PinChannels);
 		return;
 	}
 	if (params.bitrate == 0 || params.bitrate > AacConfig::kMaxBitrate)

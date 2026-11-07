@@ -227,6 +227,19 @@ it), reattach.
 5. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same in-place path, and
    `status` reports 128000 bps; a sink advertising less gets its maximum.
 
+**T23 Endpoint rate selection (S/A)**
+1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).
+- Expect `endpoint format 48000 Hz 2 ch`, then `configured codec SBC` and the media
+  `endpoint PCM, SBC 48000 Hz ...` line; audible at the normal pitch, `packets`
+  advancing, no `does not match the endpoint format`.
+2. Stop playback, choose `16 bit, 44100 Hz`, play again.
+- Expect `endpoint format 44100 Hz 2 ch` and a 44.1 kHz stream, without a sink reconnect.
+3. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 2 ch`, `status`
+  reports the 48 kHz bitrate, audio is audible.
+4. A sink that answers the configure with the other rate (non-compliant, one rate only)
+  fails loudly with `SBC <rate> does not match the endpoint format <rate>` and stays
+  silent instead of playing at the wrong speed.
+
 ### Soak
 
 **T20 Long run** — stream (A if available, else S) for 8 hours with Verifier on.

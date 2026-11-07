@@ -64,7 +64,9 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		frame.blocks = static_cast<uint8_t>(preference.sbcBlocks);
 		frame.subbands = static_cast<uint8_t>(preference.sbcSubbands);
 		frame.allocation = static_cast<uint8_t>(preference.sbcAllocation);
-		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, 0, bitpool, configIe, frame))
+		// Ask for the endpoint's rate so the sink matches the PCM Windows produced; the
+		// selector falls back to its own order when the sink lacks that rate.
+		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, ctx->PinSampleRate, bitpool, configIe, frame))
 		{
 			return 0;
 		}
@@ -79,10 +81,9 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		{
 			return 0;
 		}
-		// The endpoint is fixed at 44.1 kHz until multi-rate output exists, so the stored
-		// sample rate cannot be honoured yet; the bitrate preference is clamped to the
-		// supported set and to the sink's maximum.
-		if (!AacConfig::Select(remoteIe, remoteIeLength, AudioSampleRate, preference.aacBitrate, configIe))
+		// Prefer the endpoint's rate so the encoder gets the PCM the stream produced; the
+		// bitrate preference is clamped to the supported set and to the sink's maximum.
+		if (!AacConfig::Select(remoteIe, remoteIeLength, ctx->PinSampleRate, preference.aacBitrate, configIe))
 		{
 			return 0;
 		}

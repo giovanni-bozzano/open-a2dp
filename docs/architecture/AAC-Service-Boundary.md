@@ -8,9 +8,10 @@ with no service installed, running or reachable.
 v1 assumptions:
 
 - one service process per machine, one registration per sink device instance;
-- AAC-LC, MPEG-2/4, 44.1 kHz, stereo, CBR up to 192 kbps (what `AacConfig` offers);
+- AAC-LC, MPEG-2/4, 44.1/48 kHz, stereo, CBR up to 192 kbps (what `AacConfig` offers);
 - one LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
-- the ACX endpoint stays 44.1 kHz stereo until M5b adds multi-rate.
+- the ACX endpoint offers 16-bit stereo at 44.1 and 48 kHz; the encoder follows the rate
+  Windows opened the stream with.
 
 Invariants:
 
@@ -141,7 +142,7 @@ The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `preferenceCodec` (both added in ABI 2); `GET_STATUS` reads published atomic session
 snapshots rather than waiting on `SessionLock`. `Preference` (ABI 4) adds the SBC bitpool,
 block length, subbands and allocation; its AAC sample-rate field is stored but not honoured
-until the endpoint is multi-rate.
+while negotiation follows the rate Windows opened the endpoint with.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.
@@ -230,7 +231,7 @@ validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
 other codecs through the `ConfigValidator` callback).
 
 Policy: forced codec (if available) > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s `SelectConfig` has
-the AAC branch (`AacConfig::Select`, 44.1 kHz, highest bitrate the sink accepts) and
+the AAC branch (`AacConfig::Select`, the endpoint rate, highest bitrate the sink accepts) and
 scores AAC 2 / SBC 1. Every scored sink SEP is kept as a candidate in descending order;
 when the sink rejects a `SET_CONFIGURATION`, the session configures the next candidate
 for the same sink SEP, so an AAC-capable sink that refuses AAC falls back to SBC in the
@@ -274,6 +275,6 @@ exceed `kMaxFramePayload`, and enters the service path.
 
 - Fragmentation of AAC frames larger than the media MTU (the negotiated bitrate keeps
   frames within 883 bytes; oversize records are dropped and counted).
-- VBR and rates other than 44.1 kHz stereo (M5b adds the multi-rate endpoint).
+- VBR, mono and rates other than 44.1/48 kHz stereo.
 - More than one service or more than one registration per device.
 - AVRCP absolute volume and the config UI (D4, M5b/M6).

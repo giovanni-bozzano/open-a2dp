@@ -129,7 +129,7 @@ struct RegisterEncoderOut {
 	uint32_t abiVersion;
 	uint32_t codec;
 	uint32_t maxFramePayload; // authoritative limit for the frame payload
-	uint32_t pcmSampleRate;   // 44100 until M5b adds a multi-rate endpoint
+	uint32_t pcmSampleRate;   // endpoint rate Windows opened (44100 or 48000)
 	uint32_t pcmChannels;     // 2
 	uint32_t reserved[3];
 };
