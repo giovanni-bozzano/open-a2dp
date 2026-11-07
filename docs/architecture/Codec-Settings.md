@@ -1,0 +1,76 @@
+# Codec settings reference
+
+Which fields exist, who chooses them, and what a change does. The design notes are in
+[Codec configuration](Codec-Configuration.md); the ABI is `common/include/OpenA2dp/Ioctl.h`.
+
+## Who chooses the PCM format
+
+Windows does. The ACX render endpoint publishes the formats it supports, the audio engine
+opens a stream with one of them (shared mode uses the endpoint's default format, changeable
+in *Sound settings > the endpoint > Advanced*), and the driver receives that
+`ACXDATAFORMAT` when the stream is created. The driver never asserts a format on its own.
+
+The endpoint publishes 16-bit PCM at 44.1 and 48 kHz, mono and stereo: the rates every A2DP
+sink must support and the channel counts both codecs can encode. The selected format is
+recorded as the device's `PinSampleRate`/`PinChannels`, drives the position and packet math
+and the PCM buffers, and AVDTP then negotiates a configuration that matches it.
+
+## Stored preference
+
+One preference per sink, kept in the registry and restored when the device starts:
+
+- `HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters` - global default.
+- `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
+
+All values are `REG_DWORD`, `0` means "driver default", and `OpenA2dpCtl codec` writes them
+through `SET_PREFERENCE` (`kAbiVersion` 4). Deleting the sink subkey returns it to auto.
+
+| Setting | Registry value | CLI | Values | Default |
+|---|---|---|---|---|
+| Codec choice | `CodecPreferenceFlags`, `CodecPreferenceCodec` | `codec auto\|sbc\|aac` | auto, SBC, AAC | auto (AAC when an encoder service is registered, else SBC) |
+| SBC bitpool | `CodecPreferenceSbcBitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
+| SBC block length | `CodecPreferenceSbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
+| SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
+| SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
+| AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000; clamped to the sink maximum | highest the sink accepts |
+| AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
+
+A value the sink does not advertise falls back to the selector's own order instead of
+failing the negotiation; a bitpool is lifted to the sink's minimum and capped at its
+maximum for the chosen mode.
+
+## SBC
+
+| Field | Supported | Chosen by |
+|---|---|---|
+| Sample rate | 44.1, 48 kHz | endpoint format (mandatory sink rates) |
+| Channel mode | mono, dual, stereo, joint stereo | endpoint channel count, mono or joint stereo preferred; must be advertised by the sink |
+| Block length | 4, 8, 12, 16 | preference, else 16 first |
+| Subbands | 4, 8 | preference, else 8 first |
+| Allocation | loudness, SNR | preference, else loudness first |
+| Bitpool | 2..250 | preference, capped by the sink and by the mode; 53 when unset |
+
+## AAC
+
+| Field | Supported | Chosen by |
+|---|---|---|
+| Object type | MPEG-2 LC, MPEG-4 LC | MPEG-2 LC first |
+| Sample rate | 44.1, 48 kHz | endpoint format |
+| Channels | 1, 2 | endpoint channel count, else stereo |
+| Bitrate | 96, 128, 160, 192 kbps | preference, capped at the sink maximum |
+| VBR | off | - |
+
+## What a change does
+
+- Codec change while streaming: CLOSE, then rediscover and configure the other codec; the
+  sink connection is kept.
+- Parameter change while streaming (bitpool, blocks, subbands, allocation, AAC bitrate):
+  the encoder stops, SUSPEND brings the stream to `Open`, the session rebuilds the
+  configuration from the sink's advertised capabilities and sends RECONFIGURE, then START.
+  A refused suspend, a rejected command, or a sink-configured stream whose capabilities are
+  unknown falls back to close-and-rediscover.
+- Format change in Windows: applies the next time a stream is opened; the endpoint rate is
+  preferred for the new negotiation.
+- Sink that cannot serve the endpoint format: the configuration keeps the sink's value,
+  media start refuses the mismatch (`does not match the endpoint format`) and the stream
+  stays silent rather than playing at the wrong speed.
