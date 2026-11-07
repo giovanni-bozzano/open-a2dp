@@ -19,7 +19,8 @@ namespace OpenA2dp::Ioctl {
 
 // 2: Status carries the negotiated codec and the current preference.
 // 3: Preference carries an SBC bitpool, and GET_PREFERENCE returns it.
-constexpr uint32_t kAbiVersion = 3;
+// 4: Preference carries the SBC block length, subbands and allocation.
+constexpr uint32_t kAbiVersion = 4;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -78,6 +79,20 @@ constexpr uint32_t kPreferenceForceCodec = 1u << 0;
 // sbcBitpool is 0 (default) or within the SBC bitpool range the selector accepts.
 constexpr uint32_t kSbcMinBitpool = 2;
 constexpr uint32_t kSbcMaxBitpool = 250;
+
+// SBC allocation bits, as carried in the configured IE (SbcConfig::kAllocation*).
+constexpr uint32_t kSbcAllocationLoudness = 0x01;
+constexpr uint32_t kSbcAllocationSnr = 0x02;
+
+// The SBC frame parameters a stored preference may pin; 0 means the driver default.
+constexpr bool ValidSbcFrameParameters(uint32_t blocks, uint32_t subbands, uint32_t allocation) noexcept
+{
+	const bool blocksOk = blocks == 0 || blocks == 4 || blocks == 8 || blocks == 12 || blocks == 16;
+	const bool subbandsOk = subbands == 0 || subbands == 4 || subbands == 8;
+	const bool allocationOk = allocation == 0 || allocation == kSbcAllocationLoudness ||
+							  allocation == kSbcAllocationSnr;
+	return blocksOk && subbandsOk && allocationOk;
+}
 
 // Frame record flags.
 constexpr uint32_t kFrameFlagDiscontinuity = 1u << 0; // first record after a gap
@@ -190,10 +205,13 @@ struct Preference {
 	uint32_t aacBitrate;    // 0 = driver default (highest supported <= sink max)
 	uint32_t aacSampleRate; // 0 = driver default; unused until the endpoint is multi-rate
 	uint32_t sbcBitpool;    // 0 = driver default; clamped to the sink's range
-	uint32_t reserved[2];
+	uint32_t sbcBlocks;     // 0 = driver default; 4, 8, 12 or 16 blocks per frame
+	uint32_t sbcSubbands;   // 0 = driver default; 4 or 8 subbands
+	uint32_t sbcAllocation; // 0 = driver default; kSbcAllocation*
+	uint32_t reserved;
 };
 
-static_assert(sizeof(Preference) == 32, "Preference layout is part of the driver/CLI ABI");
+static_assert(sizeof(Preference) == 40, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");

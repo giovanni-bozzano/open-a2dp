@@ -58,7 +58,13 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		const uint8_t bitpool = preference.sbcBitpool != 0
 			? static_cast<uint8_t>(preference.sbcBitpool)
 			: SbcMaxBitpool;
-		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, 0, bitpool, configIe))
+		// Stored frame parameters that the sink does not offer fall back to the
+		// selector's own order instead of failing the negotiation.
+		SbcConfig::FramePreference frame;
+		frame.blocks = static_cast<uint8_t>(preference.sbcBlocks);
+		frame.subbands = static_cast<uint8_t>(preference.sbcSubbands);
+		frame.allocation = static_cast<uint8_t>(preference.sbcAllocation);
+		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, 0, bitpool, configIe, frame))
 		{
 			return 0;
 		}

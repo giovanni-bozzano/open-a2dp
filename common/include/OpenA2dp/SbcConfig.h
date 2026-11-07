@@ -23,6 +23,36 @@ constexpr uint8_t PickFirst(uint8_t available, const uint8_t* order, size_t coun
 	return 0;
 }
 
+// The preferred value when the sink offers it, otherwise the first available one.
+constexpr uint8_t PickPreferred(uint8_t available, uint8_t preferred, const uint8_t* order,
+								size_t count) noexcept
+{
+	if (preferred != 0 && (available & preferred) != 0) {
+		return preferred;
+	}
+	return PickFirst(available, order, count);
+}
+
+// Frame parameters a preference can pin. Zero leaves the choice to the selector.
+struct FramePreference {
+	uint8_t blocks = 0;     // 4, 8, 12 or 16
+	uint8_t subbands = 0;   // 4 or 8
+	uint8_t allocation = 0; // kAllocationLoudness or kAllocationSnr
+};
+
+constexpr uint8_t kAllocationLoudness = 0x01;
+constexpr uint8_t kAllocationSnr = 0x02;
+
+constexpr uint8_t BlocksBit(uint8_t blocks) noexcept
+{
+	return blocks == 4 ? 0x80 : blocks == 8 ? 0x40 : blocks == 12 ? 0x20 : blocks == 16 ? 0x10 : 0;
+}
+
+constexpr uint8_t SubbandsBit(uint8_t subbands) noexcept
+{
+	return subbands == 4 ? 0x08 : subbands == 8 ? 0x04 : 0;
+}
+
 constexpr uint8_t SampleRateBit(uint32_t rate) noexcept
 {
 	return rate == 16000 ? 0x80 : rate == 32000 ? 0x40 : rate == 44100 ? 0x20 : rate == 48000 ? 0x10 : 0;
@@ -31,7 +61,8 @@ constexpr uint8_t SampleRateBit(uint32_t rate) noexcept
 // Picks one value per field from the sink capabilities and writes a configured IE.
 // preferredSampleRate: 0 = no preference. Returns false if nothing is compatible.
 constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t preferredSampleRate,
-					  uint8_t maxBitpoolPreference, uint8_t out[kIeLength]) noexcept
+					  uint8_t maxBitpoolPreference, uint8_t out[kIeLength],
+					  const FramePreference& frame = {}) noexcept
 {
 	if (remoteIeLength < kIeLength) {
 		return false;
@@ -48,9 +79,9 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 		fs = PickFirst(fsAvail, fsOrder, 4);
 	}
 	const uint8_t mode = PickFirst(remoteIe[0] & 0x0F, modeOrder, 4);
-	const uint8_t blocks = PickFirst(remoteIe[1] & 0xF0, blocksOrder, 4);
-	const uint8_t subbands = PickFirst(remoteIe[1] & 0x0C, subbandsOrder, 2);
-	const uint8_t alloc = PickFirst(remoteIe[1] & 0x03, allocOrder, 2);
+	const uint8_t blocks = PickPreferred(remoteIe[1] & 0xF0, BlocksBit(frame.blocks), blocksOrder, 4);
+	const uint8_t subbands = PickPreferred(remoteIe[1] & 0x0C, SubbandsBit(frame.subbands), subbandsOrder, 2);
+	const uint8_t alloc = PickPreferred(remoteIe[1] & 0x03, frame.allocation, allocOrder, 2);
 	if (!fs || !mode || !blocks || !subbands || !alloc) {
 		return false;
 	}

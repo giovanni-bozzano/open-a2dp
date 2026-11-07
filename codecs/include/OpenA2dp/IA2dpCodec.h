@@ -31,6 +31,12 @@ struct CodecPreference {
 	uint32_t preferredSampleRate = 0;
 	// SBC: upper bitpool limit we request (sink max still applies).
 	uint8_t sbcMaxBitpool = 53;
+	// SBC: 0 = no preference, otherwise 4, 8, 12 or 16 blocks per frame.
+	uint8_t sbcBlocks = 0;
+	// SBC: 0 = no preference, otherwise 4 or 8 subbands.
+	uint8_t sbcSubbands = 0;
+	// SBC: 0 = no preference, otherwise SbcConfig::kAllocationLoudness or kAllocationSnr.
+	uint8_t sbcAllocation = 0;
 	// AAC: target bitrate in bits per second (sink max still applies).
 	uint32_t aacBitrate = 256000;
 };

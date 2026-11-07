@@ -132,15 +132,16 @@ struct.
 | `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference and the counters |
-| `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
-| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250. Changing the codec or a parameter while streaming CLOSEs and rediscovers the stream when the new selection can be honoured |
+| `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
+| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. Changing the codec CLOSEs and rediscovers the stream; changing a parameter keeps the codec and applies it in place through SUSPEND/RECONFIGURE/START |
 
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
 `Status` carries `negotiatedCodec` (valid before streaming starts), `preferenceFlags` and
 `preferenceCodec` (both added in ABI 2); `GET_STATUS` reads published atomic session
-snapshots rather than waiting on `SessionLock`. `Preference` (ABI 3) adds the SBC bitpool;
-its AAC sample-rate field is stored but not honoured until the endpoint is multi-rate.
+snapshots rather than waiting on `SessionLock`. `Preference` (ABI 4) adds the SBC bitpool,
+block length, subbands and allocation; its AAC sample-rate field is stored but not honoured
+until the endpoint is multi-rate.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.
@@ -263,7 +264,8 @@ exceed `kMaxFramePayload`, and enters the service path.
   maps its own pages, so there is no `ProbeForRead`/`ProbeForWrite` surface and no
   double-mapping of arbitrary user memory.
 - Input structs are validated for size, `abiVersion` and value ranges (`codec`, `sbcBitpool`
-  0 or 2..250, `maxFramePayload` clamped to `kMaxFramePayload`).
+  0 or 2..250, `sbcBlocks`/`sbcSubbands`/`sbcAllocation` through
+  `Ioctl::ValidSbcFrameParameters`, `maxFramePayload` clamped to `kMaxFramePayload`).
 - The service runs as LocalSystem (it must open the interface), reads PCM from the
   mapping only and never writes the PCM ring; the driver never trusts `samples` beyond
   `kAacSamplesPerFrame`.

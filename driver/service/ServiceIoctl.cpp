@@ -294,6 +294,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_INVALID_PARAMETER);
 			return;
 		}
+		if (!Ioctl::ValidSbcFrameParameters(in->sbcBlocks, in->sbcSubbands, in->sbcAllocation))
+		{
+			Complete(request, STATUS_INVALID_PARAMETER);
+			return;
+		}
 		bool changed = false;
 		bool selectionChanged = false;
 		bool parametersChanged = false;
@@ -303,6 +308,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			selectionChanged =
 				ctx->Preference.flags != in->flags || ctx->Preference.codec != in->codec;
 			parametersChanged = ctx->Preference.sbcBitpool != in->sbcBitpool ||
+								ctx->Preference.sbcBlocks != in->sbcBlocks ||
+								ctx->Preference.sbcSubbands != in->sbcSubbands ||
+								ctx->Preference.sbcAllocation != in->sbcAllocation ||
 								ctx->Preference.aacBitrate != in->aacBitrate;
 			// aacSampleRate is stored but does not affect selection until the endpoint
 			// is multi-rate, so on its own it must be saved without renegotiating.
@@ -320,8 +328,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				InterlockedIncrement(&ctx->PreferenceParameters);
 			}
 			OA2DP_INFO(ctx, "Service",
-				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, AAC bitrate %u)", in->flags,
-				static_cast<unsigned>(in->codec), in->sbcBitpool, in->aacBitrate);
+				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, blocks %u, subbands %u, "
+				"allocation 0x%02X, AAC bitrate %u)",
+				in->flags, static_cast<unsigned>(in->codec), in->sbcBitpool, in->sbcBlocks, in->sbcSubbands,
+				in->sbcAllocation, in->aacBitrate);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
 			ConfigSavePreference(ctx);

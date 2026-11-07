@@ -18,6 +18,9 @@ const wchar_t kCodecValueName[] = L"CodecPreferenceCodec";
 const wchar_t kAacBitrateValueName[] = L"CodecPreferenceAacBitrate";
 const wchar_t kAacSampleRateValueName[] = L"CodecPreferenceAacSampleRate";
 const wchar_t kSbcBitpoolValueName[] = L"CodecPreferenceSbcBitpool";
+const wchar_t kSbcBlocksValueName[] = L"CodecPreferenceSbcBlocks";
+const wchar_t kSbcSubbandsValueName[] = L"CodecPreferenceSbcSubbands";
+const wchar_t kSbcAllocationValueName[] = L"CodecPreferenceSbcAllocation";
 
 const char* PreferenceName(const Ioctl::Preference& preference)
 {
@@ -95,6 +98,9 @@ bool ReadPreference(WDFKEY key, Ioctl::Preference& preference)
 	found |= ReadDword(key, kAacBitrateValueName, preference.aacBitrate);
 	found |= ReadDword(key, kAacSampleRateValueName, preference.aacSampleRate);
 	found |= ReadDword(key, kSbcBitpoolValueName, preference.sbcBitpool);
+	found |= ReadDword(key, kSbcBlocksValueName, preference.sbcBlocks);
+	found |= ReadDword(key, kSbcSubbandsValueName, preference.sbcSubbands);
+	found |= ReadDword(key, kSbcAllocationValueName, preference.sbcAllocation);
 	return found;
 }
 
@@ -107,6 +113,11 @@ bool ValidPreference(const Ioctl::Preference& preference)
 	}
 	if (preference.sbcBitpool != 0 &&
 		(preference.sbcBitpool < Ioctl::kSbcMinBitpool || preference.sbcBitpool > Ioctl::kSbcMaxBitpool))
+	{
+		return false;
+	}
+	if (!Ioctl::ValidSbcFrameParameters(preference.sbcBlocks, preference.sbcSubbands,
+										preference.sbcAllocation))
 	{
 		return false;
 	}
@@ -166,8 +177,11 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx)
 
 	if (stored)
 	{
-		OA2DP_INFO(ctx, "Config", "codec preference %s restored from the registry (SBC bitpool %u, AAC bitrate %u)",
-			PreferenceName(preference), preference.sbcBitpool, preference.aacBitrate);
+		OA2DP_INFO(ctx, "Config",
+			"codec preference %s restored from the registry (SBC bitpool %u, blocks %u, subbands %u, "
+			"allocation 0x%02X, AAC bitrate %u)",
+			PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
+			preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate);
 	}
 }
 
@@ -200,12 +214,18 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 			WriteDword(ctx, sink, kAacBitrateValueName, preference.aacBitrate);
 			WriteDword(ctx, sink, kAacSampleRateValueName, preference.aacSampleRate);
 			WriteDword(ctx, sink, kSbcBitpoolValueName, preference.sbcBitpool);
+			WriteDword(ctx, sink, kSbcBlocksValueName, preference.sbcBlocks);
+			WriteDword(ctx, sink, kSbcSubbandsValueName, preference.sbcSubbands);
+			WriteDword(ctx, sink, kSbcAllocationValueName, preference.sbcAllocation);
 			WdfRegistryClose(sink);
 		}
 		WdfRegistryClose(devices);
 	}
 	WdfRegistryClose(parameters);
 
-	OA2DP_INFO(ctx, "Config", "codec preference %s stored for this sink (SBC bitpool %u, AAC bitrate %u)",
-		PreferenceName(preference), preference.sbcBitpool, preference.aacBitrate);
+	OA2DP_INFO(ctx, "Config",
+		"codec preference %s stored for this sink (SBC bitpool %u, blocks %u, subbands %u, "
+		"allocation 0x%02X, AAC bitrate %u)",
+		PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
+		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate);
 }

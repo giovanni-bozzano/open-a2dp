@@ -55,9 +55,9 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
 ## 2. Tools used in the steps
-- `OpenA2dpCtl status|list|codec <auto|sbc|aac> [--bitpool n] [--bitrate bps]`
-  (elevated). `status` shows AVDTP state, media state, codec, encoder registration and
-  counters.
+- `OpenA2dpCtl status|list|codec <auto|sbc|aac> [--bitpool n] [--bitrate bps]
+  [--blocks n] [--subbands n] [--allocation loudness|snr]` (elevated). `status` shows
+  AVDTP state, media state, codec, encoder registration and counters.
 - Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
 - Device node: Device Manager, or `pnputil /enum-devices /class MEDIA` /
   `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
@@ -218,8 +218,13 @@ it), reattach.
    A sink that refuses the RECONFIGURE logs `sink rejected the new parameters; closing to
    renegotiate` and continues through the T19 close/rediscovery path. A stream that is
    already `Open` (paused) skips the SUSPEND and only logs the RECONFIGURE line.
-3. `OpenA2dpCtl codec auto --bitpool 0` restores the driver default (53) the same way.
-4. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same in-place path, and
+3. While SBC streams, `OpenA2dpCtl codec sbc --blocks 8 --subbands 4 --allocation snr`:
+   the same in-place path. Expect `status` to show `SBC frame 8 blocks, 4 subbands, SNR`
+   and the media start line to report `blocks 8 subbands 4`. A sink that offers only 16
+   blocks or 8 subbands keeps its own values and still reconfigures.
+4. `OpenA2dpCtl codec auto --bitpool 0 --blocks 0 --subbands 0 --allocation default`
+   restores the driver defaults (bitpool 53, the selector's own frame order).
+5. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same in-place path, and
    `status` reports 128000 bps; a sink advertising less gets its maximum.
 
 ### Soak

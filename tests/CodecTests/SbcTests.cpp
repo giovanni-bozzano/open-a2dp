@@ -218,6 +218,32 @@ TEST(Sbc_SelectConfiguration_ClampsBitpoolPreference)
 	CHECK_EQ(cfg.ie[3], uint8_t{53});
 }
 
+TEST(Sbc_SelectConfiguration_PrefersFrameParameters)
+{
+	SbcCodec codec;
+	const uint8_t remote[4] = {kFs44100 | kFs48000 | kModeJoint | kModeStereo,
+							 kBlocks4 | kBlocks8 | kBlocks12 | kBlocks16 | kSubbands4 | kSubbands8 |
+								 kAllocSnr | kAllocLoudness,
+							 2, 53};
+	A2dpCodecConfig cfg;
+
+	CodecPreference pref;
+	pref.sbcBlocks = 8;
+	pref.sbcSubbands = 4;
+	pref.sbcAllocation = kAllocSnr;
+	REQUIRE(codec.SelectConfiguration(remote, 4, pref, cfg));
+	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks8 | kSubbands4 | kAllocSnr});
+
+	// A pinned value the sink does not offer falls back to the selector's own order.
+	const uint8_t narrow[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 53};
+	CodecPreference unavailable;
+	unavailable.sbcBlocks = 4;
+	unavailable.sbcSubbands = 4;
+	unavailable.sbcAllocation = kAllocSnr;
+	REQUIRE(codec.SelectConfiguration(narrow, 4, unavailable, cfg));
+	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks16 | kSubbands8 | kAllocLoudness});
+}
+
 // Every bitpool the preference can request must still produce frames that fit one RTP
 // payload, otherwise a stored value makes the stream unsendable.
 TEST(Sbc_SelectedFramesFitMediaPayload)

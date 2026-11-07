@@ -241,7 +241,12 @@ bool SbcCodec::SelectConfiguration(const uint8_t* remoteIe, size_t remoteIeLengt
 								   const CodecPreference& preference, A2dpCodecConfig& out) const noexcept
 {
 	uint8_t ie[kIeLength];
-	if (!SbcConfig::Select(remoteIe, remoteIeLength, preference.preferredSampleRate, preference.sbcMaxBitpool, ie)) {
+	SbcConfig::FramePreference frame;
+	frame.blocks = preference.sbcBlocks;
+	frame.subbands = preference.sbcSubbands;
+	frame.allocation = preference.sbcAllocation;
+	if (!SbcConfig::Select(remoteIe, remoteIeLength, preference.preferredSampleRate,
+						   preference.sbcMaxBitpool, ie, frame)) {
 		return false;
 	}
 	out = {};

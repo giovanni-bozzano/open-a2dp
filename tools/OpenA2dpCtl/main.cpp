@@ -27,7 +27,8 @@ Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--watch [--interval <ms>]]
   OpenA2dpCtl list
   OpenA2dpCtl codec <auto|sbc|aac> [--bitrate <bps>] [--bitpool <n>]
-                     [--device <mac|index>]
+                     [--blocks <4|8|12|16>] [--subbands <4|8>]
+                     [--allocation <loudness|snr>] [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
 
@@ -39,8 +40,9 @@ Commands:
             immediately; otherwise the preference applies at the next AVDTP
             negotiation. "auto" prefers AAC while an encoder service is
             registered, then SBC. --bitrate and --bitpool cap the AAC bitrate
-            and the SBC bitpool; 0 restores the driver default, and the sink's
-            advertised limits still apply.
+            and the SBC bitpool; --blocks, --subbands and --allocation pin the
+            SBC frame shape. 0 restores the driver default (--allocation
+            default), and the sink's advertised limits still apply.
   version   Show the driver ABI and version.
 
 Options:
@@ -474,6 +476,13 @@ void PrintPreference(const Ioctl::Preference& preference)
 	{
 		std::printf("  AAC rate        %u Hz (used once the endpoint is multi-rate)\n", preference.aacSampleRate);
 	}
+	if (preference.sbcBlocks != 0 || preference.sbcSubbands != 0 || preference.sbcAllocation != 0)
+	{
+		std::printf("  SBC frame       %u blocks, %u subbands, %s\n",
+					preference.sbcBlocks != 0 ? preference.sbcBlocks : 16u,
+					preference.sbcSubbands != 0 ? preference.sbcSubbands : 8u,
+					preference.sbcAllocation == Ioctl::kSbcAllocationSnr ? "SNR" : "loudness");
+	}
 }
 
 void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl::Preference& preference)
@@ -638,8 +647,27 @@ int CommandVersion(const std::vector<Device>& devices, const std::string& spec)
 	return 0;
 }
 
+// The parameters a `codec` command names; anything it leaves out keeps its stored value.
+struct PreferenceOverrides {
+	bool hasBitrate = false;
+	uint32_t bitrate = 0;
+	bool hasBitpool = false;
+	uint32_t bitpool = 0;
+	bool hasBlocks = false;
+	uint32_t blocks = 0;
+	bool hasSubbands = false;
+	uint32_t subbands = 0;
+	bool hasAllocation = false;
+	uint32_t allocation = 0;
+
+	bool ParameterChange() const
+	{
+		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation;
+	}
+};
+
 int CommandCodec(const std::vector<Device>& devices, const std::string& spec, const std::string& codecArg,
-				 bool hasBitrate, uint32_t bitrate, bool hasBitpool, uint32_t bitpool)
+				 const PreferenceOverrides& overrides)
 {
 	if (codecArg != "auto" && codecArg != "sbc" && codecArg != "aac")
 	{
@@ -682,13 +710,25 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		preference.flags = Ioctl::kPreferenceForceCodec;
 		preference.codec = codecArg == "aac" ? Ioctl::kCodecAac : Ioctl::kCodecSbc;
 	}
-	if (hasBitrate)
+	if (overrides.hasBitrate)
 	{
-		preference.aacBitrate = bitrate;
+		preference.aacBitrate = overrides.bitrate;
 	}
-	if (hasBitpool)
+	if (overrides.hasBitpool)
 	{
-		preference.sbcBitpool = bitpool;
+		preference.sbcBitpool = overrides.bitpool;
+	}
+	if (overrides.hasBlocks)
+	{
+		preference.sbcBlocks = overrides.blocks;
+	}
+	if (overrides.hasSubbands)
+	{
+		preference.sbcSubbands = overrides.subbands;
+	}
+	if (overrides.hasAllocation)
+	{
+		preference.sbcAllocation = overrides.allocation;
 	}
 
 	DWORD bytes = 0;
@@ -722,7 +762,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	const bool wantsSbc = force ? preference.codec == Ioctl::kCodecSbc : status.encoderRegistered == 0;
 	const bool codecChanges = (wantsAac && status.codec != Ioctl::kCodecAac) ||
 							  (wantsSbc && status.codec == Ioctl::kCodecAac);
-	if (streaming && (codecChanges || hasBitrate || hasBitpool))
+	if (streaming && (codecChanges || overrides.ParameterChange()))
 	{
 		std::printf("\nnote: the active stream renegotiates to apply the preference "
 					"(the status above may lag until the sink answers).\n");
@@ -738,10 +778,7 @@ int main(int argc, char** argv)
 	std::string command = "status";
 	std::string deviceSpec;
 	std::string codecArg;
-	bool hasBitrate = false;
-	uint32_t bitrate = 0;
-	bool hasBitpool = false;
-	uint32_t bitpool = 0;
+	PreferenceOverrides overrides;
 	bool watch = false;
 	unsigned interval = 1000;
 	size_t position = 0;
@@ -773,8 +810,8 @@ int main(int argc, char** argv)
 				std::fprintf(stderr, "--bitrate takes bits per second, 0 to restore the default\n");
 				return 2;
 			}
-			hasBitrate = true;
-			bitrate = static_cast<uint32_t>(parsed);
+			overrides.hasBitrate = true;
+			overrides.bitrate = static_cast<uint32_t>(parsed);
 		}
 		else if (arg == "--bitpool" && position + 1 < args.size())
 		{
@@ -792,8 +829,53 @@ int main(int argc, char** argv)
 						Ioctl::kSbcMaxBitpool);
 				return 2;
 			}
-			hasBitpool = true;
-			bitpool = static_cast<uint32_t>(parsed);
+			overrides.hasBitpool = true;
+			overrides.bitpool = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--blocks" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			const unsigned long parsed = IsDecimal(value) ? std::strtoul(value.c_str(), nullptr, 10) : 1;
+			if (!IsDecimal(value) ||
+				(parsed != 0 && parsed != 4 && parsed != 8 && parsed != 12 && parsed != 16))
+			{
+				std::fprintf(stderr, "--blocks takes 0 (default) or 4, 8, 12 or 16\n");
+				return 2;
+			}
+			overrides.hasBlocks = true;
+			overrides.blocks = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--subbands" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			const unsigned long parsed = IsDecimal(value) ? std::strtoul(value.c_str(), nullptr, 10) : 1;
+			if (!IsDecimal(value) || (parsed != 0 && parsed != 4 && parsed != 8))
+			{
+				std::fprintf(stderr, "--subbands takes 0 (default), 4 or 8\n");
+				return 2;
+			}
+			overrides.hasSubbands = true;
+			overrides.subbands = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--allocation" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			uint32_t allocation = 0;
+			if (value == "loudness")
+			{
+				allocation = Ioctl::kSbcAllocationLoudness;
+			}
+			else if (value == "snr")
+			{
+				allocation = Ioctl::kSbcAllocationSnr;
+			}
+			else if (value != "default")
+			{
+				std::fprintf(stderr, "--allocation takes default, loudness or snr\n");
+				return 2;
+			}
+			overrides.hasAllocation = true;
+			overrides.allocation = allocation;
 		}
 		else if (arg == "--watch")
 		{
@@ -830,9 +912,9 @@ int main(int argc, char** argv)
 		std::fprintf(stderr, "codec needs an argument: auto, sbc or aac\n\n%s", kUsage);
 		return 2;
 	}
-	if (command != "codec" && (hasBitrate || hasBitpool))
+	if (command != "codec" && overrides.ParameterChange())
 	{
-		std::fprintf(stderr, "--bitrate and --bitpool apply to `codec`\n\n%s", kUsage);
+		std::fprintf(stderr, "the parameter flags apply to `codec`\n\n%s", kUsage);
 		return 2;
 	}
 
@@ -854,7 +936,7 @@ int main(int argc, char** argv)
 	}
 	if (command == "codec")
 	{
-		return CommandCodec(devices, deviceSpec, codecArg, hasBitrate, bitrate, hasBitpool, bitpool);
+		return CommandCodec(devices, deviceSpec, codecArg, overrides);
 	}
 	return CommandStatus(devices, deviceSpec, watch, interval);
 }
