@@ -1,6 +1,7 @@
 #include "TestFramework.h"
 
 #include <OpenA2dp/AacCodec.h>
+#include <OpenA2dp/Ioctl.h>
 
 #include "aac/LatmWriter.h"
 
@@ -34,15 +35,19 @@ TEST(Aac_SelectConfiguration_TypicalSink)
 	AacCodec codec;
 	// MPEG-2 LC, 44.1k + 48k, 1/2 channels, VBR, 320 kbps max.
 	const uint8_t remote[6] = {0x80, 0x01, 0x8C, 0x84, 0xE2, 0x00};
+	// The driver tells the selector how much one media packet carries (895 - 12), so the
+	// 320 kbps the encoder accepts is capped at the 256 kbps a 44.1 kHz packet can hold.
+	CodecPreference pref;
+	pref.mediaPayloadBytes = 883;
 	A2dpCodecConfig cfg;
-	REQUIRE(codec.SelectConfiguration(remote, 6, CodecPreference{}, cfg));
+	REQUIRE(codec.SelectConfiguration(remote, 6, pref, cfg));
 	Params p;
 	REQUIRE(ParseConfiguredIe(cfg.ie, cfg.ieLength, p));
 	CHECK_EQ(p.objectType, kObjectMpeg2Lc);
 	CHECK_EQ(p.sampleRate, uint32_t{44100});
 	CHECK_EQ(p.channels, uint8_t{2});
 	CHECK(!p.vbr);
-	CHECK_EQ(p.bitrate, uint32_t{192000});
+	CHECK_EQ(p.bitrate, uint32_t{256000});
 	CHECK_EQ(codec.ValidateConfiguration(cfg.ie, cfg.ieLength), uint8_t{0});
 }
 
@@ -89,6 +94,50 @@ TEST(Aac_Select_PrefersEndpointChannels)
 	REQUIRE(AacConfig::Select(remote, 6, 0, 0, ie));
 	REQUIRE(AacConfig::ParseConfiguredIe(ie, 6, params));
 	CHECK_EQ(params.channels, uint8_t{2});
+}
+
+// The bitrate the driver advertises to sinks has to be one a single media packet carries.
+TEST(Aac_LocalCapabilitiesMatchTheMediaMtu)
+{
+	const size_t payload = Ioctl::kMediaMaxMtu - Ioctl::kRtpHeaderBytes;
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 44100), uint32_t{256000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 48000), uint32_t{256000});
+	CHECK_EQ(AacConfig::ReadBitrate(AacConfig::kLocalCapabilities), uint32_t{256000});
+}
+
+TEST(Aac_MaxBitrateForMtu)
+{
+	// One 895-byte media packet carries 883 payload bytes; 256 kbps leaves the LATM
+	// header and the CBR overshoot room at both rates, 320 kbps only a larger MTU.
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(883, 44100), uint32_t{256000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(883, 48000), uint32_t{256000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(1488, 44100), uint32_t{320000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(1488, 48000), uint32_t{320000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(400, 44100), uint32_t{96000});
+	CHECK_EQ(AacConfig::MaxBitrateForMtu(64, 44100), uint32_t{0});
+}
+
+TEST(Aac_Select_HonoursMtuBitrateLimit)
+{
+	// MPEG-4 LC, 44.1 kHz, stereo, sink allows up to 512 kbps.
+	uint8_t remote[6] = {};
+	remote[0] = AacConfig::kObjectMpeg4Lc;
+	const uint16_t rates = AacConfig::SampleRateMask(44100);
+	remote[1] = static_cast<uint8_t>(rates >> 4);
+	remote[2] = static_cast<uint8_t>(((rates & 0x0F) << 4) | AacConfig::kChannels2);
+	remote[3] = 0x07; // 512000 bps
+	remote[4] = 0xD0;
+
+	uint8_t ie[6] = {};
+	AacConfig::Params p;
+	REQUIRE(AacConfig::Select(remote, 6, 44100, 0, ie, 2, 883));
+	REQUIRE(AacConfig::ParseConfiguredIe(ie, 6, p));
+	CHECK_EQ(p.bitrate, uint32_t{256000});
+
+	// Without a media-MTU limit the encoder ceiling wins over the sink's maximum.
+	REQUIRE(AacConfig::Select(remote, 6, 44100, 0, ie, 2));
+	REQUIRE(AacConfig::ParseConfiguredIe(ie, 6, p));
+	CHECK_EQ(p.bitrate, uint32_t{320000});
 }
 
 TEST(Aac_SelectConfiguration_BitratePreference)
@@ -232,4 +281,54 @@ TEST(Aac_MediaFoundation_EncodeSine)
 	CHECK(avg > 400 && avg < 700);
 	CHECK(maxAu <= encoder->MaxFrameBytes());
 	CHECK_EQ(encoder->FramesPerPacket(895 - 12), size_t{1});
+}
+
+// 256 kbps is the highest bitrate a 895-byte media packet can carry at 44.1 kHz, so every
+// access unit it produces has to fit the payload without fragmentation.
+TEST(Aac_MediaFoundation_Encode256kFitsMediaPayload)
+{
+	AacCodec codec;
+	Params p;
+	p.sampleRate = 44100;
+	p.channels = 2;
+	p.bitrate = 256000;
+	A2dpCodecConfig cfg;
+	cfg.codec = CodecType::Aac;
+	WriteIe(p, cfg.ie);
+	cfg.ieLength = kIeLength;
+
+	std::unique_ptr<IA2dpEncoder> encoder;
+	const HRESULT hr = codec.CreateEncoder(cfg, encoder);
+	if (FAILED(hr)) {
+		std::printf("    Media Foundation AAC encoder unavailable (hr=0x%08lX)\n",
+					static_cast<unsigned long>(hr));
+	}
+	REQUIRE(SUCCEEDED(hr));
+
+	std::vector<int16_t> pcm(1024 * 2);
+	std::vector<uint8_t> au(encoder->MaxFrameBytes() * 2);
+	std::vector<uint8_t> payload(2048);
+	size_t produced = 0;
+	size_t maxPayload = 0;
+	size_t n = 0;
+	for (size_t f = 0; f < 100; ++f) {
+		for (size_t i = 0; i < 1024; ++i, ++n) {
+			const double s = 12000.0 * std::sin(2.0 * std::numbers::pi * 1000.0 * n / 44100.0);
+			pcm[i * 2] = static_cast<int16_t>(s);
+			pcm[i * 2 + 1] = static_cast<int16_t>(-s);
+		}
+		size_t written = 0;
+		REQUIRE(SUCCEEDED(encoder->Encode(pcm.data(), au.data(), au.size(), written)));
+		if (written == 0) {
+			continue;
+		}
+		const size_t sizes[1] = {written};
+		const size_t len = encoder->BuildMediaPayload(au.data(), sizes, 1, payload.data(), payload.size());
+		REQUIRE(len != 0);
+		maxPayload = std::max(maxPayload, len);
+		++produced;
+	}
+	std::printf("    256 kbps: %zu AUs, max media payload %zu bytes\n", produced, maxPayload);
+	CHECK(produced > 80);
+	CHECK(maxPayload <= Ioctl::kMaxFramePayload);
 }

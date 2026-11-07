@@ -82,10 +82,13 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		{
 			return 0;
 		}
-		// Prefer the endpoint's rate so the encoder gets the PCM the stream produced; the
-		// bitrate preference is clamped to the supported set and to the sink's maximum.
+		// Prefer the endpoint's rate so the encoder gets the PCM the stream produced, and
+		// keep the bitrate to what one media packet can carry: A2DP sends one access unit
+		// per packet, so a bitrate the MTU cannot serve would only lose frames.
+		const size_t payload =
+			(ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
 		if (!AacConfig::Select(remoteIe, remoteIeLength, ctx->PinSampleRate, preference.aacBitrate,
-							  configIe, static_cast<uint8_t>(ctx->PinChannels)))
+							  configIe, static_cast<uint8_t>(ctx->PinChannels), payload))
 		{
 			return 0;
 		}
@@ -147,6 +150,13 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 	if (params.channels != ctx->PinChannels)
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedChannels);
+	}
+	// A bitrate whose frames do not fit one media packet would only lose frames.
+	const size_t payload =
+		(ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
+	if (params.bitrate > AacConfig::MaxBitrateForMtu(payload, params.sampleRate))
+	{
+		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedBitRate);
 	}
 	return 0;
 }

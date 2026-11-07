@@ -22,13 +22,15 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 		OA2DP_WARN(ctx, "Media", "unsupported AAC bitrate %u", params.bitrate);
 		return;
 	}
-	// The average frame plus the LATM and RTP headers must fit one packet; the
-	// service drops and counts the occasional frame that does not.
-	const uint32_t average =
-		params.bitrate / 8 * Ioctl::kAacSamplesPerFrame / params.sampleRate;
-	if (average + 64 > Ioctl::kMaxFramePayload)
+	// One access unit per packet: the bitrate must leave room for the LATM header and the
+	// CBR overshoot inside a single media packet, so the ceiling follows the media MTU.
+	const size_t payload =
+		(ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
+	const uint32_t mtuLimit = AacConfig::MaxBitrateForMtu(payload, params.sampleRate);
+	if (params.bitrate > mtuLimit)
 	{
-		OA2DP_WARN(ctx, "Media", "AAC bitrate %u does not fit the media MTU", params.bitrate);
+		OA2DP_WARN(ctx, "Media", "AAC bitrate %u does not fit the media MTU (max %u)", params.bitrate,
+			mtuLimit);
 		return;
 	}
 	if (!ServiceRegistered(ctx))

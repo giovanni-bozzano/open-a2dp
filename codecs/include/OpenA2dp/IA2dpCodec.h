@@ -39,6 +39,9 @@ struct CodecPreference {
 	uint8_t sbcAllocation = 0;
 	// AAC: target bitrate in bits per second (sink max still applies).
 	uint32_t aacBitrate = 256000;
+	// Bytes one media packet can carry excluding the RTP header; 0 = unknown, so only the
+	// sink and the encoder limit the AAC bitrate.
+	uint32_t mediaPayloadBytes = 0;
 };
 
 struct PcmFormat {

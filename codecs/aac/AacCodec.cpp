@@ -50,7 +50,8 @@ bool AacCodec::SelectConfiguration(const uint8_t* remoteIe, size_t remoteIeLengt
 								   const CodecPreference& preference, A2dpCodecConfig& out) const noexcept
 {
 	uint8_t ie[kIeLength] = {};
-	if (!AacConfig::Select(remoteIe, remoteIeLength, preference.preferredSampleRate, preference.aacBitrate, ie)) {
+	if (!AacConfig::Select(remoteIe, remoteIeLength, preference.preferredSampleRate, preference.aacBitrate, ie,
+						  0, preference.mediaPayloadBytes)) {
 		return false;
 	}
 	out = {};

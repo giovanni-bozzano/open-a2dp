@@ -17,10 +17,35 @@ constexpr uint8_t kObjectMpeg4Lc = 0x40;
 constexpr uint8_t kChannels1 = 0x08;
 constexpr uint8_t kChannels2 = 0x04;
 
-// Bitrates supported by the Media Foundation AAC encoder, ascending.
-constexpr uint32_t kSupportedBitrates[] = {96000, 128000, 160000, 192000};
+// Bitrates the Media Foundation AAC encoder accepts in CBR, ascending. It is a discrete
+// set: 224, 288 and 384 kbps are rejected outright, 256 and 320 kbps are available.
+constexpr uint32_t kSupportedBitrates[] = {96000, 128000, 160000, 192000, 256000, 320000};
 constexpr size_t kSupportedBitrateCount = sizeof(kSupportedBitrates) / sizeof(kSupportedBitrates[0]);
 constexpr uint32_t kMaxBitrate = kSupportedBitrates[kSupportedBitrateCount - 1];
+
+constexpr uint32_t kSamplesPerFrame = 1024;
+
+// Bytes to keep free in a media payload beyond the average frame: the LATM header (about
+// eleven bytes) and the overshoot of individual CBR frames. Without fragmentation an
+// access unit has to fit one RTP packet, so a bitrate is only usable when it leaves this.
+constexpr size_t kMediaHeadroom = 32;
+
+// Highest supported bitrate whose average frame plus kMediaHeadroom fits payloadBytes,
+// which excludes the RTP header. 0 when even the lowest bitrate does not fit.
+constexpr uint32_t MaxBitrateForMtu(size_t payloadBytes, uint32_t sampleRate) noexcept
+{
+	if (sampleRate == 0) {
+		return 0;
+	}
+	for (size_t i = kSupportedBitrateCount; i-- > 0;) {
+		const uint32_t bitrate = kSupportedBitrates[i];
+		const size_t average = static_cast<size_t>(bitrate) / 8 * kSamplesPerFrame / sampleRate;
+		if (average + kMediaHeadroom <= payloadBytes) {
+			return bitrate;
+		}
+	}
+	return 0;
+}
 
 struct Params {
 	uint8_t objectType = kObjectMpeg2Lc;
@@ -108,22 +133,28 @@ constexpr bool ParseConfiguredIe(const uint8_t* ie, size_t len, Params& out) noe
 	return true;
 }
 
-// Everything the encoder supports: MPEG-2/4 LC, 44.1/48 kHz, mono/stereo, CBR up to kMaxBitrate.
+// Everything the driver can play: MPEG-2/4 LC, 44.1/48 kHz, mono/stereo, CBR up to the
+// highest bitrate one media packet carries. That is 256 kbps for the 895-byte A2DP MTU
+// (883 payload bytes, one access unit per packet); the encoder's own ceiling is 320 kbps,
+// which needs a larger MTU.
+constexpr uint32_t kAdvertisedMaxBitrate = 256000;
 constexpr uint8_t kLocalCapabilities[kIeLength] = {
 	kObjectMpeg2Lc | kObjectMpeg4Lc,
 	static_cast<uint8_t>((SampleRateMask(44100) | SampleRateMask(48000)) >> 4),
 	static_cast<uint8_t>((((SampleRateMask(44100) | SampleRateMask(48000)) & 0x0F) << 4) | kChannels1 | kChannels2),
-	static_cast<uint8_t>((kMaxBitrate >> 16) & 0x7F),
-	static_cast<uint8_t>(kMaxBitrate >> 8),
-	static_cast<uint8_t>(kMaxBitrate),
+	static_cast<uint8_t>((kAdvertisedMaxBitrate >> 16) & 0x7F),
+	static_cast<uint8_t>(kAdvertisedMaxBitrate >> 8),
+	static_cast<uint8_t>(kAdvertisedMaxBitrate),
 };
 
 // Picks one value per field from the sink capabilities and writes a configured IE.
 // preferredSampleRate / preferredChannels: 0 = no preference. bitratePreference: 0 =
-// highest supported. Returns false if nothing is compatible.
+// highest supported. payloadBytes: bytes one media packet can carry excluding the RTP
+// header, or 0 to leave the bitrate to the sink and the encoder. Returns false if nothing
+// is compatible.
 constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t preferredSampleRate,
 					  uint32_t bitratePreference, uint8_t out[kIeLength],
-					  uint8_t preferredChannels = 0) noexcept
+					  uint8_t preferredChannels = 0, size_t payloadBytes = 0) noexcept
 {
 	if (remoteIeLength < kIeLength) {
 		return false;
@@ -163,11 +194,21 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 	}
 
 	const uint32_t remoteMax = ReadBitrate(remoteIe);
+	uint32_t limit = remoteMax;
+	if (payloadBytes != 0) {
+		const uint32_t mtuLimit = MaxBitrateForMtu(payloadBytes, p.sampleRate);
+		if (mtuLimit == 0) {
+			return false;
+		}
+		if (limit == 0 || mtuLimit < limit) {
+			limit = mtuLimit;
+		}
+	}
 	p.vbr = false;
-	p.bitrate = ClampBitrate(bitratePreference == 0 ? kMaxBitrate : bitratePreference, remoteMax);
+	p.bitrate = ClampBitrate(bitratePreference == 0 ? kMaxBitrate : bitratePreference, limit);
 	if (p.bitrate == 0) {
 		p.bitrate = kSupportedBitrates[0];
-		if (remoteMax != 0 && remoteMax < p.bitrate) {
+		if (limit != 0 && limit < p.bitrate) {
 			return false;
 		}
 	}

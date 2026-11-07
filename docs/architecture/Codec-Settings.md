@@ -38,11 +38,15 @@ through `SET_PREFERENCE` (`kAbiVersion` 4). Deleting the sink subkey returns it 
 | SBC block length | `CodecPreferenceSbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
-| AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000; clamped to the sink maximum | highest the sink accepts |
+| AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to 256 kbps |
 
-192 kbps is the ceiling for a different reason: at 320 kbps the average AAC frame would no
-longer fit one RTP packet (`kMaxFramePayload`, 883 bytes) and the stream drops frames
-because A2DP fragmentation is not implemented.
+The Media Foundation encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps
+are rejected). A2DP sends one access unit per media packet, so the bitrate is also capped
+by what one packet carries: at the 895-byte MTU (883 payload bytes, one LATM element) the
+ceiling is 256 kbps at both 44.1 and 48 kHz — a 256 kbps frame is about 743 bytes at
+44.1 kHz, 683 at 48 kHz. 320 kbps only fits a larger MTU, and fragmentation is not used:
+sources such as the AOSP stack also send a single LATM element per packet and lower the
+bitrate to the MTU instead of fragmenting.
 | AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
 
 A value the sink does not advertise falls back to the selector's own order instead of

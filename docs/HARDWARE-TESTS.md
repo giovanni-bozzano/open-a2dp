@@ -226,6 +226,10 @@ it), reattach.
    restores the driver defaults (bitpool 53, the selector's own frame order).
 5. While AAC streams, `OpenA2dpCtl codec aac --bitrate 128000`: same in-place path, and
    `status` reports 128000 bps; a sink advertising less gets its maximum.
+6. `OpenA2dpCtl codec aac --bitrate 256000`: expect `AAC ... 256000 bps` in the media line,
+   no `does not fit the media MTU`, and no dropped frames in `packets`/`underruns`.
+   `--bitrate 320000` settles on 256000 instead (the encoder accepts 320 kbps but one
+   895-byte packet cannot carry it); `status` reports the negotiated 256000.
 
 **T23 Endpoint rate selection (S/A)**
 1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).

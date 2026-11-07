@@ -8,7 +8,8 @@ with no service installed, running or reachable.
 v1 assumptions:
 
 - one service process per machine, one registration per sink device instance;
-- AAC-LC, MPEG-2/4, 44.1/48 kHz, stereo, CBR up to 192 kbps (what `AacConfig` offers);
+- AAC-LC, MPEG-2/4, 44.1/48 kHz, stereo, CBR at 96/128/160/192/256/320 kbps (the set the
+  Media Foundation encoder accepts; 256 kbps is what the 895-byte media MTU carries);
 - one LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
 - the ACX endpoint offers 16-bit stereo at 44.1 and 48 kHz; the encoder follows the rate
   Windows opened the stream with.
@@ -273,8 +274,9 @@ exceed `kMaxFramePayload`, and enters the service path.
 
 ## 11. Not in v1
 
-- Fragmentation of AAC frames larger than the media MTU (the negotiated bitrate keeps
-  frames within 883 bytes; oversize records are dropped and counted).
+- Fragmentation of AAC frames larger than the media MTU: the selector caps the bitrate to
+  what one packet carries (256 kbps at the 895-byte MTU), and oversize records are dropped
+  and counted.
 - VBR, mono and rates other than 44.1/48 kHz stereo.
 - More than one service or more than one registration per device.
 - AVRCP absolute volume and the config UI (D4, M5b/M6).
