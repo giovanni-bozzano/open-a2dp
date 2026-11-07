@@ -64,6 +64,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		frame.blocks = static_cast<uint8_t>(preference.sbcBlocks);
 		frame.subbands = static_cast<uint8_t>(preference.sbcSubbands);
 		frame.allocation = static_cast<uint8_t>(preference.sbcAllocation);
+		frame.channels = static_cast<uint8_t>(ctx->PinChannels);
 		// Ask for the endpoint's rate so the sink matches the PCM Windows produced; the
 		// selector falls back to its own order when the sink lacks that rate.
 		if (!SbcConfig::Select(playable, SbcConfig::kIeLength, ctx->PinSampleRate, bitpool, configIe, frame))
@@ -83,7 +84,8 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		}
 		// Prefer the endpoint's rate so the encoder gets the PCM the stream produced; the
 		// bitrate preference is clamped to the supported set and to the sink's maximum.
-		if (!AacConfig::Select(remoteIe, remoteIeLength, ctx->PinSampleRate, preference.aacBitrate, configIe))
+		if (!AacConfig::Select(remoteIe, remoteIeLength, ctx->PinSampleRate, preference.aacBitrate,
+							  configIe, static_cast<uint8_t>(ctx->PinChannels)))
 		{
 			return 0;
 		}

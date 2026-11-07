@@ -119,10 +119,11 @@ constexpr uint8_t kLocalCapabilities[kIeLength] = {
 };
 
 // Picks one value per field from the sink capabilities and writes a configured IE.
-// preferredSampleRate: 0 = no preference. bitratePreference: 0 = highest supported.
-// Returns false if nothing is compatible.
+// preferredSampleRate / preferredChannels: 0 = no preference. bitratePreference: 0 =
+// highest supported. Returns false if nothing is compatible.
 constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t preferredSampleRate,
-					  uint32_t bitratePreference, uint8_t out[kIeLength]) noexcept
+					  uint32_t bitratePreference, uint8_t out[kIeLength],
+					  uint8_t preferredChannels = 0) noexcept
 {
 	if (remoteIeLength < kIeLength) {
 		return false;
@@ -147,7 +148,13 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 		return false;
 	}
 
-	if (remoteIe[2] & kChannels2) {
+	// The endpoint's channel count wins when the sink offers it, so the encoder gets the
+	// PCM Windows produced; otherwise the sink's own preference decides.
+	if (preferredChannels == 1 && (remoteIe[2] & kChannels1)) {
+		p.channels = 1;
+	} else if (preferredChannels == 2 && (remoteIe[2] & kChannels2)) {
+		p.channels = 2;
+	} else if (remoteIe[2] & kChannels2) {
 		p.channels = 2;
 	} else if (remoteIe[2] & kChannels1) {
 		p.channels = 1;

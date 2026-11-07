@@ -62,6 +62,35 @@ TEST(Aac_SelectConfiguration_RespectsSinkBitrateAndRate)
 	CHECK_EQ(p.bitrate, uint32_t{128000});
 }
 
+TEST(Aac_Select_PrefersEndpointChannels)
+{
+	// MPEG-4 LC, 44.1 and 48 kHz, mono and stereo, 192 kbps.
+	uint8_t remote[6] = {};
+	remote[0] = AacConfig::kObjectMpeg4Lc;
+	const uint16_t rates = AacConfig::SampleRateMask(44100) | AacConfig::SampleRateMask(48000);
+	remote[1] = static_cast<uint8_t>(rates >> 4);
+	remote[2] = static_cast<uint8_t>(((rates & 0x0F) << 4) | AacConfig::kChannels1 | AacConfig::kChannels2);
+	remote[3] = 0x02;
+	remote[4] = 0xEE;
+
+	uint8_t ie[6] = {};
+	AacConfig::Params params;
+	REQUIRE(AacConfig::Select(remote, 6, 48000, 0, ie, 1));
+	REQUIRE(AacConfig::ParseConfiguredIe(ie, 6, params));
+	CHECK_EQ(params.sampleRate, uint32_t{48000});
+	CHECK_EQ(params.channels, uint8_t{1});
+
+	REQUIRE(AacConfig::Select(remote, 6, 44100, 0, ie, 2));
+	REQUIRE(AacConfig::ParseConfiguredIe(ie, 6, params));
+	CHECK_EQ(params.sampleRate, uint32_t{44100});
+	CHECK_EQ(params.channels, uint8_t{2});
+
+	// No preference keeps the sink's own order (stereo first).
+	REQUIRE(AacConfig::Select(remote, 6, 0, 0, ie));
+	REQUIRE(AacConfig::ParseConfiguredIe(ie, 6, params));
+	CHECK_EQ(params.channels, uint8_t{2});
+}
+
 TEST(Aac_SelectConfiguration_BitratePreference)
 {
 	AacCodec codec;

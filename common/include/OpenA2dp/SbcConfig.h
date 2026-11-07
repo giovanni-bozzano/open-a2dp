@@ -38,6 +38,7 @@ struct FramePreference {
 	uint8_t blocks = 0;     // 4, 8, 12 or 16
 	uint8_t subbands = 0;   // 4 or 8
 	uint8_t allocation = 0; // kAllocationLoudness or kAllocationSnr
+	uint8_t channels = 0;   // 1 or 2; 0 keeps the selector's joint-stereo-first order
 };
 
 constexpr uint8_t kAllocationLoudness = 0x01;
@@ -78,7 +79,18 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 	if (!fs) {
 		fs = PickFirst(fsAvail, fsOrder, 4);
 	}
-	const uint8_t mode = PickFirst(remoteIe[0] & 0x0F, modeOrder, 4);
+	// Prefer the mode that matches the endpoint's channel count: mono for a mono stream,
+	// joint stereo otherwise. Falls back to the sink's own capabilities.
+	const uint8_t modeAvail = remoteIe[0] & 0x0F;
+	uint8_t mode = 0;
+	if (frame.channels == 1 && (modeAvail & 0x08)) {
+		mode = 0x08; // mono
+	} else if (frame.channels == 2 && (modeAvail & 0x01)) {
+		mode = 0x01; // joint stereo
+	}
+	if (!mode) {
+		mode = PickFirst(modeAvail, modeOrder, 4);
+	}
 	const uint8_t blocks = PickPreferred(remoteIe[1] & 0xF0, BlocksBit(frame.blocks), blocksOrder, 4);
 	const uint8_t subbands = PickPreferred(remoteIe[1] & 0x0C, SubbandsBit(frame.subbands), subbandsOrder, 2);
 	const uint8_t alloc = PickPreferred(remoteIe[1] & 0x03, frame.allocation, allocOrder, 2);

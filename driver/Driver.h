@@ -40,14 +40,18 @@ inline constexpr USHORT AvdtpPsm = 0x0019;
 // Defined in OpenA2dp/Ioctl.h so the driver and the encoder service agree.
 inline constexpr USHORT MediaMaxMtu = static_cast<USHORT>(OpenA2dp::Ioctl::kMediaMaxMtu);
 
-// Render endpoint formats: 16-bit stereo at 44.1 and 48 kHz, the two rates every A2DP
-// sink supports, so whichever format Windows opens the stream with can be negotiated.
-// AudioSampleRate stays the default the endpoint reports before a stream exists.
+// Render endpoint formats: 16-bit PCM at 44.1 and 48 kHz, mono and stereo. Those are the
+// two rates every A2DP sink supports and the channel counts both codecs can encode, so
+// whichever format Windows opens the stream with can be negotiated. AudioSampleRate and
+// AudioChannels stay the defaults the endpoint reports before a stream exists.
 inline constexpr ULONG AudioSampleRate = 44100;
 inline constexpr USHORT AudioChannels = 2;
 inline constexpr USHORT AudioBytesPerFrame = AudioChannels * sizeof(INT16);
 inline constexpr ULONG AudioRenderRates[] = {44100, 48000};
 inline constexpr ULONG AudioRenderRateCount = ARRAYSIZE(AudioRenderRates);
+inline constexpr USHORT AudioRenderChannels[] = {2, 1};
+inline constexpr ULONG AudioRenderChannelCount = ARRAYSIZE(AudioRenderChannels);
+inline constexpr ULONG AudioRenderFormatCount = AudioRenderRateCount * AudioRenderChannelCount;
 // About 370 ms of PCM between the ACX stream and the SBC encoder; shared with the
 // encoder service (defined in OpenA2dp/Ioctl.h).
 inline constexpr ULONG PcmRingBytes = OpenA2dp::Ioctl::kPcmRingBytes;

@@ -32,7 +32,7 @@ struct RENDER_FORMAT
 	WAVEFORMATEXTENSIBLE WaveFormatExt;
 };
 
-extern RENDER_FORMAT RenderFormats[AudioRenderRateCount];
+extern RENDER_FORMAT RenderFormats[AudioRenderFormatCount];
 
 EVT_ACX_CIRCUIT_CREATE_STREAM OnCreateStream;
 EVT_ACX_JACK_RETRIEVE_PRESENCE_STATE OnRetrieveJackPresence;

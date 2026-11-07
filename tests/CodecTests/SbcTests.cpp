@@ -3,6 +3,7 @@
 
 #include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/SbcCodec.h>
+#include <OpenA2dp/SbcConfig.h>
 
 #include <cmath>
 #include <numbers>
@@ -242,6 +243,28 @@ TEST(Sbc_SelectConfiguration_PrefersFrameParameters)
 	unavailable.sbcAllocation = kAllocSnr;
 	REQUIRE(codec.SelectConfiguration(narrow, 4, unavailable, cfg));
 	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks16 | kSubbands8 | kAllocLoudness});
+}
+
+TEST(Sbc_Select_PrefersEndpointChannels)
+{
+	// 44.1 kHz, joint stereo and mono, 16 blocks, 8 subbands, loudness, bitpool 2..53.
+	const uint8_t remote[4] = {0x29, 0x15, 2, 53};
+	uint8_t ie[4] = {};
+
+	SbcConfig::FramePreference mono;
+	mono.channels = 1;
+	REQUIRE(SbcConfig::Select(remote, 4, 0, 53, ie, mono));
+	CHECK_EQ(ie[0], uint8_t{0x28});
+
+	SbcConfig::FramePreference stereo;
+	stereo.channels = 2;
+	REQUIRE(SbcConfig::Select(remote, 4, 0, 53, ie, stereo));
+	CHECK_EQ(ie[0], uint8_t{0x21});
+
+	// A sink without the requested channel mode still gets a usable configuration.
+	const uint8_t stereoOnly[4] = {0x21, 0x15, 2, 53};
+	REQUIRE(SbcConfig::Select(stereoOnly, 4, 0, 53, ie, mono));
+	CHECK_EQ(ie[0], uint8_t{0x21});
 }
 
 // Every bitpool the preference can request must still produce frames that fit one RTP

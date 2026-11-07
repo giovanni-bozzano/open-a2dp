@@ -231,14 +231,16 @@ it), reattach.
 1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).
 - Expect `endpoint format 48000 Hz 2 ch`, then `configured codec SBC` and the media
   `endpoint PCM, SBC 48000 Hz ...` line; audible at the normal pitch, `packets`
-  advancing, no `does not match the endpoint format`.
-2. Stop playback, choose `16 bit, 44100 Hz`, play again.
+  advancing, no `does not match the endpoint format`.2. Stop playback, choose `16 bit, 44100 Hz`, play again.
 - Expect `endpoint format 44100 Hz 2 ch` and a 44.1 kHz stream, without a sink reconnect.
-3. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 2 ch`, `status`
-  reports the 48 kHz bitrate, audio is audible.
-4. A sink that answers the configure with the other rate (non-compliant, one rate only)
-  fails loudly with `SBC <rate> does not match the endpoint format <rate>` and stays
-  silent instead of playing at the wrong speed.
+3. Choose a mono format (`1 channel`), play (S).
+- Expect `endpoint format 44100 Hz 1 ch`, `configured codec SBC` with `mode 0` and audible
+  mono audio; `status` shows one channel. Repeat on A: AAC negotiates mono.
+4. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 2 ch`, `status`
+   reports the 48 kHz bitrate, audio is audible.
+5. A sink that answers the configure with another rate or channel count (non-compliant,
+   one format only) fails loudly with `SBC <rate> Hz <n> ch does not match the endpoint
+   format <rate> Hz <n> ch` and stays silent instead of playing at the wrong speed.
 
 ### Soak
 

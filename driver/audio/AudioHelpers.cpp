@@ -21,14 +21,17 @@ const GUID* EndpointCategory(_In_ BTH_COD cod)
 	return &KSNODETYPE_SPEAKER;
 }
 
-RENDER_FORMAT RenderFormats[AudioRenderRateCount];
+RENDER_FORMAT RenderFormats[AudioRenderFormatCount];
 
-// One 16-bit stereo PCM format per render rate; everything else is identical.
+// One 16-bit PCM format per render rate and channel count; everything else is identical.
 void BuildRenderFormats()
 {
-	for (ULONG i = 0; i < AudioRenderRateCount; ++i)
+	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
 		RENDER_FORMAT& format = RenderFormats[i];
+		const ULONG rate = AudioRenderRates[i / AudioRenderChannelCount];
+		const USHORT channels = AudioRenderChannels[i % AudioRenderChannelCount];
+		const USHORT bytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
 		RtlZeroMemory(&format, sizeof(format));
 		format.DataFormat.FormatSize = sizeof(RENDER_FORMAT);
 		format.DataFormat.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
@@ -37,14 +40,14 @@ void BuildRenderFormats()
 
 		WAVEFORMATEX& wave = format.WaveFormatExt.Format;
 		wave.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-		wave.nChannels = AudioChannels;
-		wave.nSamplesPerSec = AudioRenderRates[i];
+		wave.nChannels = channels;
+		wave.nSamplesPerSec = rate;
 		wave.wBitsPerSample = 16;
-		wave.nBlockAlign = AudioBytesPerFrame;
-		wave.nAvgBytesPerSec = AudioRenderRates[i] * AudioBytesPerFrame;
+		wave.nBlockAlign = bytesPerFrame;
+		wave.nAvgBytesPerSec = rate * bytesPerFrame;
 		wave.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
 		format.WaveFormatExt.Samples.wValidBitsPerSample = 16;
-		format.WaveFormatExt.dwChannelMask = KSAUDIO_SPEAKER_STEREO;
+		format.WaveFormatExt.dwChannelMask = channels == 1 ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO;
 		format.WaveFormatExt.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
 	}
 }
