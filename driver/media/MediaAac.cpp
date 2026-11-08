@@ -31,6 +31,10 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	{
 		OA2DP_WARN(ctx, "Media", "AAC bitrate %u does not fit the media MTU (max %u)", params.bitrate,
 			mtuLimit);
+		// The bitrate was picked before this channel opened, so the MTU it assumed can be
+		// larger than the one the sink reported. Renegotiate once at a bitrate the link
+		// carries instead of leaving the stream silent.
+		SignalingRequestMtuRenegotiation(ctx);
 		return;
 	}
 	if (!ServiceRegistered(ctx))

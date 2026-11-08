@@ -233,6 +233,12 @@ struct DEVICE_CONTEXT
 	// Parameter-only change in progress; see the Reconfigure* steps. Applied in place
 	// through RECONFIGURE so the sink connection and the codec stay as they are.
 	LONG ReconfigurePhase;
+	// Set when the AAC bitrate negotiated before the media channel opened does not fit the
+	// MTU it actually reports. The work item reconfigures once at a bitrate the link
+	// carries (BeginReconfigure consumes the flag); the attempt counter keeps that to one
+	// try per connection, since the same session cannot yield a different configuration.
+	volatile LONG MtuRenegotiate;
+	volatile LONG MtuRenegotiationAttempts;
 	// Consecutive media ticks that found the previous send still pending (diagnostic).
 	ULONG MediaBusyTicks;
 	// Set by the media timer so the work item can tell clock ticks from send completions.
@@ -492,6 +498,12 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
 // Asks the signaling work item to SUSPEND the stream (e.g. after a media send failure).
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
+
+// The negotiated AAC bitrate does not fit the media channel's real MTU (it was chosen
+// before the channel opened): reconfigures in place once per connection at a bitrate the
+// link carries instead of leaving the stream silent.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingRequestMtuRenegotiation(_In_ DEVICE_CONTEXT* ctx);
 
 // Called when the encoder service registered; may renegotiate the stream if that
 // makes a different codec selectable.

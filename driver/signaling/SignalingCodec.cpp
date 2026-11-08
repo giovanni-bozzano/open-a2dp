@@ -57,6 +57,35 @@ bool SelectedFormatMatchesPin(DEVICE_CONTEXT* ctx)
 	return sampleRate == ctx->PinSampleRate && channels == ctx->PinChannels;
 }
 
+// The AAC bitrate is chosen during discovery, before the media channel exists, so the MTU
+// the negotiation assumed can be larger than the one the link reports. Everything else in
+// the configuration (object type, rate, channels) stays as negotiated and only the bitrate
+// is lowered, which is exactly what RECONFIGURE carries.
+bool BuildMtuCappedConfiguration(DEVICE_CONTEXT* ctx, uint8_t* ie, size_t& ieLength)
+{
+	if (ctx->Session.SelectedCodec() != Avdtp::CodecType::Aac)
+	{
+		return false;
+	}
+	AacConfig::Params params;
+	if (!AacConfig::ParseConfiguredIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), params))
+	{
+		return false;
+	}
+	const size_t payload = (ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
+	const uint32_t mtuLimit = AacConfig::MaxBitrateForMtu(payload, params.sampleRate);
+	if (mtuLimit == 0 || params.bitrate <= mtuLimit)
+	{
+		return false;
+	}
+	OA2DP_INFO(ctx, "AVDTP", "media MTU %u carries up to %u bps; lowering the AAC bitrate from %u",
+		static_cast<unsigned>(ctx->MediaOutMtu), mtuLimit, params.bitrate);
+	params.bitrate = mtuLimit;
+	AacConfig::WriteIe(params, ie);
+	ieLength = AacConfig::kIeLength;
+	return true;
+}
+
 // A configuration we select has to run at the endpoint format: PCM reaches the encoder at
 // PinSampleRate/PinChannels, so a stream negotiated at another rate or channel count cannot
 // play it. The selectors prefer those values, so a mismatch means the sink does not
@@ -273,6 +302,9 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->CodecSwitchWanted = FALSE;
 	ctx->CodecSwitchClosing = FALSE;
 	ctx->ReconfigurePhase = ReconfigureNone;
+	// A new connection gets its own single MTU renegotiation attempt.
+	InterlockedExchange(&ctx->MtuRenegotiate, 0);
+	InterlockedExchange(&ctx->MtuRenegotiationAttempts, 0);
 	// The codecs are re-learned by this connection's discovery.
 	InterlockedExchange(&ctx->SinkCodecs, 0);
 	ctx->AppliedPreferenceParameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);

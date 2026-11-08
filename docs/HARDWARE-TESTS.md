@@ -233,6 +233,14 @@ it), reattach.
    bps` in the media line, no `does not fit the media MTU`, and no dropped frames in
    `packets`/`underruns`. At 44.1 kHz the same request settles on 256000, because one
    895-byte packet cannot carry a 320 kbps 44.1 kHz access unit.
+8. On a sink whose media channel grants less than the 895 bytes the driver asks for:
+   expect `AAC bitrate <n> does not fit the media MTU (max <m>)`, then
+   `the AAC bitrate does not fit the media MTU; reconfiguring at a bitrate it carries`,
+   `sending RECONFIGURE at a bitrate the media MTU carries`, and `Streaming` with the
+   media line showing the lower bitrate - without a sink reconnect. A sink that refuses
+   the RECONFIGURE goes through `sink rejected the new parameters; closing to renegotiate`
+   and a rediscovery; if that stream still does not fit, the log ends with
+   `leaving the stream silent` and the stream stays silent instead of retrying.
 
 **T23 Endpoint rate selection (S/A)**
 1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).

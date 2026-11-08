@@ -82,6 +82,12 @@ unit is the average frame plus about eleven bytes - 753 B at 256 kbps/44.1 kHz, 
 prints the MTU and the ceiling it enforces. Fragmentation is not used: sources such as the
 AOSP stack also send one LATM element per packet and lower the bitrate to the MTU instead.
 
+The MTU a negotiation is capped against is the one the driver asks for, because discovery
+runs before the media channel exists. If the sink grants less, the stream would start into
+a bitrate one packet cannot carry, so the driver suspends and reconfigures it in place once
+per connection at the highest bitrate the reported MTU carries; a second mismatch is left
+silent instead of retried.
+
 PCM depth is 16-bit everywhere: the endpoint publishes 16-bit formats, SBC carries 16-bit
 samples by definition, and the Media Foundation AAC encoder rejects 24-bit, 32-bit and
 float input (`0xC00D36B4`), so a 24-bit endpoint would only add a truncation step.

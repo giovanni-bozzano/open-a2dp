@@ -33,6 +33,9 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 // False when Windows opened the endpoint at another format than the stream was configured
 // with, which is what a changed endpoint format looks like once the stream is settled.
 bool SelectedFormatMatchesPin(DEVICE_CONTEXT* ctx);
+// The selected AAC configuration rewritten at the highest bitrate the media channel's MTU
+// carries. False when the stream is not AAC or the configuration already fits.
+bool BuildMtuCappedConfiguration(DEVICE_CONTEXT* ctx, uint8_t* ie, size_t& ieLength);
 void PublishStatus(DEVICE_CONTEXT* ctx);
 void ResetSession(DEVICE_CONTEXT* ctx);
 void Transmit(DEVICE_CONTEXT* ctx, size_t length);

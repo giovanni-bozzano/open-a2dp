@@ -135,6 +135,9 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec)
 static void BeginCodecSwitchClose(DEVICE_CONTEXT* ctx)
 {
 	ctx->ReconfigurePhase = ReconfigureNone;
+	// A rediscovery after a close is the retry for an MTU mismatch, so the pending
+	// in-place reconfiguration must not also run.
+	InterlockedExchange(&ctx->MtuRenegotiate, 0);
 	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
 	if (ctx->CodecSwitchClosing)
@@ -157,14 +160,28 @@ static void BeginReconfigure(DEVICE_CONTEXT* ctx)
 {
 	uint8_t ie[Avdtp::kMaxCodecIe];
 	size_t ieLength = 0;
-	if (!ctx->Session.RefreshConfiguration(ie, ieLength))
+	// A stream left without media because its AAC bitrate does not fit the real media MTU
+	// is reconfigured at a bitrate the link carries; anything else is rebuilt from the sink
+	// capabilities the original selection used.
+	const bool mtuCapped = InterlockedExchange(&ctx->MtuRenegotiate, 0) != 0;
+	const bool built = mtuCapped ? BuildMtuCappedConfiguration(ctx, ie, ieLength)
+								 : ctx->Session.RefreshConfiguration(ie, ieLength);
+	if (!built)
 	{
 		OA2DP_WARN(ctx, "Signaling", "no configuration can be built from the new parameters; closing to renegotiate");
 		BeginCodecSwitchClose(ctx);
 		return;
 	}
-	OA2DP_INFO(ctx, "AVDTP", "%s parameters changed; sending RECONFIGURE (%u bytes)",
-		CodecName(ctx->Session.SelectedCodec()), static_cast<unsigned>(ieLength));
+	if (mtuCapped)
+	{
+		OA2DP_INFO(ctx, "AVDTP", "sending RECONFIGURE at a bitrate the media MTU carries (%u bytes)",
+			static_cast<unsigned>(ieLength));
+	}
+	else
+	{
+		OA2DP_INFO(ctx, "AVDTP", "%s parameters changed; sending RECONFIGURE (%u bytes)",
+			CodecName(ctx->Session.SelectedCodec()), static_cast<unsigned>(ieLength));
+	}
 	Transmit(ctx, ctx->Session.Reconfigure(ie, ieLength, ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	if (ctx->Session.HasPendingCommand())
 	{
@@ -293,9 +310,19 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	}
 	const bool codecDiffers = ctx->Session.SelectedCodec() != desired;
 	const bool formatDiffers = !SelectedFormatMatchesPin(ctx);
+	// Set by the media path when the stream started without audio because the AAC bitrate
+	// the negotiation picked does not fit the MTU the media channel reports.
+	bool mtuDiffers = InterlockedCompareExchange(&ctx->MtuRenegotiate, 0, 0) != 0;
 	const LONG parameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	const bool parametersDiffer = ctx->AppliedPreferenceParameters != parameters;
-	if (!codecDiffers && !formatDiffers && !parametersDiffer)
+	if (parametersDiffer && mtuDiffers)
+	{
+		// The renegotiation for the parameter change rebuilds the configuration from the sink
+		// capabilities, which clamps to the real MTU too, so the MTU-only retry is covered.
+		InterlockedExchange(&ctx->MtuRenegotiate, 0);
+		mtuDiffers = false;
+	}
+	if (!codecDiffers && !formatDiffers && !parametersDiffer && !mtuDiffers)
 	{
 		return;
 	}
@@ -318,9 +345,17 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		BeginCodecSwitchClose(ctx);
 		return;
 	}
+	if (mtuDiffers)
+	{
+		OA2DP_INFO(ctx, "Signaling",
+			"the AAC bitrate does not fit the media MTU; reconfiguring at a bitrate it carries");
+	}
 	if (state == Avdtp::SessionState::Streaming)
 	{
-		OA2DP_INFO(ctx, "Signaling", "%s parameters changed; suspending to reconfigure", CodecName(desired));
+		if (parametersDiffer)
+		{
+			OA2DP_INFO(ctx, "Signaling", "%s parameters changed; suspending to reconfigure", CodecName(desired));
+		}
 		// Stop the encoder before the sink suspends so no packet describes the old
 		// configuration once the new one is negotiated.
 		MediaStop(ctx);
@@ -476,7 +511,8 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	}
 	// A close or a reconfigure step in flight keeps the decision alive with no event
 	// of its own; the response re-enters the work item through the read completion.
-	if ((ctx->CodecSwitchWanted || ctx->CodecSwitchClosing || ctx->ReconfigurePhase != ReconfigureNone) &&
+	if ((ctx->CodecSwitchWanted || ctx->CodecSwitchClosing || ctx->ReconfigurePhase != ReconfigureNone ||
+			InterlockedCompareExchange(&ctx->MtuRenegotiate, 0, 0) != 0) &&
 		ctx->SignalingState == ChannelOpen)
 	{
 		ContinueCodecSwitch(ctx);

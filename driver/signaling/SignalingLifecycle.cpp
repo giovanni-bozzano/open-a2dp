@@ -50,6 +50,19 @@ void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+void SignalingRequestMtuRenegotiation(_In_ DEVICE_CONTEXT* ctx)
+{
+	// One attempt per connection: the configuration is rebuilt from the same session, so a
+	// second mismatch cannot be fixed by negotiating again.
+	if (InterlockedIncrement(&ctx->MtuRenegotiationAttempts) > 1)
+	{
+		OA2DP_WARN(ctx, "Signaling", "the AAC bitrate still does not fit the media MTU; leaving the stream silent");
+		return;
+	}
+	InterlockedExchange(&ctx->MtuRenegotiate, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
 static void RequestCodecSwitch(DEVICE_CONTEXT* ctx)
 {
 	// The work item recomputes the desired codec from the current inputs, so events
