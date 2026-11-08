@@ -90,14 +90,21 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
+	// Without a set-data-format callback the device format Windows asks for in Sound settings
+	// is refused, so the format chosen there never reaches a stream.
+	ACX_PIN_CALLBACKS pinCallbacks;
+	ACX_PIN_CALLBACKS_INIT(&pinCallbacks);
+	pinCallbacks.EvtAcxPinSetDataFormat = OnPinSetDataFormat;
+
 	ACX_PIN_CONFIG pinConfig;
 	ACX_PIN_CONFIG_INIT_ID(&pinConfig, StreamingPinId);
 	pinConfig.Type = AcxPinTypeSink;
 	pinConfig.Communication = AcxPinCommunicationSink;
 	pinConfig.Category = &KSCATEGORY_AUDIO;
+	pinConfig.PinCallbacks = &pinCallbacks;
 	pinConfig.MaxStreams = 1;
 	WDF_OBJECT_ATTRIBUTES pinAttrs;
-	WDF_OBJECT_ATTRIBUTES_INIT(&pinAttrs);
+	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&pinAttrs, PIN_CONTEXT);
 	pinAttrs.ParentObject = circuit;
 	ACXPIN pins[2];
 	status = AcxPinCreate(circuit, &pinAttrs, &pinConfig, &pins[0]);
@@ -106,6 +113,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_ERROR(ctx, "Audio", "creating the streaming pin failed 0x%08X", status);
 		return status;
 	}
+	GetPinContext(pins[0])->Device = ctx;
 	// The format list is the set Windows may open the endpoint with, and the format it
 	// picks is what AVDTP negotiates. It is built here from the stored preference and
 	// rebuilt in place when that preference changes (AudioApplyEndpointFormats).
@@ -134,7 +142,10 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	pinConfig.Type = AcxPinTypeSource;
 	pinConfig.Communication = AcxPinCommunicationNone;
 	pinConfig.Category = EndpointCategory(ctx->RemoteClass);
-	status = AcxPinCreate(circuit, &pinAttrs, &pinConfig, &pins[1]);
+	WDF_OBJECT_ATTRIBUTES bridgeAttrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&bridgeAttrs);
+	bridgeAttrs.ParentObject = circuit;
+	status = AcxPinCreate(circuit, &bridgeAttrs, &pinConfig, &pins[1]);
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_ERROR(ctx, "Audio", "creating the bridge pin failed 0x%08X", status);

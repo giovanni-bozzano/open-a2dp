@@ -37,6 +37,12 @@ none worth keeping: a default that is still listed survives a rebuild, so a form
 in Sound settings is not replaced by the first listed one, while a first build or a pin
 that narrows the list gets the first listed format - which for a pin is the pinned one.
 
+The format picked in Sound settings arrives through the streaming pin's set-data-format
+callback (`EvtAcxPinSetDataFormat`), which the driver has to register: ACX refuses the
+request otherwise and every stream opens at the format the list was first built with. The
+handler accepts a format the list holds, makes it the pin default and renegotiates, so the
+stream Windows opens next runs at it.
+
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
 would leave both codecs without an encoder (the native Windows A2DP endpoint stops at the

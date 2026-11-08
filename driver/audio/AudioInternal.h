@@ -26,6 +26,14 @@ struct SINK_JACK_CONTEXT
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SINK_JACK_CONTEXT, GetSinkJackContext)
 
+// The streaming pin's callback needs the device to reach the format objects it was created
+// with; the bridge pin is created without one.
+struct PIN_CONTEXT
+{
+	DEVICE_CONTEXT* Device;
+};
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PIN_CONTEXT, GetPinContext)
+
 struct RENDER_FORMAT
 {
 	KSDATAFORMAT DataFormat;
@@ -35,6 +43,7 @@ struct RENDER_FORMAT
 extern RENDER_FORMAT RenderFormats[AudioRenderFormatCount];
 
 EVT_ACX_CIRCUIT_CREATE_STREAM OnCreateStream;
+EVT_ACX_PIN_SET_DATAFORMAT OnPinSetDataFormat;
 EVT_ACX_JACK_RETRIEVE_PRESENCE_STATE OnRetrieveJackPresence;
 EVT_ACX_STREAM_PREPARE_HARDWARE OnStreamPrepareHardware;
 EVT_ACX_STREAM_RELEASE_HARDWARE OnStreamReleaseHardware;

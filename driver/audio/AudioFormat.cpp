@@ -50,6 +50,31 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 	return status;
 }
 
+namespace
+{
+// Records the format the endpoint now produces and asks for a renegotiation when it moved.
+// Both ways the driver learns it - the stream Windows created, and the device format it
+// set - end up here, so the encoder rate and the negotiated A2DP stream always follow the
+// pin. The A2DP stream is still configured at the previous format, so the request is only
+// dropped by the signaling work item while no stream is configured.
+void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ USHORT channels)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const ULONG previousRate = ctx->PinSampleRate;
+	const USHORT previousChannels = ctx->PinChannels;
+	ctx->PinSampleRate = sampleRate;
+	ctx->PinChannels = channels;
+	ctx->PinBytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+
+	if (sampleRate != previousRate || channels != previousChannels)
+	{
+		SignalingOnPreferenceChanged(ctx);
+	}
+}
+} // namespace
+
 // Records the PCM format of the ACX stream Windows opened. The encoder input and the
 // position math follow it, so a pin at 48 kHz is negotiated and encoded at 48 kHz.
 void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
@@ -86,15 +111,6 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 		}
 	}
 
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	const ULONG previousRate = ctx->PinSampleRate;
-	const USHORT previousChannels = ctx->PinChannels;
-	ctx->PinSampleRate = sampleRate;
-	ctx->PinChannels = channels;
-	ctx->PinBytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
-	KeReleaseSpinLock(&ctx->AudioLock, irql);
-
 	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch", sampleRate, channels);
 	// What the driver publishes as the pin default, next to what Windows asked for: when
 	// the two differ, the engine opened the default instead of the format chosen in Sound
@@ -112,14 +128,57 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 				static_cast<unsigned>(defaultWave->WaveFormatEx.nChannels));
 		}
 	}
-	// Windows can open the endpoint at another format at any time (a Sound settings change,
-	// or the format list this driver rebuilt under it). The A2DP stream is still configured
-	// at the previous one, so ask for a renegotiation; the signaling work item drops the
-	// request while no stream is configured.
-	if (sampleRate != previousRate || channels != previousChannels)
+	RecordEndpointFormat(ctx, sampleRate, channels);
+}
+
+// Windows sets the endpoint's device (mixed) format here: the Sound settings Advanced list,
+// and the format a new shared-mode engine starts from. ACX only calls back when the driver
+// registers this, and without it the request is refused - the endpoint keeps serving the
+// format the list was first built with, so a rate or channel count picked in Sound settings
+// never reaches a stream. The end of a stream-format line above shows the stream Windows
+// actually created, which is the format this callback settled on.
+NTSTATUS OnPinSetDataFormat(_In_ ACXPIN pin, _In_ ACXDATAFORMAT format)
+{
+	DEVICE_CONTEXT* ctx = GetPinContext(pin)->Device;
+	if (ctx == nullptr || format == nullptr)
 	{
-		SignalingOnPreferenceChanged(ctx);
+		return STATUS_INVALID_PARAMETER;
 	}
+	ULONG index = AudioRenderFormatCount;
+	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	{
+		if (AcxDataFormatIsEqual(ctx->FormatObjects[i], format))
+		{
+			index = i;
+			break;
+		}
+	}
+	if (index == AudioRenderFormatCount)
+	{
+		const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
+		OA2DP_INFO(ctx, "Audio", "device format %u Hz %u ch is not one the endpoint lists",
+			wave != nullptr ? wave->WaveFormatEx.nSamplesPerSec : 0u,
+			wave != nullptr ? static_cast<unsigned>(wave->WaveFormatEx.nChannels) : 0u);
+		return STATUS_NOT_SUPPORTED;
+	}
+	// The chosen format becomes the pin default, so the next rebuild and every later stream
+	// keep it instead of falling back to the first listed format.
+	ACXDATAFORMATLIST list = ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
+	if (list != nullptr && ctx->FormatLock != nullptr)
+	{
+		WdfWaitLockAcquire(ctx->FormatLock, nullptr);
+		const NTSTATUS status = AcxDataFormatListAssignDefaultDataFormat(list, format);
+		WdfWaitLockRelease(ctx->FormatLock);
+		if (!NT_SUCCESS(status))
+		{
+			OA2DP_WARN(ctx, "Audio", "assigning the device format as the endpoint default failed 0x%08X", status);
+		}
+	}
+	const ULONG sampleRate = AudioRenderRates[index / AudioRenderChannelCount];
+	const USHORT channels = AudioRenderChannels[index % AudioRenderChannelCount];
+	OA2DP_INFO(ctx, "Audio", "device format %u Hz %u ch", sampleRate, static_cast<unsigned>(channels));
+	RecordEndpointFormat(ctx, sampleRate, channels);
+	return STATUS_SUCCESS;
 }
 
 namespace
