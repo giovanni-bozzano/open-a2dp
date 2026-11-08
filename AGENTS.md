@@ -3,6 +3,7 @@
 ## Stable constraints
 - Windows 11 KMDF, C++20, x64, toolset v145; warnings as errors. No STL or exceptions in `common/include`.
 - Lock order: `SessionLock` -> `MediaLock`. Never hold locks across unbounded transport waits.
+- Leave no orphaned resources (handles, work items, timers, pool, references) and create no potential deadlock or lock-order inversion. Keep code as event driven as possible instead of adding polling, timers or new waits.
 - Debug through native WinDbg MCP tools; no custom debugger scripts.
 - Commit every completed logical change separately after validation; do not batch unrelated work or include pre-existing user changes. Never push automatically. No AI attribution, co-author trailers or "generated with" lines in commit messages.
 
@@ -19,7 +20,6 @@
 - Run build-and-test after code changes.
 - Keep file responsibilities and private interfaces narrow.
 - Prefer standard independently compiled `.cpp` files with declarations in subsystem-private `*Internal.h` headers. Namespace boundaries stay within each file.
-- Keep the codebase as much as possible event driven.
 
 ## Code map
 - Entry/PnP: `driver/Driver.cpp`; `driver/README.md` lists subsystem `.cpp` files under `driver/{audio,config,l2cap,signaling,service,media}/`.
