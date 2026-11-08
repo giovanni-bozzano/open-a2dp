@@ -96,6 +96,22 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch", sampleRate, channels);
+	// What the driver publishes as the pin default, next to what Windows asked for: when
+	// the two differ, the engine opened the default instead of the format chosen in Sound
+	// settings, which is what to look at when a stored rate or channel count does not apply.
+	ACXDATAFORMATLIST list = ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
+	ACXDATAFORMAT defaultFormat = nullptr;
+	if (list != nullptr && NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &defaultFormat)) &&
+		defaultFormat != nullptr)
+	{
+		const auto* defaultWave =
+			static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(defaultFormat));
+		if (defaultWave != nullptr)
+		{
+			OA2DP_INFO(ctx, "Audio", "pin default %u Hz %u ch", defaultWave->WaveFormatEx.nSamplesPerSec,
+				static_cast<unsigned>(defaultWave->WaveFormatEx.nChannels));
+		}
+	}
 	// Windows can open the endpoint at another format at any time (a Sound settings change,
 	// or the format list this driver rebuilt under it). The A2DP stream is still configured
 	// at the previous one, so ask for a renegotiation; the signaling work item drops the
@@ -261,10 +277,30 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		return NT_SUCCESS(status) ? STATUS_UNSUCCESSFUL : status;
 	}
 
-	// The pinned format becomes the endpoint default, so Windows reports and opens it
-	// instead of falling back to whatever the list happens to start with.
-	const NTSTATUS defaultStatus =
-		AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[FirstListed(listed)]);
+	// The default format is what Windows opens the endpoint with in shared mode, so a
+	// default that is still listed is kept: a rebuild (a discovery, or a preference that
+	// does not pin the format) must not put the first listed format back over the one
+	// Windows or the user chose. The first build and a narrowing pin have no usable
+	// default of their own and get the first listed one, which for a pin is the pinned
+	// format.
+	ACXDATAFORMAT currentDefault = nullptr;
+	ULONG currentDefaultIndex = AudioRenderFormatCount;
+	if (NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &currentDefault)) && currentDefault != nullptr)
+	{
+		for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+		{
+			if (currentDefault == ctx->FormatObjects[i])
+			{
+				currentDefaultIndex = i;
+				break;
+			}
+		}
+	}
+	const bool keepDefault = currentDefaultIndex < AudioRenderFormatCount &&
+		(listed & (1u << currentDefaultIndex)) != 0;
+	const NTSTATUS defaultStatus = keepDefault
+		? STATUS_SUCCESS
+		: AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[FirstListed(listed)]);
 	WdfWaitLockRelease(ctx->FormatLock);
 	if (!NT_SUCCESS(defaultStatus))
 	{

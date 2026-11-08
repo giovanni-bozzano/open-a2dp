@@ -32,8 +32,10 @@ The list is also edited while the device runs: `AcxDataFormatListRemoveDataForma
 `AcxDataFormatListAddDataFormat` change the pin's raw format list in place, ACX fires the
 pin's format-change event after that, and Windows re-queries the endpoint instead of needing
 it restarted. The driver keeps one `ACXDATAFORMAT` object per entry so a change is an
-add/remove of objects it already owns, and it assigns the first listed format as the
-endpoint default so the pinned one is what Windows reports and opens.
+add/remove of objects it already owns. The endpoint default is assigned only when there is
+none worth keeping: a default that is still listed survives a rebuild, so a format chosen
+in Sound settings is not replaced by the first listed one, while a first build or a pin
+that narrows the list gets the first listed format - which for a pin is the pinned one.
 
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
