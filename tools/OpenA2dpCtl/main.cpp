@@ -29,7 +29,7 @@ constexpr const char* kUsage = R"(OpenA2dpCtl - inspect and configure the OpenA2
 
 Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
-                     [--watch [--interval <ms>]]
+                       [--watch [--interval <ms>]]
   OpenA2dpCtl list
   OpenA2dpCtl codec [<auto|sbc|aac>] [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]

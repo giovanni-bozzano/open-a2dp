@@ -11,7 +11,8 @@
     name a drive. vmPassword is the VM encryption password; omit it if the VM is not encrypted.
 
     Update strategy (no reboot, ever):
-      1. stop the encoder service and the CLI (they hold handles on the driver);
+      1. stop the encoder service, the CLI and the settings window (they hold handles on the
+         driver);
       2. disable the OpenA2dp device node so the driver unloads;
       3. confirm the driver really unloaded; if not, re-enable and ABORT;
       4. install the new package while nothing is loaded;
@@ -183,7 +184,8 @@ $sys = Join-Path $package 'OpenA2dp.sys'
 $inf = Join-Path $package 'OpenA2dp.inf'
 $ctl = Join-Path $out 'OpenA2dpCtl.exe'
 $svc = Join-Path $out 'OpenA2dpSvc.exe'
-foreach ($p in $sys, $inf, $ctl, $svc) {
+$ui = Join-Path $out 'OpenA2dpConfig.exe'
+foreach ($p in $sys, $inf, $ctl, $svc, $ui) {
     if (-not (Test-Path $p)) { throw "Missing $p; build first." }
 }
 $catalog = Get-ChildItem $package -Filter '*.cat' | Select-Object -First 1
@@ -231,21 +233,23 @@ foreach ($f in 'result.txt', 'install.log') {
     [void](Try-VmRun ($auth + @('deleteFileInGuest', $vmx, "C:\OpenA2dp\$f")))
 }
 
-# The service and CLI lock their own binaries. Stop the service cleanly first: killing it
-# would trigger its restart-on-failure recovery and relaunch it within 5 s. Arguments are
-# passed separately; vmrun/sc.exe mis-parse a single "stop OpenA2dpSvc" argument.
+# The service, the CLI and the settings window lock their own binaries, and an open window
+# also holds a handle on the driver. Stop the service cleanly first: killing it would trigger
+# its restart-on-failure recovery and relaunch it within 5 s. Arguments are passed separately;
+# vmrun/sc.exe mis-parse a single "stop OpenA2dpSvc" argument.
 function Stop-GuestBinaries {
     $sys32 = 'C:\Windows\System32'
     [void](Try-VmRun ($auth + @('runProgramInGuest', $vmx, "$sys32\sc.exe", 'stop', 'OpenA2dpSvc')))
     Start-Sleep -Seconds 3
     [void](Try-VmRun ($auth + @('runProgramInGuest', $vmx, "$sys32\taskkill.exe", '/F', '/IM', 'OpenA2dpSvc.exe')))
     [void](Try-VmRun ($auth + @('runProgramInGuest', $vmx, "$sys32\taskkill.exe", '/F', '/IM', 'OpenA2dpCtl.exe')))
+    [void](Try-VmRun ($auth + @('runProgramInGuest', $vmx, "$sys32\taskkill.exe", '/F', '/IM', 'OpenA2dpConfig.exe')))
     Start-Sleep -Seconds 2
 }
 Stop-GuestBinaries
 
 $files = @(Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) +
-    (Get-Item $cer) + (Get-Item $ctl) + (Get-Item $svc)
+    (Get-Item $cer) + (Get-Item $ctl) + (Get-Item $svc) + (Get-Item $ui)
 foreach ($file in $files) {
     Write-Host "Copying $($file.Name)"
     $dest = "C:\OpenA2dp\$($file.Name)"
@@ -340,7 +344,7 @@ function Dump-HangDiagnostics([string[]]$Ids) {
     foreach ($id in $Ids) { [void](Run 'pnputil.exe' "/enum-devices /instanceid `"$id`"" 20) }
     [void](Run 'sc.exe' 'queryex OpenA2dp' 20)
     [void](Run 'sc.exe' 'queryex audiosrv' 20)
-    foreach ($n in 'audiodg', 'pnputil', 'OpenA2dpSvc', 'OpenA2dpCtl') {
+    foreach ($n in 'audiodg', 'pnputil', 'OpenA2dpSvc', 'OpenA2dpCtl', 'OpenA2dpConfig') {
         Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object { Log "process: $($_.Name) pid $($_.Id) handles $($_.HandleCount)" }
     }
     try {
@@ -418,6 +422,7 @@ try {
     [void](Run 'sc.exe' 'stop OpenA2dpSvc' 20)
     [void](Run 'taskkill.exe' '/F /IM OpenA2dpSvc.exe' 20)
     [void](Run 'taskkill.exe' '/F /IM OpenA2dpCtl.exe' 20)
+    [void](Run 'taskkill.exe' '/F /IM OpenA2dpConfig.exe' 20)
     [void](Wait-Until { (& sc.exe query OpenA2dpSvc 2>&1 | Out-String) -notmatch 'RUNNING|STOP_PENDING' } 15)
 
     # 2. Trust the test certificate.
@@ -636,3 +641,4 @@ if ($NoRestart) {
     Write-Host "`nDeployment complete. The driver was reloaded without a reboot and verified."
 }
 Write-Host 'CLI: C:\OpenA2dp\OpenA2dpCtl.exe (run it elevated in the guest; "OpenA2dpCtl help" for usage).'
+Write-Host 'UI:  C:\OpenA2dp\OpenA2dpConfig.exe (also elevated; the window asks for that itself).'
