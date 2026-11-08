@@ -21,6 +21,13 @@ removes the other formats from the pin, so the engine can only open the pinned o
 negotiates it. The list cannot be empty - the validator only accepts 44.1/48 kHz and 1/2
 channels, and a preference that failed validation is discarded as a whole.
 
+The list is filtered by what the sink advertises, too: after a discovery the driver keeps
+only the formats the sink's SBC capabilities cover, so Sound settings never offers a rate or
+channel count the sink cannot play. The sink's capabilities describe its PCM support for both
+codecs, since SBC is mandatory. A forced codec the sink does not advertise is refused - AAC
+is the only one that can be missing - and `OpenA2dpCtl codec` checks the same masks before it
+sends anything, so an unusable choice is named instead of stored.
+
 The list is also edited while the device runs: `AcxDataFormatListRemoveDataFormat` and
 `AcxDataFormatListAddDataFormat` change the pin's raw format list in place, ACX fires the
 pin's format-change event after that, and Windows re-queries the endpoint instead of needing
@@ -48,8 +55,11 @@ and channel mode decide the render formats.
 
 A pin is refused by `SET_PREFERENCE` (`STATUS_NOT_SUPPORTED`) once the sink's advertised SBC
 capabilities are known and do not cover it, rather than stored and left to fail later; the
-`status` line `sink formats` lists the same capabilities for the user. Before the first
-discovery nothing is known, so the pin is stored and the negotiation check refuses it.
+`status` line `sink formats` lists the same capabilities, with the sink's codecs, for the
+user. Before the first discovery nothing is known, so the pin is stored and the negotiation
+check refuses it. `OpenA2dpCtl codec` applies the same checks against that line before it
+sends the request, and refuses `codec aac` (or a forced AAC via the driver) on a sink that
+does not advertise AAC.
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|

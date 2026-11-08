@@ -23,7 +23,8 @@ namespace OpenA2dp::Ioctl {
 // 5: Status carries the media MTU and the AAC bitrate it allows.
 // 6: Preference carries the endpoint sample rate and channel mode; Status carries the
 //    formats the sink advertises.
-constexpr uint32_t kAbiVersion = 6;
+// 7: Status carries the codecs the sink advertises.
+constexpr uint32_t kAbiVersion = 7;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -109,6 +110,11 @@ constexpr bool ValidEndpointChannels(uint32_t channels) noexcept
 {
 	return channels == 0 || channels == 1 || channels == 2;
 }
+
+// Status.sinkCodecs bits; the codec constants above cannot be used as bits because
+// kCodecSbc is 0.
+constexpr uint32_t kSinkCodecSbc = 1u << 0;
+constexpr uint32_t kSinkCodecAac = 1u << 1;
 
 // Frame record flags.
 constexpr uint32_t kFrameFlagDiscontinuity = 1u << 0; // first record after a gap
@@ -222,6 +228,9 @@ struct Status {
 	// pinned endpoint format has to be covered by both masks.
 	uint32_t sinkRates;
 	uint32_t sinkChannels;
+	// kSinkCodec* bits for the codecs the sink advertised in the last discovery, 0 until
+	// one ran. SBC is mandatory, so it is only ever clear before the first discovery.
+	uint32_t sinkCodecs;
 };
 
 struct Preference {
@@ -273,7 +282,7 @@ static_assert(sizeof(Preference) == 48, "Preference layout is part of the driver
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 100, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 104, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

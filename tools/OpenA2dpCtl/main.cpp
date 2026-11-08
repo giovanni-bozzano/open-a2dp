@@ -463,6 +463,67 @@ bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& e
 	return true;
 }
 
+// The formats a Status.sinkRates/sinkChannels pair describes, empty when the sink has not
+// been discovered yet.
+std::string FormatListText(uint32_t rates, uint32_t channels)
+{
+	std::string text;
+	const auto append = [&text](const char* part)
+	{
+		if (!text.empty())
+		{
+			text += ", ";
+		}
+		text += part;
+	};
+	if ((rates & 1) != 0)
+	{
+		append("44100 Hz");
+	}
+	if ((rates & 2) != 0)
+	{
+		append("48000 Hz");
+	}
+	if ((channels & 1) != 0)
+	{
+		append("mono");
+	}
+	if ((channels & 2) != 0)
+	{
+		append("stereo");
+	}
+	return text;
+}
+
+// The codecs a Status.sinkCodecs mask describes.
+std::string CodecListText(uint32_t codecs)
+{
+	std::string text;
+	if ((codecs & Ioctl::kSinkCodecSbc) != 0)
+	{
+		text = "SBC";
+	}
+	if ((codecs & Ioctl::kSinkCodecAac) != 0)
+	{
+		if (!text.empty())
+		{
+			text += ", ";
+		}
+		text += "AAC";
+	}
+	return text;
+}
+
+uint32_t RateBit(uint32_t rate)
+{
+	return rate == 44100 ? 1u : (rate == 48000 ? 2u : 0u);
+}
+
+uint32_t ChannelBit(uint32_t channels)
+{
+	return channels == 1 ? 1u : (channels == 2 ? 2u : 0u);
+}
+
 void PrintPreference(const Ioctl::Preference& preference)
 {
 	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0)
@@ -535,36 +596,21 @@ void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl:
 		std::printf("  media MTU       %u B, %u B payload; AAC up to %u bps\n", status.mediaMtu,
 					status.mediaMtu - Ioctl::kRtpHeaderBytes, status.bitrateLimit);
 	}
-	// The formats the sink advertised, so a `codec --rate/--channels` pin can be aimed at
-	// something the sink will accept instead of being refused.
-	if (status.sinkRates != 0 || status.sinkChannels != 0)
+	// What the sink advertised in the last discovery: the endpoint only offers those
+	// formats and a `codec` command can only select those codecs, so both are listed and
+	// anything else is refused instead of being stored as an unusable preference.
+	if (status.sinkRates != 0 || status.sinkChannels != 0 || status.sinkCodecs != 0)
 	{
-		std::string formats;
-		const auto append = [&formats](const char* text)
+		std::string line = FormatListText(status.sinkRates, status.sinkChannels);
+		const std::string codecs = CodecListText(status.sinkCodecs);
+		if (!codecs.empty())
 		{
-			if (!formats.empty())
-			{
-				formats += ", ";
-			}
-			formats += text;
-		};
-		if ((status.sinkRates & 1) != 0)
-		{
-			append("44100 Hz");
+			line = line.empty() ? codecs : line + " (" + codecs + ")";
 		}
-		if ((status.sinkRates & 2) != 0)
+		if (!line.empty())
 		{
-			append("48000 Hz");
+			std::printf("  sink formats    %s\n", line.c_str());
 		}
-		if ((status.sinkChannels & 1) != 0)
-		{
-			append("mono");
-		}
-		if ((status.sinkChannels & 2) != 0)
-		{
-			append("stereo");
-		}
-		std::printf("  sink formats    %s\n", formats.c_str());
 	}
 	PrintPreference(preference);
 	std::printf("  encoder         %s\n", status.encoderRegistered != 0 ? "registered" : "not registered");
@@ -756,6 +802,45 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	// What the sink reported in the last discovery decides which of the requested values
+	// can work at all. A codec or format it does not advertise is refused here, with what
+	// it does advertise, rather than stored as a preference the driver could never select.
+	Ioctl::Status sink = {};
+	if (!ReadStatus(handle, sink, error))
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+	if (codecArg == "aac" && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecAac) == 0)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr,
+					 "the sink does not advertise AAC (it offers %s); use `codec auto` or `codec sbc`. "
+					 "No preference was stored.\n",
+				CodecListText(sink.sinkCodecs).c_str());
+		return 1;
+	}
+	if (overrides.hasRate && overrides.rate != 0 && sink.sinkRates != 0 &&
+		(sink.sinkRates & RateBit(overrides.rate)) == 0)
+	{
+		const std::string advertised = FormatListText(sink.sinkRates, sink.sinkChannels);
+		CloseHandle(handle);
+		std::fprintf(stderr, "the sink does not advertise %u Hz (it offers %s). No preference was stored.\n",
+					 overrides.rate, advertised.c_str());
+		return 1;
+	}
+	if (overrides.hasChannels && overrides.channels != 0 && sink.sinkChannels != 0 &&
+		(sink.sinkChannels & ChannelBit(overrides.channels)) == 0)
+	{
+		const std::string advertised = FormatListText(sink.sinkRates, sink.sinkChannels);
+		CloseHandle(handle);
+		std::fprintf(stderr,
+					 "the sink does not advertise %s (it offers %s). No preference was stored.\n",
+					 overrides.channels == 1 ? "mono" : "stereo", advertised.c_str());
 		return 1;
 	}
 

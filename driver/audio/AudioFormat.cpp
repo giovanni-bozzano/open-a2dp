@@ -2,6 +2,8 @@
 
 #include <ntstrsafe.h>
 
+#include <OpenA2dp/SbcConfig.h>
+
 namespace OpenA2dpDriver::Audio
 {
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected)
@@ -99,19 +101,30 @@ ULONG FirstListed(_In_ ULONG listed)
 	return index < AudioRenderFormatCount ? index : 0;
 }
 
-// The RenderFormats indices the stored preference admits. A validated preference always
-// leaves one; listing all of them keeps the endpoint openable if it does not.
-ULONG DesiredFormats(_In_ const Ioctl::Preference& preference)
+// The RenderFormats indices Windows may open: the ones the stored preference admits and
+// the sink advertised. Hiding what the sink cannot play keeps its unsupported rates out of
+// Sound settings and out of the negotiation. A validated preference always leaves one
+// format, and a sink whose capabilities are unknown or cover none of them leaves the
+// preference's own set, so the endpoint stays openable either way.
+ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sinkFormats)
 {
-	ULONG desired = 0;
+	ULONG allowed = 0;
+	ULONG covered = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (RenderFormatAllowed(preference, i))
+		if (!RenderFormatAllowed(preference, i))
 		{
-			desired |= 1u << i;
+			continue;
+		}
+		allowed |= 1u << i;
+		if (sinkFormats == 0 ||
+			SbcConfig::SupportsFormat(sinkFormats, AudioRenderRates[i / AudioRenderChannelCount],
+									 static_cast<uint8_t>(AudioRenderChannels[i % AudioRenderChannelCount])))
+		{
+			covered |= 1u << i;
 		}
 	}
-	return desired != 0 ? desired : AllFormatsMask;
+	return covered != 0 ? covered : (allowed != 0 ? allowed : AllFormatsMask);
 }
 } // namespace
 
@@ -160,7 +173,8 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		preference = ctx->Preference;
 		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 	}
-	const ULONG desired = DesiredFormats(preference);
+	const ULONG desired =
+		DesiredFormats(preference, static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0)));
 
 	NTSTATUS status = STATUS_SUCCESS;
 	WdfWaitLockAcquire(ctx->FormatLock, nullptr);

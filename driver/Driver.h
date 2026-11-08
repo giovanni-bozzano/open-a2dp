@@ -291,6 +291,10 @@ struct DEVICE_CONTEXT
 	// channel modes), 0 until one ran. Written by the selector, read by SET_PREFERENCE to
 	// refuse a pinned endpoint format the sink cannot serve.
 	volatile LONG SinkSbcCapabilities;
+	// Ioctl::kSinkCodec* bits for the codecs the sink advertised in the last discovery,
+	// written by the selector so SET_PREFERENCE and the CLI can refuse a codec the sink
+	// does not offer. Cleared when a new connection starts a fresh discovery.
+	volatile LONG SinkCodecs;
 
 	// Media transport channel, opened from the signaling work item.
 	L2CAP_CHANNEL_HANDLE MediaChannel;

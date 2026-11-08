@@ -137,7 +137,7 @@ struct.
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
-| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR, endpoint rate 0/44100/48000 and endpoint channels 0/1/2. The endpoint pair is refused with `STATUS_NOT_SUPPORTED` once the sink's advertised capabilities are known and do not cover it. Changing the codec CLOSEs and rediscovers the stream; changing a parameter keeps the codec and applies it in place through SUSPEND/RECONFIGURE/START, while an endpoint change rebuilds the pin's format list in place, so it needs no device restart |
+| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR, endpoint rate 0/44100/48000 and endpoint channels 0/1/2. The endpoint pair and a forced AAC are refused with `STATUS_NOT_SUPPORTED` once the sink's advertised capabilities are known and do not cover them. Changing the codec CLOSEs and rediscovers the stream; changing a parameter keeps the codec and applies it in place through SUSPEND/RECONFIGURE/START, while an endpoint change rebuilds the pin's format list in place, so it needs no device restart |
 
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
@@ -151,7 +151,10 @@ endpoint rate, which is what `OpenA2dpCtl status` shows as the ceiling. ABI 6 ad
 `Preference.endpointRate`/`endpointChannels`, the render formats that pin narrows, and
 `Status.sinkRates`/`sinkChannels` (the formats the sink advertised), which is what the CLI
 prints as `sink formats` and what a pin is checked against; the whole check is
-`Ioctl::ValidPreference`.
+`Ioctl::ValidPreference`. ABI 7 adds `Status.sinkCodecs`, the codecs the sink advertised:
+the endpoint only offers formats the sink can play and `SET_PREFERENCE` refuses a forced
+codec that is not among them, so neither Windows nor `OpenA2dpCtl` shows a choice the sink
+cannot serve.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.

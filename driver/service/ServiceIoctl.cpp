@@ -259,6 +259,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
 		out->sinkChannels = SbcConfig::AdvertisedChannels(sinkFormats);
+		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Status));
 		return;
 	}
@@ -300,6 +301,16 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		if (!Ioctl::ValidPreference(*in))
 		{
 			Complete(request, STATUS_INVALID_PARAMETER);
+			return;
+		}
+		// A codec the sink does not advertise can never be selected, so forcing it is refused
+		// instead of stored. SBC is mandatory, so only AAC can be missing.
+		const LONG sinkCodecs = InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0);
+		if ((in->flags & Ioctl::kPreferenceForceCodec) != 0 && in->codec == Ioctl::kCodecAac &&
+			sinkCodecs != 0 && (sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecAac)) == 0)
+		{
+			OA2DP_WARN(ctx, "Service", "the sink does not advertise AAC, so forcing it is refused");
+			Complete(request, STATUS_NOT_SUPPORTED);
 			return;
 		}
 		// A pinned endpoint format has to be one the sink advertises, or the stream could

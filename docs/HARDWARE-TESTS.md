@@ -258,10 +258,15 @@ it), reattach.
    48 kHz - the sink stays connected and the endpoint keeps running. *Advanced* in Sound
    settings now offers only 48 kHz formats, without a reconnect.
 7. On a sink that advertises only 44.1 kHz or only stereo, `OpenA2dpCtl codec --rate 48000`
-   or `--channels 1` is refused (`SET_PREFERENCE: ... not supported` plus the hint), the
-   driver logs `the sink does not advertise the pinned endpoint format ...`, and `status`
-   still shows the previous preference. Before the first discovery (no `sink formats` line)
-   the pin is accepted and the negotiation check decides.
+   or `--channels 1` is refused before anything is stored (`the sink does not advertise
+   48000 Hz (it offers 44100 Hz, mono, stereo). No preference was stored.`); the same request
+   sent to the driver anyway (`SET_PREFERENCE: ... not supported`) logs `the sink does not
+   advertise the pinned endpoint format ...`. `status` keeps the previous preference and
+   lists only the formats the sink covers. Before the first discovery (no `sink formats`
+   line) the pin is accepted and the negotiation check decides.
+7a. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
+   advertise AAC (it offers SBC)`, and `status` lists `sink formats 44100 Hz, 48000 Hz, mono,
+   stereo (SBC)`; Windows offers only the sink's formats.
 8. `OpenA2dpCtl codec --rate 0 --channels 0` lists every served format again in place; the
    *Advanced* list offers both rates and both channel counts without a reconnect.
 9. While the pin is set and audio plays at the pinned format, pinning the same format is a
