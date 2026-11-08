@@ -299,11 +299,14 @@ it), reattach.
    stores nothing.
 5. Choose `AAC only` on an SBC-only sink (S): the window reports that the sink cannot serve
    it and the stored preference stays as it was.
-6. Connect a second sink while the window is open and press Refresh: both are listed and
-   each loads its own preference. Unplug the selected sink: the next refresh reports it as
-   gone instead of retrying forever.
+6. Connect a second sink while the window is open: both are listed within a second without
+   pressing Refresh, and each loads its own preference. Unplug the selected sink: the window
+   reports it as gone instead of retrying forever.
 7. Store `44.1 kHz` and `Mono`, apply, then check Sound settings: the endpoint offers only
    that format. Choose `Any` in both fields to restore every served format.
+8. Tick **Details**, then press **Copy** and paste into an editor: the text matches
+   `OpenA2dpCtl status --verbose` for the same sink, one field per line, every value with
+   its decimal and hex form. Use this dump for any failure found below it.
 
 ### Soak
 

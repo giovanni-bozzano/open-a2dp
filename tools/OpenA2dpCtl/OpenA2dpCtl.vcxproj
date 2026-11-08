@@ -7,12 +7,18 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
+	<ClCompile>
+	  <!-- The status report is shared with the settings window. -->
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)tools;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
 	</Link>
   </ItemDefinitionGroup>
   <ItemGroup>
 	<ClCompile Include="main.cpp" />
+	<ClCompile Include="..\common\StatusReport.cpp" />
+	<ClInclude Include="..\common\StatusReport.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

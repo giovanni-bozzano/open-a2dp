@@ -2,10 +2,13 @@
 //
 // Enumerates the per-device control interfaces (one per sink) and uses the
 // IOCTLs in common/include/OpenA2dp/Ioctl.h to report the negotiated codec and
-// to set the codec preference. The tool is a test/diagnostic aid: the end-user
-// configuration path is still the desktop UI described in the plan.
+// to set the codec preference. The tool is the diagnostic and script path; the
+// end-user path is the settings window (tools/OpenA2dpConfig), which shows the
+// same report through tools/common/StatusReport.
 
 #include <OpenA2dp/Ioctl.h>
+
+#include "common/StatusReport.h"
 
 #include <windows.h>
 
@@ -20,11 +23,13 @@
 namespace {
 
 using namespace OpenA2dp;
+using namespace OpenA2dp::Tools;
 
 constexpr const char* kUsage = R"(OpenA2dpCtl - inspect and configure the OpenA2dp A2DP source driver.
 
 Usage:
-  OpenA2dpCtl [status] [--device <mac|index>] [--watch [--interval <ms>]]
+  OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
+                     [--watch [--interval <ms>]]
   OpenA2dpCtl list
   OpenA2dpCtl codec [<auto|sbc|aac>] [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
@@ -64,6 +69,9 @@ Options:
   --channels <n>    Endpoint channel count for `codec`, 0, 1 or 2 (0 = both).
   --watch           Refresh status until interrupted.
   --interval <ms>   Refresh period for --watch (default 1000).
+  --verbose         Append every Status and Preference field with its decimal
+                    and hex value. The settings window shows the same report,
+                    and its Copy button puts this text on the clipboard.
 
 The tool must run elevated: the control device only allows SYSTEM and
 Administrators.
@@ -336,41 +344,6 @@ bool FindDevice(const std::vector<Device>& devices, const std::string& spec, siz
 	return true;
 }
 
-const char* AvdtpStateName(uint32_t state)
-{
-	static const char* const names[] = {
-		"Idle", "Discovering", "GettingCapabilities", "Configuring", "Configured", "Opening",
-		"Open", "Starting", "Streaming", "Suspending", "Closing", "Aborting", "Failed",
-	};
-	return state < sizeof(names) / sizeof(names[0]) ? names[state] : "Unknown";
-}
-
-const char* MediaStateName(uint32_t state)
-{
-	switch (static_cast<Ioctl::MediaState>(state))
-	{
-	case Ioctl::MediaState::Idle: return "Idle";
-	case Ioctl::MediaState::WaitingForEncoder: return "WaitingForEncoder";
-	case Ioctl::MediaState::Streaming: return "Streaming";
-	case Ioctl::MediaState::Suspended: return "Suspended";
-	case Ioctl::MediaState::Failed: return "Failed";
-	default: return "Unknown";
-	}
-}
-
-const char* CodecName(uint32_t codec)
-{
-	if (codec == Ioctl::kCodecSbc)
-	{
-		return "SBC";
-	}
-	if (codec == Ioctl::kCodecAac)
-	{
-		return "AAC";
-	}
-	return "none";
-}
-
 bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* out, DWORD outLength,
 			   DWORD& bytes, std::string& error, DWORD timeoutMs = 5000)
 {
@@ -465,57 +438,6 @@ bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& e
 	return true;
 }
 
-// The formats a Status.sinkRates/sinkChannels pair describes, empty when the sink has not
-// been discovered yet.
-std::string FormatListText(uint32_t rates, uint32_t channels)
-{
-	std::string text;
-	const auto append = [&text](const char* part)
-	{
-		if (!text.empty())
-		{
-			text += ", ";
-		}
-		text += part;
-	};
-	if ((rates & 1) != 0)
-	{
-		append("44100 Hz");
-	}
-	if ((rates & 2) != 0)
-	{
-		append("48000 Hz");
-	}
-	if ((channels & 1) != 0)
-	{
-		append("mono");
-	}
-	if ((channels & 2) != 0)
-	{
-		append("stereo");
-	}
-	return text;
-}
-
-// The codecs a Status.sinkCodecs mask describes.
-std::string CodecListText(uint32_t codecs)
-{
-	std::string text;
-	if ((codecs & Ioctl::kSinkCodecSbc) != 0)
-	{
-		text = "SBC";
-	}
-	if ((codecs & Ioctl::kSinkCodecAac) != 0)
-	{
-		if (!text.empty())
-		{
-			text += ", ";
-		}
-		text += "AAC";
-	}
-	return text;
-}
-
 uint32_t RateBit(uint32_t rate)
 {
 	return rate == 44100 ? 1u : (rate == 48000 ? 2u : 0u);
@@ -526,113 +448,27 @@ uint32_t ChannelBit(uint32_t channels)
 	return channels == 1 ? 1u : (channels == 2 ? 2u : 0u);
 }
 
-void PrintPreference(const Ioctl::Preference& preference)
+// Prints the report the settings window shows, so a paste from either one is comparable.
+void PrintStatus(const Device& device, HANDLE handle, const Ioctl::Status& status,
+				 const Ioctl::Preference& preference, bool verbose)
 {
-	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0)
-	{
-		std::printf("  preference      force %s\n", CodecName(preference.codec));
-	}
-	else
-	{
-		std::printf("  preference      auto (AAC > SBC)\n");
-	}
-	if (preference.sbcBitpool != 0)
-	{
-		std::printf("  SBC bitpool     %u\n", preference.sbcBitpool);
-	}
-	if (preference.aacBitrate != 0)
-	{
-		std::printf("  AAC bitrate     %u bps\n", preference.aacBitrate);
-	}
-	if (preference.aacSampleRate != 0)
-	{
-		std::printf("  AAC rate        %u Hz (used once the endpoint is multi-rate)\n", preference.aacSampleRate);
-	}
-	if (preference.sbcBlocks != 0 || preference.sbcSubbands != 0 || preference.sbcAllocation != 0)
-	{
-		std::printf("  SBC frame       %u blocks, %u subbands, %s\n",
-					preference.sbcBlocks != 0 ? preference.sbcBlocks : 16u,
-					preference.sbcSubbands != 0 ? preference.sbcSubbands : 8u,
-					preference.sbcAllocation == Ioctl::kSbcAllocationSnr ? "SNR" : "loudness");
-	}
-	if (preference.endpointRate != 0 || preference.endpointChannels != 0)
-	{
-		char rate[16] = "any rate";
-		if (preference.endpointRate != 0)
-		{
-			std::snprintf(rate, sizeof(rate), "%u Hz", preference.endpointRate);
-		}
-		std::printf("  endpoint        %s, %s\n", rate,
-					preference.endpointChannels == 1 ? "mono"
-					: preference.endpointChannels == 2 ? "stereo" : "any channels");
-	}
+	// The version block is informational: a failed read never hides the status.
+	Ioctl::VersionInfo version = {};
+	std::string ignored;
+	const bool hasVersion = ReadIoctl(handle, Ioctl::kIoctlGetVersion, version, ignored);
+
+	Tools::StatusReportInput input;
+	input.title = DeviceLabel(device);
+	input.status = &status;
+	input.preference = &preference;
+	input.version = hasVersion ? &version : nullptr;
+	input.verbose = verbose;
+	const std::string report = Tools::BuildStatusReport(input);
+	std::fputs(report.c_str(), stdout);
 }
 
-void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl::Preference& preference)
-{
-	std::printf("%s\n", DeviceLabel(device).c_str());
-	std::printf("  AVDTP           %s\n", AvdtpStateName(status.avdtpState));
-	std::printf("  media           %s\n", MediaStateName(static_cast<uint32_t>(status.mediaState)));
-	if (status.mediaState == Ioctl::MediaState::Streaming && status.codec == 0)
-	{
-		std::printf("  codec           SBC, %u Hz, %u ch, %u bps\n", status.sampleRate, status.channels,
-					status.bitrate);
-	}
-	else if (status.codec != 0)
-	{
-		std::printf("  codec           %s, %u Hz, %u ch, %u bps\n", CodecName(status.codec), status.sampleRate,
-					status.channels, status.bitrate);
-	}
-	else if (status.negotiatedCodec != 0)
-	{
-		std::printf("  codec           %s (negotiated, not streaming)\n", CodecName(status.negotiatedCodec));
-	}
-	else
-	{
-		std::printf("  codec           none\n");
-	}
-	// The bitrate ceiling the media MTU enforces, so a rate the encoder supports but one
-	// packet cannot carry is visible instead of looking like a negotiation failure.
-	if (status.mediaMtu != 0)
-	{
-		std::printf("  media MTU       %u B, %u B payload; AAC up to %u bps\n", status.mediaMtu,
-					status.mediaMtu - Ioctl::kRtpHeaderBytes, status.bitrateLimit);
-	}
-	// What the sink advertised in the last discovery: the endpoint only offers those
-	// formats and a `codec` command can only select those codecs, so both are listed and
-	// anything else is refused instead of being stored as an unusable preference.
-	if (status.sinkRates != 0 || status.sinkChannels != 0 || status.sinkCodecs != 0)
-	{
-		std::string line = FormatListText(status.sinkRates, status.sinkChannels);
-		const std::string codecs = CodecListText(status.sinkCodecs);
-		if (!codecs.empty())
-		{
-			line = line.empty() ? codecs : line + " (" + codecs + ")";
-		}
-		if (!line.empty())
-		{
-			std::printf("  sink formats    %s\n", line.c_str());
-		}
-	}
-	// A stored pin the sink does not serve is not listed; saying so explains why the
-	// endpoint reports another rate or channel count than the one stored.
-	if (status.pinNotServed != 0)
-	{
-		std::printf("  fallback        the stored endpoint format is not served by the sink; its own apply\n");
-	}
-	PrintPreference(preference);
-	std::printf("  encoder         %s\n", status.encoderRegistered != 0 ? "registered" : "not registered");
-	std::printf("  rings           PCM %u/%u B, frames %u/%u B\n", status.pcmBufferedBytes, status.pcmCapacity,
-				status.frameBufferedBytes, status.frameCapacity);
-	std::printf("  counters        packets %u, dropped %u, underruns %u, send failures %u\n", status.packetsSent,
-				status.framesDropped, status.underruns, status.sendFailures);
-	if (status.lastError != 0)
-	{
-		std::printf("  last error      0x%08X\n", status.lastError);
-	}
-}
-
-int CommandStatus(const std::vector<Device>& devices, const std::string& spec, bool watch, unsigned interval)
+int CommandStatus(const std::vector<Device>& devices, const std::string& spec, bool watch, unsigned interval,
+				  bool verbose)
 {
 	size_t index = 0;
 	std::string error;
@@ -665,7 +501,7 @@ int CommandStatus(const std::vector<Device>& devices, const std::string& spec, b
 		{
 			std::printf("\x1b[2J\x1b[H");
 		}
-		PrintStatus(device, status, preference);
+		PrintStatus(device, handle, status, preference, verbose);
 		if (watch)
 		{
 			std::fflush(stdout);
@@ -781,8 +617,8 @@ struct PreferenceOverrides {
 		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation;
 	}
 
-	// The render formats are built at device start, so an endpoint change takes effect
-	// when the sink reconnects, not by renegotiating the active stream.
+	// The endpoint formats are rebuilt in place, so an endpoint change renegotiates an
+	// active stream like a parameter change does.
 	bool EndpointChange() const
 	{
 		return hasRate || hasChannels;
@@ -929,7 +765,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	std::printf("Preference set to %s on %s.\n",
 			!force ? "auto (AAC > SBC)" : (preference.codec == Ioctl::kCodecAac ? "AAC" : "SBC"),
 			DeviceLabel(device).c_str());
-	PrintStatus(device, status, preference);
+	PrintStatus(device, handle, status, preference, false);
 
 	if (force && preference.codec == Ioctl::kCodecAac && status.encoderRegistered == 0)
 	{
@@ -963,6 +799,7 @@ int main(int argc, char** argv)
 	std::string codecArg;
 	PreferenceOverrides overrides;
 	bool watch = false;
+	bool verbose = false;
 	unsigned interval = 1000;
 	size_t position = 0;
 
@@ -1088,6 +925,10 @@ int main(int argc, char** argv)
 		{
 			watch = true;
 		}
+		else if (arg == "--verbose")
+		{
+			verbose = true;
+		}
 		else if (arg == "--interval" && position + 1 < args.size())
 		{
 			const unsigned long value = std::strtoul(args[++position].c_str(), nullptr, 10);
@@ -1145,5 +986,5 @@ int main(int argc, char** argv)
 	{
 		return CommandCodec(devices, deviceSpec, codecArg, overrides);
 	}
-	return CommandStatus(devices, deviceSpec, watch, interval);
+	return CommandStatus(devices, deviceSpec, watch, interval, verbose);
 }

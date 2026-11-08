@@ -7,6 +7,10 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
+	<ClCompile>
+	  <!-- The status report is shared with OpenA2dpCtl. -->
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)tools;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	</ClCompile>
 	<Link>
 	  <SubSystem>Windows</SubSystem>
 	  <!-- CM_Register_Notification: the control-device arrivals the window follows. -->
@@ -18,7 +22,9 @@
   <ItemGroup>
 	<ClCompile Include="main.cpp" />
 	<ClCompile Include="ControlClient.cpp" />
+	<ClCompile Include="..\common\StatusReport.cpp" />
 	<ClInclude Include="ControlClient.h" />
+	<ClInclude Include="..\common\StatusReport.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

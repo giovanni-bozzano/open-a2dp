@@ -8,7 +8,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs;$(OpenA2dpRoot)tools;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
@@ -29,6 +29,9 @@
 	<ClCompile Include="AvdtpSourceTests.cpp" />
 	<ClCompile Include="FrameRecordTests.cpp" />
 	<ClCompile Include="SbcFixedTests.cpp" />
+	<ClCompile Include="StatusReportTests.cpp" />
+	<!-- The report the CLI and the settings window share. -->
+	<ClCompile Include="..\..\tools\common\StatusReport.cpp" />
   </ItemGroup>
   <ItemGroup>
 	<ProjectReference Include="..\..\codecs\OpenA2dpCodecs.vcxproj">

@@ -8,6 +8,8 @@
 
 #include "ControlClient.h"
 
+#include "common/StatusReport.h"
+
 #include <OpenA2dp/Ioctl.h>
 
 #include <windows.h>
@@ -16,6 +18,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <string>
 #include <vector>
@@ -28,6 +31,8 @@ namespace {
 enum ControlId : int {
 	kSinkCombo = 100,
 	kRefreshButton,
+	kCopyButton,
+	kDetailsCheck,
 	kStatusBox,
 	kCodecCombo,
 	kBitrateCombo,
@@ -63,6 +68,7 @@ struct SinkState
 	Ioctl::VersionInfo version = {};
 	std::wstring message; // the outcome of the last action, shown under the controls
 	std::wstring shownText; // what the status box holds, so a refresh only redraws real changes
+	bool details = false;   // show every field, including the ones the report formats hiding
 	HCMNOTIFICATION notify = nullptr; // control-device arrival/removal
 };
 
@@ -82,6 +88,22 @@ std::wstring Widen(const std::string& text)
 	return std::wstring(buffer.data());
 }
 
+std::string Narrow(const std::wstring& text)
+{
+	if (text.empty())
+	{
+		return {};
+	}
+	const int length = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+	if (length <= 1)
+	{
+		return {};
+	}
+	std::vector<char> buffer(static_cast<size_t>(length));
+	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, buffer.data(), length, nullptr, nullptr);
+	return std::string(buffer.data());
+}
+
 std::wstring Format(const wchar_t* format, ...)
 {
 	wchar_t text[512];
@@ -92,162 +114,34 @@ std::wstring Format(const wchar_t* format, ...)
 	return text;
 }
 
-void AddLine(std::wstring& text, const wchar_t* label, const std::wstring& value)
-{
-	text += Format(L"%-14s %s\r\n", label, value.c_str());
-}
-
-const wchar_t* AvdtpName(uint32_t state)
-{
-	static const wchar_t* const names[] = {
-		L"Idle", L"Discovering", L"GettingCapabilities", L"Configuring", L"Configured", L"Opening",
-		L"Open", L"Starting", L"Streaming", L"Suspending", L"Closing", L"Aborting", L"Failed",
-	};
-	return state < ARRAYSIZE(names) ? names[state] : L"Unknown";
-}
-
-const wchar_t* MediaName(uint32_t state)
-{
-	switch (static_cast<Ioctl::MediaState>(state))
-	{
-	case Ioctl::MediaState::Idle: return L"Idle";
-	case Ioctl::MediaState::WaitingForEncoder: return L"Waiting for the encoder";
-	case Ioctl::MediaState::Streaming: return L"Streaming";
-	case Ioctl::MediaState::Suspended: return L"Suspended";
-	case Ioctl::MediaState::Failed: return L"Failed";
-	default: return L"Unknown";
-	}
-}
-
-const wchar_t* CodecName(uint32_t codec)
-{
-	if (codec == Ioctl::kCodecSbc)
-	{
-		return L"SBC";
-	}
-	if (codec == Ioctl::kCodecAac)
-	{
-		return L"AAC";
-	}
-	return L"none";
-}
-
-// The formats a status rate/channel mask pair describes.
-std::wstring FormatListText(uint32_t rates, uint32_t channels)
-{
-	std::wstring text;
-	const auto append = [&text](const wchar_t* part)
-	{
-		if (!text.empty())
-		{
-			text += L", ";
-		}
-		text += part;
-	};
-	if ((rates & 1) != 0)
-	{
-		append(L"44100 Hz");
-	}
-	if ((rates & 2) != 0)
-	{
-		append(L"48000 Hz");
-	}
-	if ((channels & 1) != 0)
-	{
-		append(L"mono");
-	}
-	if ((channels & 2) != 0)
-	{
-		append(L"stereo");
-	}
-	return text;
-}
-
-std::wstring CodecListText(uint32_t codecs)
-{
-	std::wstring text;
-	if ((codecs & Ioctl::kSinkCodecSbc) != 0)
-	{
-		text = L"SBC";
-	}
-	if ((codecs & Ioctl::kSinkCodecAac) != 0)
-	{
-		text += text.empty() ? L"AAC" : L", AAC";
-	}
-	return text;
-}
-
-std::wstring EndpointText(uint32_t rate, uint32_t channels)
-{
-	std::wstring text = rate != 0 ? Format(L"%u Hz", rate) : L"any rate";
-	text += L", ";
-	text += channels == 1 ? L"mono" : (channels == 2 ? L"stereo" : L"any channels");
-	return text;
-}
-
-// Everything the window knows about the selected sink, as the status box shows it.
-std::wstring StatusText(const SinkState& state)
+// The same report OpenA2dpCtl prints, so the two surfaces can never disagree; the window
+// only adds the CRLF line endings a multiline edit control needs.
+std::wstring ReportText(const SinkState& state)
 {
 	if (!state.open)
 	{
 		return state.message;
 	}
-	const Ioctl::Status& status = state.status;
-	const Ioctl::Preference& preference = state.preference;
-
+	Tools::StatusReportInput input;
+	input.title = Narrow(Format(L"Sink %s", Widen(FormatAddress(state.reference)).c_str()));
+	input.status = &state.status;
+	input.preference = &state.preference;
+	input.version = &state.version;
+	input.verbose = state.details;
+	const std::wstring report = Widen(Tools::BuildStatusReport(input));
 	std::wstring text;
-	AddLine(text, L"Sink", Widen(FormatAddress(state.reference)));
-	AddLine(text, L"AVDTP", AvdtpName(status.avdtpState));
-	AddLine(text, L"Media", MediaName(static_cast<uint32_t>(status.mediaState)));
-	if (status.mediaState == Ioctl::MediaState::Streaming)
+	text.reserve(report.size() + 32);
+	for (const wchar_t character : report)
 	{
-		AddLine(text, L"Stream",
-				Format(L"%s, %u Hz, %u ch, %u bps", CodecName(status.codec), status.sampleRate,
-					   status.channels, status.bitrate));
-	}
-	else if (status.negotiatedCodec != 0 || status.codec != 0)
-	{
-		AddLine(text, L"Stream", Format(L"%s (negotiated, not streaming)",
-										CodecName(status.negotiatedCodec != 0 ? status.negotiatedCodec : status.codec)));
-	}
-	else
-	{
-		AddLine(text, L"Stream", L"none");
-	}
-	AddLine(text, L"Encoder", status.encoderRegistered != 0 ? L"registered" : L"not registered");
-	if (status.sinkRates != 0 || status.sinkChannels != 0 || status.sinkCodecs != 0)
-	{
-		std::wstring sink = FormatListText(status.sinkRates, status.sinkChannels);
-		const std::wstring codecs = CodecListText(status.sinkCodecs);
-		if (!codecs.empty())
+		if (character == L'\n')
 		{
-			sink = sink.empty() ? codecs : sink + L" (" + codecs + L")";
+			text += L"\r\n";
 		}
-		AddLine(text, L"Sink formats", sink.empty() ? L"unknown" : sink);
+		else
+		{
+			text += character;
+		}
 	}
-	AddLine(text, L"Media MTU",
-			Format(L"%u B, %u B payload; AAC up to %u bps", status.mediaMtu,
-				   status.mediaMtu - Ioctl::kRtpHeaderBytes, status.bitrateLimit));
-	AddLine(text, L"Preference",
-			(preference.flags & Ioctl::kPreferenceForceCodec) != 0
-				? Format(L"%s forced", CodecName(preference.codec))
-				: std::wstring(L"automatic (AAC, then SBC)"));
-	AddLine(text, L"Endpoint pin", EndpointText(preference.endpointRate, preference.endpointChannels));
-	if (status.pinNotServed != 0)
-	{
-		AddLine(text, L"Fallback", L"the sink does not serve the stored endpoint format");
-	}
-	AddLine(text, L"Counters",
-			Format(L"packets %u, dropped %u, underruns %u, send failures %u", status.packetsSent,
-				   status.framesDropped, status.underruns, status.sendFailures));
-	if (status.lastError != 0)
-	{
-		AddLine(text, L"Last error", Format(L"0x%08X", status.lastError));
-	}
-	AddLine(text, L"Driver", Format(L"ABI %u, version %u.%u.%u", state.version.abiVersion,
-									(state.version.driverVersion >> 24) & 0xFF,
-									(state.version.driverVersion >> 16) & 0xFF,
-									state.version.driverVersion & 0xFFFF));
 	return text;
 }
 
@@ -273,7 +167,7 @@ void SetStatusText(HWND hwnd)
 	{
 		return;
 	}
-	std::wstring text = StatusText(*state);
+	std::wstring text = ReportText(*state);
 	// Re-writing the same text every timer tick would reset the scroll position and the
 	// selection while the user reads it.
 	if (text == state->shownText)
@@ -352,9 +246,13 @@ void CreateControls(HWND hwnd)
 {
 	const HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 	CreateChild(hwnd, L"STATIC", L"Sink", SS_LEFT, 12, 16, 96, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 12, 372, 220,
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 12, 260, 220,
 				kSinkCombo, font);
-	CreateChild(hwnd, L"BUTTON", L"Refresh", BS_PUSHBUTTON | WS_TABSTOP, 496, 11, 132, 27, kRefreshButton,
+	CreateChild(hwnd, L"BUTTON", L"Refresh", BS_PUSHBUTTON | WS_TABSTOP, 380, 11, 76, 27, kRefreshButton,
+				font);
+	// The clipboard text is the report itself, so it can be pasted next to a CLI paste.
+	CreateChild(hwnd, L"BUTTON", L"Copy", BS_PUSHBUTTON | WS_TABSTOP, 462, 11, 76, 27, kCopyButton, font);
+	CreateChild(hwnd, L"BUTTON", L"Details", BS_AUTOCHECKBOX | WS_TABSTOP, 548, 15, 80, 22, kDetailsCheck,
 				font);
 
 	CreateChild(hwnd, L"BUTTON", L"Status", BS_GROUPBOX, 12, 48, 616, 224, 0, font);
@@ -516,6 +414,46 @@ void OpenSelected(HWND hwnd)
 	LoadPreferenceIntoControls(hwnd);
 	SetMessage(hwnd, L"Loaded " + Widen(FormatAddress(device.reference)) + L".");
 	SetStatusText(hwnd);
+}
+
+// Puts the report on the clipboard: the same text the box shows, which is the text the CLI
+// prints, so a window paste and a console paste can be compared line by line.
+void CopyReport(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	const std::wstring text = state->shownText.empty() ? ReportText(*state) : state->shownText;
+	if (text.empty())
+	{
+		SetMessage(hwnd, L"There is no report to copy yet.");
+		return;
+	}
+	if (!OpenClipboard(hwnd))
+	{
+		SetMessage(hwnd, L"Another program holds the clipboard; try Copy again.");
+		return;
+	}
+	EmptyClipboard();
+	const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+	bool copied = false;
+	if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes); memory != nullptr)
+	{
+		if (void* buffer = GlobalLock(memory); buffer != nullptr)
+		{
+			std::memcpy(buffer, text.c_str(), bytes);
+			GlobalUnlock(memory);
+			copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+		}
+		if (!copied)
+		{
+			GlobalFree(memory);
+		}
+	}
+	CloseClipboard();
+	SetMessage(hwnd, copied ? L"Report copied to the clipboard." : L"Copying the report failed.");
 }
 
 void RefreshStatus(HWND hwnd)
@@ -764,6 +702,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		if (id == kApplyButton && notification == BN_CLICKED)
 		{
 			ApplySettings(hwnd);
+			return 0;
+		}
+		if (id == kCopyButton && notification == BN_CLICKED)
+		{
+			CopyReport(hwnd);
+			return 0;
+		}
+		if (id == kDetailsCheck && notification == BN_CLICKED)
+		{
+			SinkState* state = StateOf(hwnd);
+			if (state != nullptr)
+			{
+				const LRESULT checked = SendMessageW(GetDlgItem(hwnd, kDetailsCheck), BM_GETCHECK, 0, 0);
+				state->details = checked == BST_CHECKED;
+				// Re-render even if the text happens to match what the box already holds.
+				state->shownText.clear();
+				SetStatusText(hwnd);
+			}
 			return 0;
 		}
 		break;
