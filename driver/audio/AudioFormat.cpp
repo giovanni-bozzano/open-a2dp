@@ -103,28 +103,45 @@ ULONG FirstListed(_In_ ULONG listed)
 
 // The RenderFormats indices Windows may open: the ones the stored preference admits and
 // the sink advertised. Hiding what the sink cannot play keeps its unsupported rates out of
-// Sound settings and out of the negotiation. A validated preference always leaves one
-// format, and a sink whose capabilities are unknown or cover none of them leaves the
-// preference's own set, so the endpoint stays openable either way.
+// Sound settings and out of the negotiation. A sink whose capabilities are unknown leaves
+// the preference's own set, and a stored pin that the sink no longer covers leaves the
+// sink's set: either way the endpoint stays openable and negotiable.
 ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sinkFormats)
 {
 	ULONG allowed = 0;
 	ULONG covered = 0;
+	ULONG sinkCovered = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
+		const bool sinkHas = sinkFormats != 0 &&
+			SbcConfig::SupportsFormat(sinkFormats, AudioRenderRates[i / AudioRenderChannelCount],
+									 static_cast<uint8_t>(AudioRenderChannels[i % AudioRenderChannelCount]));
+		if (sinkHas)
+		{
+			sinkCovered |= 1u << i;
+		}
 		if (!RenderFormatAllowed(preference, i))
 		{
 			continue;
 		}
 		allowed |= 1u << i;
-		if (sinkFormats == 0 ||
-			SbcConfig::SupportsFormat(sinkFormats, AudioRenderRates[i / AudioRenderChannelCount],
-									 static_cast<uint8_t>(AudioRenderChannels[i % AudioRenderChannelCount])))
+		if (sinkFormats == 0 || sinkHas)
 		{
 			covered |= 1u << i;
 		}
 	}
-	return covered != 0 ? covered : (allowed != 0 ? allowed : AllFormatsMask);
+	if (covered != 0)
+	{
+		return covered;
+	}
+	// The pin is not one the sink advertises (its capabilities changed, or the pin was stored
+	// before the first discovery): listing it would give Windows a format nothing can
+	// configure, so the sink's own formats are listed and the stream still plays.
+	if (sinkCovered != 0)
+	{
+		return sinkCovered;
+	}
+	return allowed != 0 ? allowed : AllFormatsMask;
 }
 } // namespace
 

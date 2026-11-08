@@ -88,6 +88,11 @@ a bitrate one packet cannot carry, so the driver suspends and reconfigures it in
 per connection at the highest bitrate the reported MTU carries; a second mismatch is left
 silent instead of retried.
 
+A stored endpoint rate or channel count that the sink no longer advertises (its
+capabilities changed, or the pin predates the first discovery) is not listed on the
+endpoint: the sink's own formats are, so the stream still negotiates, and the pin applies
+again as soon as the sink advertises it.
+
 PCM depth is 16-bit everywhere: the endpoint publishes 16-bit formats, SBC carries 16-bit
 samples by definition, and the Media Foundation AAC encoder rejects 24-bit, 32-bit and
 float input (`0xC00D36B4`), so a 24-bit endpoint would only add a truncation step.
