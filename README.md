@@ -17,6 +17,7 @@ Current implementation:
 - `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and the Media Foundation/LATM encoder used by tests and the service.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.
 - `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC; deployed to the test VM by `scripts/deploy-vm.ps1`.
+- `tools/OpenA2dpConfig`: desktop settings window (`OpenA2dpConfig.exe`) over the same IOCTLs: sink list, live status, and the codec and endpoint preference.
 
 ## Build
 
@@ -28,4 +29,4 @@ out\x64\Debug\CodecTests.exe            # all tests
 out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
 ```
 
-User-mode binaries (`CodecTests.exe`, `OpenA2dpCtl.exe`, `OpenA2dpSvc.exe`) link the CRT statically, so they also run in the test VM without the Visual C++ debug runtime.
+User-mode binaries (`CodecTests.exe`, `OpenA2dpCtl.exe`, `OpenA2dpConfig.exe`, `OpenA2dpSvc.exe`) link the CRT statically, so they also run in the test VM without the Visual C++ debug runtime.

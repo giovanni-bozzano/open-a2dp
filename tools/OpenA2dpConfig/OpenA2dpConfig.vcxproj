@@ -1,0 +1,24 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup Label="Globals">
+	<ProjectGuid>{6B1E3C2A-4F1D-4C7E-9A11-2D0F6E7A1005}</ProjectGuid>
+	<RootNamespace>OpenA2dpConfig</RootNamespace>
+	<ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+	<Link>
+	  <SubSystem>Windows</SubSystem>
+	  <!-- CM_Register_Notification: the control-device arrivals the window follows. -->
+	  <AdditionalDependencies>cfgmgr32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <!-- The control device is limited to Administrators, so ask for that up front. -->
+	  <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
+	</Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+	<ClCompile Include="main.cpp" />
+	<ClCompile Include="ControlClient.cpp" />
+	<ClInclude Include="ControlClient.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

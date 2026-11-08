@@ -58,6 +58,8 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 - `OpenA2dpCtl status|list|codec <auto|sbc|aac> [--bitpool n] [--bitrate bps]
   [--blocks n] [--subbands n] [--allocation loudness|snr]` (elevated). `status` shows
   AVDTP state, media state, codec, encoder registration and counters.
+- `OpenA2dpConfig` (elevated): the settings window over the same IOCTLs. It lists the
+  sinks, refreshes the status every second and stores the codec and endpoint preference.
 - Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
 - Device node: Device Manager, or `pnputil /enum-devices /class MEDIA` /
   `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
@@ -283,6 +285,25 @@ it), reattach.
    *Advanced* list offers both rates and both channel counts without a reconnect.
 9. While the pin is set and audio plays at the pinned format, pinning the same format is a
    no-op: no `closing to renegotiate` line and no interruption.
+
+**T24 Config UI (S/A)**
+1. Start `OpenA2dpConfig` elevated: the sink list shows the addresses `OpenA2dpCtl list`
+   prints, the status box matches `OpenA2dpCtl status` field for field, and the controls
+   show the stored codec and endpoint preference.
+2. Play, then choose `SBC only` and press Apply: the window reports `Stored. The active
+   stream renegotiates to apply it.` and the status box follows the renegotiation within a
+   few seconds, with no sink reconnect.
+3. Set `SBC bitpool` to 35 and apply: the same in-place path, and both the status box and
+   `status` report the resulting SBC bitrate.
+4. Type 1 or 300 in the bitpool box: the window refuses the value with the 2..250 hint and
+   stores nothing.
+5. Choose `AAC only` on an SBC-only sink (S): the window reports that the sink cannot serve
+   it and the stored preference stays as it was.
+6. Connect a second sink while the window is open and press Refresh: both are listed and
+   each loads its own preference. Unplug the selected sink: the next refresh reports it as
+   gone instead of retrying forever.
+7. Store `44.1 kHz` and `Mono`, apply, then check Sound settings: the endpoint offers only
+   that format. Choose `Any` in both fields to restore every served format.
 
 ### Soak
 

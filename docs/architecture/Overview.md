@@ -10,7 +10,7 @@ OpenA2dp replaces `BthA2dp.sys` per remote A2DP sink device, not the Bluetooth r
 | `common/include/OpenA2dp/` | Kernel-safe ABI, rings, AVDTP/RTP and codec selection; no STL/exceptions |
 | `codecs/` | Codec interfaces, SBC and AAC encoding/negotiation support |
 | `OpenA2dpCtl.exe` | Diagnostic device/status/codec-preference CLI |
-| `OpenA2dpConfig.exe` | Planned desktop UI; see [configuration design](Codec-Configuration.md) |
+| `OpenA2dpConfig.exe` | Desktop settings window: sink list, live status and the codec/endpoint preference; see [configuration design](Codec-Configuration.md) |
 
 ## Data flow
 ```text
