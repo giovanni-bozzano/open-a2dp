@@ -238,7 +238,8 @@ it), reattach.
 1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).
 - Expect `endpoint format 48000 Hz 2 ch`, then `configured codec SBC` and the media
   `endpoint PCM, SBC 48000 Hz ...` line; audible at the normal pitch, `packets`
-  advancing, no `does not match the endpoint format`.2. Stop playback, choose `16 bit, 44100 Hz`, play again.
+  advancing, no `does not match the endpoint format`.
+2. Stop playback, choose `16 bit, 44100 Hz`, play again.
 - Expect `endpoint format 44100 Hz 2 ch` and a 44.1 kHz stream, without a sink reconnect.
 3. Choose a mono format (`1 channel`), play (S).
 - Expect `endpoint format 44100 Hz 1 ch`, `configured codec SBC` with `mode 0` and audible
