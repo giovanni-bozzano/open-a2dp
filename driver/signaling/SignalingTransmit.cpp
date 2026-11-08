@@ -109,7 +109,8 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 	const Avdtp::SessionState state = ctx->Session.State();
 	PublishStatus(ctx);
 	KeSetEvent(&ctx->SessionChanged, IO_NO_INCREMENT, FALSE);
-	if (state != ctx->LoggedState)
+	const Avdtp::SessionState previous = ctx->LoggedState;
+	if (state != previous)
 	{
 		ctx->LoggedState = state;
 		if (state == Avdtp::SessionState::Streaming || state == Avdtp::SessionState::Failed)
@@ -131,6 +132,12 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 		}
 		if (state == Avdtp::SessionState::Open)
 		{
+			// Leaving Streaming stops the stream whether this driver suspended it or the
+			// sink did; a stream that keeps sending after a suspend breaks the session.
+			if (previous == Avdtp::SessionState::Streaming)
+			{
+				MediaStop(ctx);
+			}
 			const uint8_t* ie = ctx->Session.SelectedIe();
 			OA2DP_INFO(ctx, "AVDTP", "configured codec %s IE %02X %02X %02X %02X",
 				CodecName(ctx->Session.SelectedCodec()), ie[0], ie[1], ie[2], ie[3]);
@@ -156,10 +163,6 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 			OA2DP_INFO(ctx, "AVDTP", "streaming, media MTU %u", ctx->MediaOutMtu);
 			ctx->MediaOpenAttempts = 0;
 			MediaStart(ctx, ctx->Session.SelectedCodec(), ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength());
-		}
-		else if (state == Avdtp::SessionState::Open)
-		{
-			MediaStop(ctx);
 		}
 		else if (state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed)
 		{
