@@ -67,7 +67,6 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket);
 NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG positionInBlocks, _Out_ PULONGLONG qpcPosition);
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected);
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
-void BuildRenderFormats();
 // Whether the stored preference admits this index of RenderFormats; a pinned rate or
 // channel mode drops the formats Windows could otherwise open instead.
 bool RenderFormatAllowed(_In_ const OpenA2dp::Ioctl::Preference& preference, _In_ ULONG index);

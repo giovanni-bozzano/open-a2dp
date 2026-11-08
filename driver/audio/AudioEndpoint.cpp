@@ -29,7 +29,8 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		ctx->PinChannels = static_cast<USHORT>(preference.endpointChannels);
 	}
 	ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
-	BuildRenderFormats();
+	// RenderFormats was filled once in DriverEntry; the table is shared by every endpoint and
+	// must not be rewritten here, or two device adds could expose a half-built format.
 	// The PCM ring lives in the service block and is initialized by ServiceInitialize.
 
 	WDF_OBJECT_ATTRIBUTES attrs;

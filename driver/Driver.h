@@ -511,6 +511,11 @@ void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx);
 // Reports the sink link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.
 void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx);
 
+// Fills the render format table once, from DriverEntry, so endpoints added concurrently
+// never rewrite format state another endpoint is listing.
+_IRQL_requires_(PASSIVE_LEVEL)
+void BuildRenderFormats();
+
 // Creates the ACX render circuit (speaker endpoint) for this device.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx);

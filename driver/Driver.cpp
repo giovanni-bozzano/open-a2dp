@@ -209,6 +209,9 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 
 extern "C" NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT driverObject, _In_ PUNICODE_STRING registryPath)
 {
+	// Once, before any device can be added: the table is shared by every endpoint.
+	BuildRenderFormats();
+
 	WDF_DRIVER_CONFIG config;
 	WDF_DRIVER_CONFIG_INIT(&config, OnDeviceAdd);
 	config.DriverPoolTag = OpenA2dpPoolTag;
