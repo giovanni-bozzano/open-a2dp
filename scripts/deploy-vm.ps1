@@ -3,10 +3,12 @@
     Deploys the test-signed OpenA2dp driver into the test VM without ever rebooting the guest.
 
 .DESCRIPTION
-    Uses VMware vmrun (VMware Tools required in the guest). Settings are read from
-    .local\vm.json (untracked):
-        { "vmx": "D:\\Virtual Machines\\OpenA2dp\\OpenA2dp.vmx", "user": "...", "password": "...", "vmPassword": "..." }
-    vmPassword is the VM encryption password; omit it if the VM is not encrypted.
+    Uses vmrun (VMware Tools required in the guest), found on the host instead of from a
+    fixed path. Settings are read from .local\vm.json (untracked) unless -VmConfig names
+    another file:
+        { "vmx": "test-vm\\OpenA2dp.vmx", "user": "...", "password": "...", "vmPassword": "..." }
+    vmx is an absolute path or one relative to the repository root, so a config never has to
+    name a drive. vmPassword is the VM encryption password; omit it if the VM is not encrypted.
 
     Update strategy (no reboot, ever):
       1. stop the encoder service and the CLI (they hold handles on the driver);
@@ -28,6 +30,9 @@
 .PARAMETER SkipTests      With -Build, skip CodecTests.
 .PARAMETER KeepAudio      Do not stop the Windows Audio service before updating (by default it is stopped to end any active stream, then restarted).
 .PARAMETER InstallTimeoutSec  Overall limit for the guest installer (default 240).
+.PARAMETER VmConfig      VM config JSON (default .local\vm.json); a relative path is read from the repository root.
+.PARAMETER VmRun         vmrun.exe to use (default: OPENA2DP_VMRUN, PATH, the Workstation and
+                         Player install folders, then their registry InstallPath).
 #>
 param(
     [ValidateSet('Debug', 'Release')]
@@ -38,30 +43,67 @@ param(
     [switch]$NoRestart,
     [switch]$SkipTests,
     [switch]$KeepAudio,
-    [int]$InstallTimeoutSec = 240
+    [int]$InstallTimeoutSec = 240,
+    [string]$VmConfig,
+    [string]$VmRun
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$local = Join-Path $root '.local'
+New-Item -ItemType Directory -Force -Path $local | Out-Null
 
 # ---------- host setup ----------
-$vmrun = 'D:\Program Files\VMware\VMware Workstation\vmrun.exe'
-if (-not (Test-Path $vmrun)) { $vmrun = Join-Path $env:ProgramFiles 'VMware\VMware Workstation\vmrun.exe' }
-if (-not (Test-Path $vmrun)) { throw "vmrun.exe not found. Set the path at the top of $PSCommandPath." }
-
-$configPath = Join-Path $root '.local\vm.json'
-if (-not (Test-Path $configPath)) {
-    throw "Missing $configPath. Expected: { `"vmx`": `"...`", `"user`": `"...`", `"password`": `"...`", `"vmPassword`": `"...`" }"
+# vmrun.exe is found rather than configured, so the host layout does not matter: an explicit
+# -VmRun, then OPENA2DP_VMRUN, PATH, the Workstation/Player folders under both Program Files
+# roots, then the InstallPath those installs record in the registry.
+function Resolve-VmRun {
+    $candidates = @()
+    if ($VmRun) { $candidates += $VmRun }
+    if ($env:OPENA2DP_VMRUN) { $candidates += $env:OPENA2DP_VMRUN }
+    $onPath = Get-Command 'vmrun.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($onPath) { $candidates += $onPath.Source }
+    $products = @('VMware Workstation', 'VMware Player')
+    foreach ($product in $products) {
+        foreach ($rootDir in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if ($rootDir) { $candidates += Join-Path (Join-Path $rootDir (Join-Path 'VMware' $product)) 'vmrun.exe' }
+        }
+    }
+    # An install somewhere else records its folder here, for either product and registry view.
+    foreach ($product in $products) {
+        foreach ($hive in @('HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node')) {
+            $key = Join-Path $hive (Join-Path 'VMware, Inc.' $product)
+            $install = (Get-ItemProperty -Path $key -Name InstallPath -ErrorAction SilentlyContinue).InstallPath
+            if ($install) { $candidates += Join-Path $install.TrimEnd('\') 'vmrun.exe' }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if (-not $candidate) { continue }
+        $path = "$candidate".Trim().Trim('"')
+        if ($path -and (Test-Path -LiteralPath $path)) { return (Resolve-Path -LiteralPath $path).Path }
+    }
+    throw 'vmrun.exe not found. Pass -VmRun <path>, set OPENA2DP_VMRUN, or add it to PATH.'
 }
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
-$vmx = $config.vmx
-$vmxFull = [System.IO.Path]::GetFullPath($vmx)
+$vmrun = Resolve-VmRun
+
+$configPath = if ($VmConfig) { $VmConfig } else { Join-Path $local 'vm.json' }
+# A relative -VmConfig is read from the repository, so the same command works from any directory.
+if (-not [System.IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $root $configPath }
+$configPath = [System.IO.Path]::GetFullPath($configPath)
+if (-not (Test-Path -LiteralPath $configPath)) {
+    throw "Missing $configPath. Expected: { `"vmx`": `"test-vm\OpenA2dp.vmx`", `"user`": `"...`", `"password`": `"...`" } with vmx absolute or relative to $root."
+}
+$config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+# Quoting and a relative path are both accepted, so a pasted value works as it is.
+$vmxPath = "$($config.vmx)".Trim().Trim('"')
+if (-not $vmxPath) { throw "$configPath does not name a vmx." }
+if (-not [System.IO.Path]::IsPathRooted($vmxPath)) { $vmxPath = Join-Path $root $vmxPath }
+$vmxFull = [System.IO.Path]::GetFullPath($vmxPath)
+if (-not (Test-Path -LiteralPath $vmxFull)) { throw "VMX not found: $vmxFull" }
+$vmx = $vmxFull
 $base = @('-T', 'ws')
 if ($config.vmPassword) { $base += @('-vp', $config.vmPassword) }
 $auth = $base + @('-gu', $config.user, '-gp', $config.password)
-
-$local = Join-Path $root '.local'
-New-Item -ItemType Directory -Force -Path $local | Out-Null
 
 function Invoke-VmRun {
     param([Parameter(Mandatory)][string]$What, [Parameter(Mandatory)][string[]]$Arguments)
