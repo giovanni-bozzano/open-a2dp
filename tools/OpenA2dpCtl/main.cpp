@@ -26,7 +26,7 @@ constexpr const char* kUsage = R"(OpenA2dpCtl - inspect and configure the OpenA2
 Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--watch [--interval <ms>]]
   OpenA2dpCtl list
-  OpenA2dpCtl codec <auto|sbc|aac> [--bitrate <bps>] [--bitpool <n>]
+  OpenA2dpCtl codec [<auto|sbc|aac>] [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--rate <44100|48000>]
                      [--channels <1|2>] [--device <mac|index>]
@@ -44,6 +44,8 @@ Commands:
             and the SBC bitpool; --blocks, --subbands and --allocation pin the
             SBC frame shape. 0 restores the driver default (--allocation
             default), and the sink's advertised limits still apply.
+            Without a codec name the stored selection is kept and only the
+            flags given are applied.
             --rate and --channels pin the endpoint format Windows opens,
             which is the rate the stream runs at. The endpoint's format
             list is rebuilt in place, so the change applies without a
@@ -784,7 +786,7 @@ struct PreferenceOverrides {
 int CommandCodec(const std::vector<Device>& devices, const std::string& spec, const std::string& codecArg,
 				 const PreferenceOverrides& overrides)
 {
-	if (codecArg != "auto" && codecArg != "sbc" && codecArg != "aac")
+	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac")
 	{
 		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc or aac\n", codecArg.c_str());
 		return 2;
@@ -854,12 +856,14 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		return 1;
 	}
 	preference.abiVersion = Ioctl::kAbiVersion;
+	// No codec name keeps the stored selection, so `codec --rate 48000` pins the endpoint
+	// format without changing the codec that was chosen before.
 	if (codecArg == "auto")
 	{
 		preference.flags = 0;
 		preference.codec = 0;
 	}
-	else
+	else if (!codecArg.empty())
 	{
 		preference.flags = Ioctl::kPreferenceForceCodec;
 		preference.codec = codecArg == "aac" ? Ioctl::kCodecAac : Ioctl::kCodecSbc;
@@ -915,17 +919,17 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		return 1;
 	}
 
+	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("Preference set to %s on %s.\n",
-				codecArg == "auto" ? "auto (AAC > SBC)" : (codecArg == "aac" ? "AAC" : "SBC"),
-				DeviceLabel(device).c_str());
+			!force ? "auto (AAC > SBC)" : (preference.codec == Ioctl::kCodecAac ? "AAC" : "SBC"),
+			DeviceLabel(device).c_str());
 	PrintStatus(device, status, preference);
 
-	if (preference.codec == Ioctl::kCodecAac && status.encoderRegistered == 0)
+	if (force && preference.codec == Ioctl::kCodecAac && status.encoderRegistered == 0)
 	{
 		std::printf("\nnote: no encoder service is registered, so AAC is not offered and SBC will be used.\n");
 	}
 	const bool streaming = status.mediaState == Ioctl::MediaState::Streaming;
-	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac : status.encoderRegistered != 0;
 	const bool wantsSbc = force ? preference.codec == Ioctl::kCodecSbc : status.encoderRegistered == 0;
 	const bool codecChanges = (wantsAac && status.codec != Ioctl::kCodecAac) ||
@@ -1104,14 +1108,14 @@ int main(int argc, char** argv)
 		std::fprintf(stderr, "unknown command '%s'\n\n%s", command.c_str(), kUsage);
 		return 2;
 	}
-	if (command == "codec" && codecArg.empty())
+	if (command == "codec" && codecArg.empty() && !overrides.ParameterChange() && !overrides.EndpointChange())
 	{
-		std::fprintf(stderr, "codec needs an argument: auto, sbc or aac\n\n%s", kUsage);
+		std::fprintf(stderr, "codec needs a codec (auto, sbc or aac) or at least one parameter flag\n\n%s", kUsage);
 		return 2;
 	}
-	if (command != "codec" && overrides.ParameterChange())
+	if (command != "codec" && (overrides.ParameterChange() || overrides.EndpointChange()))
 	{
-		std::fprintf(stderr, "the parameter flags apply to `codec`\n\n%s", kUsage);
+		std::fprintf(stderr, "the parameter and endpoint flags apply to `codec`\n\n%s", kUsage);
 		return 2;
 	}
 
