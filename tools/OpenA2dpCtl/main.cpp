@@ -748,9 +748,9 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	}
 	Ioctl::Status status = {};
 	const bool read = set && ReadStatus(handle, status, error);
-	CloseHandle(handle);
 	if (!set || !read)
 	{
+		CloseHandle(handle);
 		std::fprintf(stderr, "%s\n", error.c_str());
 		if (!set && overrides.EndpointChange())
 		{
@@ -786,6 +786,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		std::printf("\nnote: the endpoint formats were rebuilt in place, so no reconnect is needed; "
 					"Windows offers only the pinned rate and channel count from now on.\n");
 	}
+	CloseHandle(handle);
 	return 0;
 }
 
