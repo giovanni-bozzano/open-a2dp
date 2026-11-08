@@ -7,7 +7,7 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 - Local SEID 1 (SBC) and SEID 2 (AAC) are always advertised. AAC is selected/accepted only with a registered encoder; a late registration CLOSEs a streaming SBC session and rediscovers when the sink advertised AAC (initiator role only).
 - Prefer a forced codec when available, otherwise AAC > SBC. Keep scored sink candidates and fall back after rejected configuration rather than requiring reconnect.
 - Driver SBC capabilities match ACX: 44.1/48 kHz stereo-family modes. Default selection uses 16 blocks, 8 subbands, joint stereo/loudness and bitpool capped at 53, subject to sink support.
-- AAC format/payload limits: [service boundary](AAC-Service-Boundary.md). Broader rates, presets and parameter overrides are [planned](Codec-Configuration.md), not current capabilities.
+- AAC format/payload limits: [service boundary](AAC-Service-Boundary.md). Broader rates and parameter overrides are [planned](Codec-Configuration.md), not current capabilities.
 
 ## Packetization
 - RTP: 12-byte header, version 2, payload type 96; sequence advances per packet and timestamps in PCM samples.
