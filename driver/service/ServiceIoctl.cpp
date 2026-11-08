@@ -344,8 +344,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 								ctx->Preference.sbcAllocation != in->sbcAllocation ||
 								ctx->Preference.aacBitrate != in->aacBitrate;
 			// The render formats, and with them the rate and channel count AVDTP negotiates,
-			// are built when the device starts, so an endpoint change is stored for the next
-			// start instead of renegotiating now.
+			// are rebuilt in place below, so an endpoint change needs no device restart.
 			endpointChanged = ctx->Preference.endpointRate != in->endpointRate ||
 							  ctx->Preference.endpointChannels != in->endpointChannels;
 			// aacSampleRate is stored but does not affect selection until the endpoint
