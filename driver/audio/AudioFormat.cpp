@@ -56,10 +56,30 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
 	ULONG sampleRate = AudioSampleRate;
 	USHORT channels = AudioChannels;
-	if (format != nullptr)
+	// ACX hands over the format of the stream Windows created, so these raw fields are the
+	// only record of what it actually opened. Logged before the fallback: a missing or
+	// non-WAVEFORMATEX format would otherwise print the same 44100 Hz 2 ch as a real 44.1 kHz
+	// stream, leaving it unclear whether the endpoint format list or the read was at fault.
+	const auto* wave = format != nullptr
+		? static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format))
+		: nullptr;
+	const bool waveFormat = wave != nullptr &&
+		RtlCompareMemory(&wave->DataFormat.Specifier, &KSDATAFORMAT_SPECIFIER_WAVEFORMATEX, sizeof(GUID)) ==
+			sizeof(GUID);
+	if (!waveFormat)
 	{
-		const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
-		if (wave != nullptr && wave->WaveFormatEx.nSamplesPerSec != 0 && wave->WaveFormatEx.nChannels != 0)
+		OA2DP_INFO(ctx, "Audio", "stream format %s, size %u; keeping the default %u Hz %u ch",
+			wave == nullptr ? "not supplied" : "not WAVEFORMATEX",
+			wave != nullptr ? wave->DataFormat.FormatSize : 0u, sampleRate, static_cast<unsigned>(channels));
+	}
+	else
+	{
+		OA2DP_INFO(ctx, "Audio", "stream format %u B, WAVEFORMATEX, tag %u, cbSize %u, %u Hz %u ch %u bit",
+			wave->DataFormat.FormatSize, static_cast<unsigned>(wave->WaveFormatEx.wFormatTag),
+			static_cast<unsigned>(wave->WaveFormatEx.cbSize), wave->WaveFormatEx.nSamplesPerSec,
+			static_cast<unsigned>(wave->WaveFormatEx.nChannels),
+			static_cast<unsigned>(wave->WaveFormatEx.wBitsPerSample));
+		if (wave->WaveFormatEx.nSamplesPerSec != 0 && wave->WaveFormatEx.nChannels != 0)
 		{
 			sampleRate = wave->WaveFormatEx.nSamplesPerSec;
 			channels = wave->WaveFormatEx.nChannels;
