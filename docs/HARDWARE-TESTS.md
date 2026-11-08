@@ -241,6 +241,9 @@ it), reattach.
    the RECONFIGURE goes through `sink rejected the new parameters; closing to renegotiate`
    and a rediscovery; if that stream still does not fit, the log ends with
    `leaving the stream silent` and the stream stays silent instead of retrying.
+   Switching codec on that connection (`codec sbc`, then `codec aac`) negotiates again
+   without another `does not fit` warning or RECONFIGURE: the connection keeps the MTU
+   its media channel reported until it ends.
 
 **T23 Endpoint rate selection (S/A)**
 1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).

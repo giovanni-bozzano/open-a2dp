@@ -302,6 +302,9 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->CodecSwitchWanted = FALSE;
 	ctx->CodecSwitchClosing = FALSE;
 	ctx->ReconfigurePhase = ReconfigureNone;
+	// The link that reported the MTU is gone, so the next negotiation caps against the
+	// default again until the new channel reports its own.
+	ctx->MediaOutMtu = 0;
 	// A new connection gets its own single MTU renegotiation attempt.
 	InterlockedExchange(&ctx->MtuRenegotiate, 0);
 	InterlockedExchange(&ctx->MtuRenegotiationAttempts, 0);

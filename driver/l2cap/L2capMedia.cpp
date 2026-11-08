@@ -159,7 +159,8 @@ void L2capCloseMediaChannel(_In_ DEVICE_CONTEXT* ctx)
 	}
 	OA2DP_INFO(ctx, "L2CAP", "media channel closed, status 0x%08X", status);
 	ctx->MediaChannel = nullptr;
-	// Without a channel the MTU is unknown: the next negotiation caps the AAC bitrate
-	// against the default instead of the link that just went away.
-	ctx->MediaOutMtu = 0;
+	// The MTU is kept: a rediscovery in this connection (a codec switch) negotiates again
+	// before the replacement channel exists and would otherwise cap the AAC bitrate against
+	// the default and start the stream too fast for the link. ResetSession drops it when the
+	// connection ends.
 }

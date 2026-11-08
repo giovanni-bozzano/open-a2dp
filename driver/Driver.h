@@ -304,6 +304,8 @@ struct DEVICE_CONTEXT
 
 	// Media transport channel, opened from the signaling work item.
 	L2CAP_CHANNEL_HANDLE MediaChannel;
+	// MTU the media channel last reported; kept for the rest of the connection so a
+	// rediscovery caps the AAC bitrate the same way, and cleared when a connection starts.
 	USHORT MediaOutMtu;
 
 	// Media streaming (media/). MediaLock serializes the encoder, buffers and sends.

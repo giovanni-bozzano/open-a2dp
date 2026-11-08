@@ -86,7 +86,9 @@ The MTU a negotiation is capped against is the one the driver asks for, because 
 runs before the media channel exists. If the sink grants less, the stream would start into
 a bitrate one packet cannot carry, so the driver suspends and reconfigures it in place once
 per connection at the highest bitrate the reported MTU carries; a second mismatch is left
-silent instead of retried.
+silent instead of retried. The MTU the channel reported is kept for the rest of the
+connection, so a codec switch - which rediscovers and negotiates again with no channel open
+- is already capped by it, and it is dropped when the connection ends.
 
 A stored endpoint rate or channel count that the sink no longer advertises (its
 capabilities changed, or the pin predates the first discovery) is not listed on the
