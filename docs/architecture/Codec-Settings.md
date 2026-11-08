@@ -93,7 +93,8 @@ connection, so a codec switch - which rediscovers and negotiates again with no c
 A stored endpoint rate or channel count that the sink no longer advertises (its
 capabilities changed, or the pin predates the first discovery) is not listed on the
 endpoint: the sink's own formats are, so the stream still negotiates, and the pin applies
-again as soon as the sink advertises it.
+again as soon as the sink advertises it. The driver logs that fallback once, and
+`OpenA2dpCtl status` shows it on a `fallback` line under the sink's formats.
 
 PCM depth is 16-bit everywhere: the endpoint publishes 16-bit formats, SBC carries 16-bit
 samples by definition, and the Media Foundation AAC encoder rejects 24-bit, 32-bit and

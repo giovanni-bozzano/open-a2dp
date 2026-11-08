@@ -154,7 +154,9 @@ prints as `sink formats` and what a pin is checked against; the whole check is
 `Ioctl::ValidPreference`. ABI 7 adds `Status.sinkCodecs`, the codecs the sink advertised:
 the endpoint only offers formats the sink can play and `SET_PREFERENCE` refuses a forced
 codec that is not among them, so neither Windows nor `OpenA2dpCtl` shows a choice the sink
-cannot serve.
+cannot serve. ABI 8 adds `Status.pinNotServed`: the endpoint lists the sink's own formats
+when the last discovery does not serve the stored rate/channel pin, and the CLI reports it
+on a `fallback` line.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.

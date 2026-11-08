@@ -260,6 +260,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
 		out->sinkChannels = SbcConfig::AdvertisedChannels(sinkFormats);
 		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
+		out->pinNotServed = InterlockedCompareExchange(&ctx->PinNotServed, 0, 0) != 0 ? 1u : 0u;
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Status));
 		return;
 	}

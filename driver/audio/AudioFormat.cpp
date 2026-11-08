@@ -105,8 +105,10 @@ ULONG FirstListed(_In_ ULONG listed)
 // the sink advertised. Hiding what the sink cannot play keeps its unsupported rates out of
 // Sound settings and out of the negotiation. A sink whose capabilities are unknown leaves
 // the preference's own set, and a stored pin that the sink no longer covers leaves the
-// sink's set: either way the endpoint stays openable and negotiable.
-ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sinkFormats)
+// sink's set: either way the endpoint stays openable and negotiable. `pinNotServed` reports
+// the second case, so the fallback is visible in GET_STATUS.
+ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sinkFormats,
+	_Out_ bool& pinNotServed)
 {
 	ULONG allowed = 0;
 	ULONG covered = 0;
@@ -132,6 +134,7 @@ ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sink
 	}
 	if (covered != 0)
 	{
+		pinNotServed = false;
 		return covered;
 	}
 	// The pin is not one the sink advertises (its capabilities changed, or the pin was stored
@@ -139,8 +142,10 @@ ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sink
 	// configure, so the sink's own formats are listed and the stream still plays.
 	if (sinkCovered != 0)
 	{
+		pinNotServed = true;
 		return sinkCovered;
 	}
+	pinNotServed = false;
 	return allowed != 0 ? allowed : AllFormatsMask;
 }
 } // namespace
@@ -190,8 +195,15 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		preference = ctx->Preference;
 		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 	}
-	const ULONG desired =
-		DesiredFormats(preference, static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0)));
+	bool pinNotServed = false;
+	const ULONG desired = DesiredFormats(
+		preference, static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0)), pinNotServed);
+	if (InterlockedExchange(&ctx->PinNotServed, pinNotServed ? 1 : 0) == 0 && pinNotServed)
+	{
+		OA2DP_WARN(ctx, "Audio",
+			"the stored endpoint format (rate %u, channels %u) is not served by the sink; listing its own",
+			preference.endpointRate, preference.endpointChannels);
+	}
 
 	NTSTATUS status = STATUS_SUCCESS;
 	WdfWaitLockAcquire(ctx->FormatLock, nullptr);

@@ -614,6 +614,12 @@ void PrintStatus(const Device& device, const Ioctl::Status& status, const Ioctl:
 			std::printf("  sink formats    %s\n", line.c_str());
 		}
 	}
+	// A stored pin the sink does not serve is not listed; saying so explains why the
+	// endpoint reports another rate or channel count than the one stored.
+	if (status.pinNotServed != 0)
+	{
+		std::printf("  fallback        the stored endpoint format is not served by the sink; its own apply\n");
+	}
 	PrintPreference(preference);
 	std::printf("  encoder         %s\n", status.encoderRegistered != 0 ? "registered" : "not registered");
 	std::printf("  rings           PCM %u/%u B, frames %u/%u B\n", status.pcmBufferedBytes, status.pcmCapacity,

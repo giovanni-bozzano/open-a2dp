@@ -343,6 +343,9 @@ struct DEVICE_CONTEXT
 	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
 	WDFWAITLOCK FormatLock;
 	ULONG FormatsListed;
+	// 1 when the list comes from the sink's formats instead of the stored pin, because the
+	// last discovery does not serve that pin. Reported by GET_STATUS.
+	volatile LONG PinNotServed;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
