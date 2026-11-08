@@ -326,9 +326,13 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		return;
 	}
-	ctx->AppliedPreferenceParameters = parameters;
+	// AppliedPreferenceParameters records the parameters the stream was actually rebuilt
+	// with, so it is advanced only where the change is committed. Marking it here would
+	// lose the request on the two deferred paths below: they retry through
+	// CodecSwitchWanted and would then find no difference left to apply.
 	if (codecDiffers)
 	{
+		ctx->AppliedPreferenceParameters = parameters; // the rediscovery renegotiates from it
 		OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
 			CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
 		BeginCodecSwitchClose(ctx);
@@ -338,6 +342,7 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		// RECONFIGURE cannot change the sampling frequency or the channel count of a
 		// configured stream, so it is closed and negotiated again at the new format.
+		ctx->AppliedPreferenceParameters = parameters; // the rediscovery renegotiates from it
 		OA2DP_INFO(ctx, "Signaling",
 			"the endpoint now runs at %u Hz %u ch while the stream is configured for another format; closing to "
 			"renegotiate",
@@ -363,6 +368,7 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		if (ctx->Session.State() == Avdtp::SessionState::Suspending)
 		{
 			ctx->ReconfigurePhase = ReconfigureSuspending;
+			ctx->AppliedPreferenceParameters = parameters;
 		}
 		else
 		{
@@ -377,6 +383,7 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		ctx->CodecSwitchWanted = TRUE; // retried when the channel open completes
 		return;
 	}
+	ctx->AppliedPreferenceParameters = parameters;
 	BeginReconfigure(ctx);
 }
 
