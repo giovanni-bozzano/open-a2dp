@@ -100,7 +100,7 @@ TEST(Aac_Select_PrefersEndpointChannels)
 // packet, 48 kHz can, and the advertised capability is the encoder ceiling.
 TEST(Aac_LocalCapabilitiesMatchTheMediaMtu)
 {
-	const size_t payload = Ioctl::kMediaMaxMtu - Ioctl::kRtpHeaderBytes;
+	const size_t payload = Ioctl::kMaxFramePayload;
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 44100), uint32_t{256000});
 	CHECK_EQ(AacConfig::MaxBitrateForMtu(payload, 48000), uint32_t{320000});
 	CHECK_EQ(AacConfig::ReadBitrate(AacConfig::kLocalCapabilities), uint32_t{320000});

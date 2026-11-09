@@ -171,8 +171,9 @@ bitrate whose frames do not fit and reduce it, or report the failure to the user
 - latched events are returned immediately; otherwise the request is parked;
 - the media timer completes it with `kEventTick` while AAC is streaming, which is the
   service's clock (no polling, no shared event handle);
-- `kEventStreamStart`/`kEventStreamStop`/`kEventCodecChange` carry the negotiated AAC
-  parameters in the same struct, so the service reconfigures MF before the first tick;
+- `kEventStreamStart`/`kEventStreamStop` carry the negotiated AAC parameters in the
+  same struct, so the service reconfigures MF before the first tick (a reconfigure while
+  streaming stops and starts the media path, so it arrives as this pair);
 - `kEventDeviceGone` is delivered from `EvtFileCleanup`/device removal; the service then
   closes the handle and retries;
 - the service waits with a 500 ms timeout and re-checks `GET_STATUS`, so a lost event

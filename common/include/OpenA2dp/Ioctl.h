@@ -6,6 +6,7 @@
 // threading and failure rules are in docs/architecture/AAC-Service-Boundary.md.
 
 #include <OpenA2dp/RingBuffer.h>
+#include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/Types.h>
 
 #if defined(_KERNEL_MODE)
@@ -36,11 +37,10 @@ constexpr GUID kControlArrivalInterface = {
 	0x9f710239, 0x3d1c, 0x472d, {0xac, 0xd1, 0x25, 0x9c, 0x64, 0xb0, 0x9b, 0x69}};
 
 // A2DP media channel MTU (L2CAP out MTU used by the driver) and the largest
-// AAC/LATM payload that fits in one RTP packet. Keep the MTU in sync with
-// MediaMaxMtu in driver/Driver.h (it is defined here so both sides agree).
+// AAC/LATM payload that fits in one RTP packet. driver/Driver.h derives its
+// MediaMaxMtu from this value, so the two sides agree.
 constexpr uint32_t kMediaMaxMtu = 895;
-constexpr uint32_t kRtpHeaderBytes = 12;
-constexpr uint32_t kMaxFramePayload = kMediaMaxMtu - kRtpHeaderBytes;
+constexpr uint32_t kMaxFramePayload = kMediaMaxMtu - static_cast<uint32_t>(Rtp::kHeaderSize);
 
 // Ring capacities, bytes (powers of two). PCM holds ~370 ms of 44.1 kHz stereo;
 // the frame ring holds ~1.6 s at 320 kbps.
@@ -69,8 +69,7 @@ enum class MediaState : uint32_t {
 constexpr uint32_t kEventTick = 1u << 0;        // media timer tick while AAC streams
 constexpr uint32_t kEventStreamStart = 1u << 1; // AAC configured; params are valid
 constexpr uint32_t kEventStreamStop = 1u << 2;  // stream stopped or suspended
-constexpr uint32_t kEventCodecChange = 1u << 3; // reconfigured while streaming
-constexpr uint32_t kEventDeviceGone = 1u << 4;  // device removing; close the handle
+constexpr uint32_t kEventDeviceGone = 1u << 3;  // device removing; close the handle
 
 // SET_PREFERENCE flags.
 constexpr uint32_t kPreferenceForceCodec = 1u << 0;

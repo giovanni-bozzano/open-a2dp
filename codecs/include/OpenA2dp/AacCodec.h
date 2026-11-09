@@ -10,12 +10,10 @@ namespace Aac {
 using AacConfig::kIeLength;
 using AacConfig::kObjectMpeg2Lc;
 using AacConfig::kObjectMpeg4Lc;
-constexpr uint8_t kObjectMpeg4Ltp = 0x20;
-constexpr uint8_t kObjectMpeg4Scalable = 0x10;
 using AacConfig::kChannels1;
 using AacConfig::kChannels2;
 
-constexpr uint32_t kSamplesPerFrame = 1024;
+using AacConfig::kSamplesPerFrame;
 
 using AacConfig::kSupportedBitrates;
 using AacConfig::Params;

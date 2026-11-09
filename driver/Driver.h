@@ -36,7 +36,7 @@
 #define OA2DP_ERROR(ctx, category, fmt, ...) OA2DP_LOG_AT("ERROR", ctx, category, fmt, __VA_ARGS__)
 
 inline constexpr ULONG OpenA2dpPoolTag = 'pdAO';
-inline constexpr USHORT AvdtpPsm = 0x0019;
+inline constexpr USHORT AvdtpPsm = OpenA2dp::Avdtp::kPsm;
 // Defined in OpenA2dp/Ioctl.h so the driver and the encoder service agree.
 inline constexpr USHORT MediaMaxMtu = static_cast<USHORT>(OpenA2dp::Ioctl::kMediaMaxMtu);
 
@@ -321,7 +321,6 @@ struct DEVICE_CONTEXT
 	USHORT RtpSequence;
 	ULONG RtpTimestamp;
 	OpenA2dp::SbcFixed::Encoder Encoder;
-	OpenA2dp::SbcFixed::ToneGenerator Tone;
 	INT16 PcmBuffer[16 * 8 * 2];
 	UCHAR MediaBuffer[MediaMaxMtu];
 

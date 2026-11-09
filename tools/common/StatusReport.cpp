@@ -6,6 +6,8 @@
 
 #include "Text.h"
 
+#include <OpenA2dp/Rtp.h>
+
 #include <cstdarg>
 #include <cstdio>
 
@@ -48,7 +50,8 @@ void AppendMediaMtu(std::string& text, const Ioctl::Status& status)
 		AppendLine(text, "media MTU", "not reported yet");
 		return;
 	}
-	const uint32_t payload = status.mediaMtu > Ioctl::kRtpHeaderBytes ? status.mediaMtu - Ioctl::kRtpHeaderBytes : 0;
+	const uint32_t payload =
+			status.mediaMtu > Rtp::kHeaderSize ? status.mediaMtu - static_cast<uint32_t>(Rtp::kHeaderSize) : 0;
 	AppendLine(text, "media MTU",
 			   Format("%u B, %u B payload; AAC up to %u bps", status.mediaMtu, payload, status.bitrateLimit));
 }
