@@ -147,6 +147,8 @@ struct SinkState
 // code below, which the status refresh calls into.
 void UpdateDeviceItemLabel(HWND hwnd, size_t device, DeviceState state);
 void RefreshDeviceLabels(HWND hwnd);
+// "name (address)", which the list, the message line and the report share.
+std::wstring SinkTitle(const std::string& reference, const std::wstring& name);
 
 std::wstring Widen(const std::string& text)
 {
@@ -309,7 +311,7 @@ const wchar_t* SectionForLabel(const std::string& label)
 	{
 		return L"Session";
 	}
-	if (label == "sink formats")
+	if (label == "sink name" || label == "sink formats")
 	{
 		return L"Sink";
 	}
@@ -870,7 +872,9 @@ void OpenSelected(HWND hwnd)
 	state->open = true;
 	EnableWindow(GetDlgItem(hwnd, kApplyButton), TRUE);
 	LoadPreferenceIntoControls(hwnd);
-	SetMessage(hwnd, L"Loaded " + Widen(FormatAddress(device.reference)) + L".");
+	const std::wstring name =
+		state->status.sinkName[0] != L'\0' ? std::wstring(state->status.sinkName) : std::wstring();
+	SetMessage(hwnd, L"Loaded " + SinkTitle(device.reference, name) + L".");
 	RefreshStatusView(hwnd);
 	UpdateDeviceItemLabel(hwnd, state->selected, state->status.mediaState == Ioctl::MediaState::Streaming
 														   ? DeviceState::Playing
@@ -997,12 +1001,18 @@ void RefreshDeviceLabels(HWND hwnd)
 	}
 }
 
-// "<name> (<address>) - <state>", or just the address when the sink reported no name.
-std::wstring DeviceLabel(const std::string& reference, DeviceState state, const std::wstring& name)
+// "name (address)", or just the address when the sink reported no name.
+std::wstring SinkTitle(const std::string& reference, const std::wstring& name)
 {
 	const std::wstring address = Widen(FormatAddress(reference));
+	return name.empty() ? address : name + L" (" + address + L")";
+}
+
+// "<name> (<address>) - <state>".
+std::wstring DeviceLabel(const std::string& reference, DeviceState state, const std::wstring& name)
+{
 	const wchar_t* const text = state == DeviceState::Playing ? L" - playing" : L" - connected";
-	return name.empty() ? address + text : name + L" (" + address + L")" + text;
+	return SinkTitle(reference, name) + text;
 }
 
 // Relabels one sink in place, so the list shows the state of the one just opened or one whose

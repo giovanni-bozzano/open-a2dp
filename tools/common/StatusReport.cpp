@@ -76,6 +76,31 @@ void AppendCodec(std::string& text, const Ioctl::Status& status)
 	}
 }
 
+// The name is UTF-16 because the driver got it from the Bluetooth stack; the report is UTF-8
+// like the console it is printed in.
+std::string Utf8(const wchar_t* text)
+{
+	if (text == nullptr || text[0] == L'\0')
+	{
+		return {};
+	}
+	const int length = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+	if (length <= 1)
+	{
+		return {};
+	}
+	std::string result(static_cast<size_t>(length - 1), '\0');
+	WideCharToMultiByte(CP_UTF8, 0, text, -1, result.data(), length, nullptr, nullptr);
+	return result;
+}
+
+// The sink's own name next to the formats it offers: the list names the sink the same way.
+void AppendSinkName(std::string& text, const Ioctl::Status& status)
+{
+	const std::string name = Utf8(status.sinkName);
+	AppendLine(text, "sink name", name.empty() ? "not reported" : name);
+}
+
 void AppendSinkFormats(std::string& text, const Ioctl::Status& status)
 {
 	if (status.sinkRates == 0 && status.sinkChannels == 0 && status.sinkCodecs == 0)
@@ -338,6 +363,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendLine(text, "media", MediaStateName(static_cast<uint32_t>(status.mediaState)));
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
+	AppendSinkName(text, status);
 	AppendSinkFormats(text, status);
 	AppendEndpointFormat(text, status);
 	AppendPreference(text, preference);
