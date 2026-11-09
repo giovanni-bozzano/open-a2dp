@@ -287,12 +287,11 @@ int WorkAreaHeight(HWND hwnd)
 	return 720;
 }
 
-// Places one control (and resizes it when `resize` is set). A combo keeps the height it was
-// created with, because that height is its drop-down list.
-void Place(HWND control, int x, int y, int width, int height, bool resize)
+// Places one control. A combo is given the height it was created with, because that height is
+// its drop-down list and not the row it occupies.
+void Place(HWND control, int x, int y, int width, int height)
 {
-	SetWindowPos(control, nullptr, x, y, width, height,
-				 SWP_NOZORDER | SWP_NOACTIVATE | (resize ? 0u : SWP_NOSIZE));
+	SetWindowPos(control, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 // Which section of the list a report line belongs to, or null for the raw field dump, whose
@@ -608,22 +607,22 @@ void ApplyLayout(HWND hwnd)
 	const int height = bottomTop + bottomHeight + margin;
 
 	// Header row, with the sink picker filling the space the buttons leave.
-	Place(state->sinkLabel, margin, headerTop + (rowHeight - textHeight) / 2, sinkLabelWidth, textHeight, true);
+	Place(state->sinkLabel, margin, headerTop + (rowHeight - textHeight) / 2, sinkLabelWidth, textHeight);
 	const int detailsLeft = width - margin - detailsWidth;
 	const int copyLeft = detailsLeft - gap - copyWidth;
 	const int refreshLeft = copyLeft - gap - refreshWidth;
 	Place(GetDlgItem(hwnd, kDetailsCheck), detailsLeft, headerTop + (rowHeight - textHeight) / 2, detailsWidth,
-		  textHeight + 2, true);
-	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, rowHeight, true);
-	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, rowHeight, true);
+		  textHeight + 2);
+	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, rowHeight);
+	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, rowHeight);
 	const int sinkLeft = margin + sinkLabelWidth + gap;
-	Place(GetDlgItem(hwnd, kSinkCombo), sinkLeft, headerTop, refreshLeft - gap - sinkLeft, 0, false);
+	Place(GetDlgItem(hwnd, kSinkCombo), sinkLeft, headerTop, refreshLeft - gap - sinkLeft, kComboListHeight);
 
 	// The three groups.
-	Place(state->sessionGroup, groupLeft, sessionTop, groupWidth, sessionHeight, true);
-	Place(state->codecGroup, groupLeft, codecTop, groupWidth, codecHeight, true);
-	Place(state->formatGroup, groupLeft, formatTop, groupWidth, formatHeight, true);
-	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight, true);
+	Place(state->sessionGroup, groupLeft, sessionTop, groupWidth, sessionHeight);
+	Place(state->codecGroup, groupLeft, codecTop, groupWidth, codecHeight);
+	Place(state->formatGroup, groupLeft, formatTop, groupWidth, formatHeight);
+	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
 
 	// One row per field: label first, then the combo it describes.
 	for (const Field& field : Fields)
@@ -632,18 +631,18 @@ void ApplyLayout(HWND hwnd)
 		const int groupTop = format ? formatTop : codecTop;
 		const int top = groupTop + captionHeight + field.row * rowHeight;
 		const int left = innerLeft + (field.column == 0 ? 0 : columnWidth[0] + columnGap);
-		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight, true);
-		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column], 0, false);
+		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight);
+		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column], kComboListHeight);
 	}
-	Place(state->codecHint, innerLeft, codecTop + captionHeight + 3 * rowHeight, innerWidth, codecHintHeight, true);
-	Place(state->formatHint, innerLeft, formatTop + captionHeight + rowHeight, innerWidth, formatHintHeight, true);
+	Place(state->codecHint, innerLeft, codecTop + captionHeight + 3 * rowHeight, innerWidth, codecHintHeight);
+	Place(state->formatHint, innerLeft, formatTop + captionHeight + rowHeight, innerWidth, formatHintHeight);
 
 	// Apply sits under the right edge, the outcome of the last action fills the rest.
 	const int applyLeft = width - margin - applyWidth;
 	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, bottomTop + (bottomHeight - applyHeight) / 2, applyWidth,
-		  applyHeight, true);
+		  applyHeight);
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop + (bottomHeight - textHeight) / 2,
-		  applyLeft - gap - margin, textHeight, true);
+		  applyLeft - gap - margin, textHeight);
 
 	if (dc != nullptr)
 	{
