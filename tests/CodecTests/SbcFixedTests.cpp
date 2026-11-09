@@ -5,6 +5,7 @@
 #include <OpenA2dp/Rtp.h>
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 using namespace OpenA2dp;
@@ -110,6 +111,66 @@ TEST(SbcFixed_ParseIe)
 	CHECK_EQ(SbcFixed::FrameLength(p), size_t{119});
 	CHECK_EQ(SbcFixed::Bitrate(p), uint32_t{327993}); // 119 bytes per 128 samples at 44.1 kHz
 	CHECK_EQ(SbcFixed::FramesPerPacket(p, 895 - Rtp::kHeaderSize), size_t{7});
+}
+
+// The two SBC encoders have to describe the same frame for the same configuration and
+// allocate the same bits for the same scale factors; only the analysis filter (Q12 against
+// double) may differ. This pins the adapters in both headers to the shared SbcConfig,
+// SbcAllocation and SbcFrame code, across mono, stereo and joint stereo, 4 and 8 subbands,
+// and both allocation methods.
+TEST(SbcFixed_AgreesWithCodecEncoder)
+{
+	const uint8_t configs[][4] = {
+		{0x21, 0x15, 0x02, 0x35}, // 44.1 kHz joint stereo, 16 blocks, 8 subbands, loudness, 53
+		{0x12, 0x1A, 0x02, 0x33}, // 48 kHz stereo, 16 blocks, 4 subbands, SNR, 51
+		{0x28, 0x16, 0x02, 0x40}, // 44.1 kHz mono, 16 blocks, 8 subbands, SNR, 64
+	};
+	const size_t payload = 895 - Rtp::kHeaderSize;
+
+	for (const auto& ie : configs)
+	{
+		SbcFixed::Params fixed;
+		Sbc::FrameParams codec;
+		REQUIRE(SbcFixed::ParseIe(ie, 4, fixed));
+		REQUIRE(Sbc::ParseConfiguredIe(ie, 4, codec));
+
+		SbcEncoder codecEncoder(codec);
+		CHECK_EQ(fixed.Channels(), codec.Channels());
+		CHECK_EQ(fixed.SamplesPerFrame(), codecEncoder.SamplesPerFrame());
+		CHECK_EQ(SbcFixed::FrameLength(fixed), Sbc::FrameLength(codec));
+		CHECK_EQ(SbcFixed::Bitrate(fixed), Sbc::Bitrate(codec));
+		CHECK_EQ(SbcFixed::FramesPerPacket(fixed, payload), codecEncoder.FramesPerPacket(payload));
+		CHECK_EQ(SbcFixed::FrameLength(fixed), codecEncoder.MaxFrameBytes());
+
+		const uint8_t scaleFactors[2][8] = {{2, 4, 6, 8, 10, 12, 14, 15}, {3, 5, 7, 9, 11, 13, 15, 1}};
+		int fixedBits[2][8] = {};
+		int codecBits[2][8] = {};
+		SbcFixed::CalculateBits(fixed, scaleFactors, fixedBits);
+		Sbc::CalculateBits(codec, scaleFactors, codecBits);
+		CHECK(std::memcmp(fixedBits, codecBits, sizeof(fixedBits)) == 0);
+
+		const size_t spf = fixed.SamplesPerFrame();
+		const int nch = fixed.Channels();
+		SbcFixed::ToneGenerator tone;
+		tone.Reset(fixed.sampleRate, 1000, 12000);
+		std::vector<int16_t> pcm(spf * nch);
+		tone.Fill(pcm.data(), spf, nch);
+
+		std::vector<uint8_t> fixedFrame(SbcFixed::kMaxFrameBytes);
+		const size_t fixedWritten =
+				SbcFixed::Encoder(fixed).Encode(pcm.data(), fixedFrame.data(), fixedFrame.size());
+		CHECK_EQ(fixedWritten, SbcFixed::FrameLength(fixed));
+
+		std::vector<uint8_t> codecFrame(SbcFixed::kMaxFrameBytes);
+		size_t codecWritten = 0;
+		REQUIRE(SUCCEEDED(codecEncoder.Encode(pcm.data(), codecFrame.data(), codecFrame.size(), codecWritten)));
+		CHECK_EQ(codecWritten, fixedWritten);
+		// Sync word, the rate/block/mode/allocation/subband bits and the bitpool; the CRC
+		// differs because the two analysis filters scale the subbands differently.
+		CHECK_EQ(fixedFrame[0], codecFrame[0]);
+		CHECK_EQ(fixedFrame[1], codecFrame[1]);
+		CHECK_EQ(fixedFrame[2], codecFrame[2]);
+	}
 }
 
 TEST(SbcFixed_RoundTrip)
