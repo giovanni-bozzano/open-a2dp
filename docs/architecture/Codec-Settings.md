@@ -25,22 +25,29 @@ that the sink supports them. Rates above 48 kHz, SBC 16/32 kHz and wider PCM dep
 implemented, so Windows does not enumerate every theoretical Bluetooth codec format.
 
 Discovery edits the list while the device runs: `AcxDataFormatListRemoveDataFormat` and
-`AcxDataFormatListAddDataFormat` change the pin's raw format list in place, ACX fires the
-pin's format-change event after that, and Windows re-queries the endpoint instead of needing
-it restarted. The driver keeps one `ACXDATAFORMAT` object per entry so a change is an
-add/remove of objects it already owns. Unchanged lists cause no notification or repeated log.
+`AcxDataFormatListAddDataFormat` change the pin's RAW list and its DEFAULT-mode list in place,
+ACX fires the pin's format-change event after that, and Windows re-queries the endpoint
+instead of needing it restarted. The driver keeps one `ACXDATAFORMAT` object per entry, shared
+by both lists, so a change is an add/remove of objects it already owns and both modes always
+list the same formats with the same default. Unchanged lists cause no notification or
+repeated log.
 The advertised initial default is the first available format in this order: 44100 stereo,
 44100 mono, 48000 stereo, 48000 mono. A still-listed default survives discovery. Windows
 persists its own mix format; that value and this advertised default are not the same state.
 An active stream is never relabelled with the list default.
 
+The Sound-settings default format is the device format of the DEFAULT processing mode. ACX
+pins have only a built-in RAW list, and a RAW-only pin gives Windows no DEFAULT mode to apply
+that selection to, so the endpoint stayed on the list default (44100 stereo) on hardware even
+with the preferred-format query refused. The streaming pin therefore also assigns a DEFAULT
+mode list, as Microsoft's SDCA ACX sample does.
+
 `KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is deliberately not supported on the streaming pin:
-[Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2).
-ACX can otherwise supply the list default, but disabling this property has not yet resolved
-the fixed 44100 stereo hardware stream reported during testing. The refusal applies to the
-whole circuit, regardless of the request's target classification. Logs record these queries,
-legacy `PROPOSEDATAFORMAT` requests (still ACX-managed), and stream processing mode to
-establish the remaining selection path. The normal format list and initial-default queries remain
+[Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2),
+and ACX would otherwise answer it with the list default for either mode. The refusal applies
+to the whole circuit, regardless of the request's target classification. Logs record these
+queries, legacy `PROPOSEDATAFORMAT` requests (still ACX-managed), and the stream processing
+mode, which should now be `default` for shared-mode playback. The normal format list and initial-default queries remain
 ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,

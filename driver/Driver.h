@@ -337,8 +337,10 @@ struct DEVICE_CONTEXT
 	// The streaming pin and the render format objects listed on it. A changed endpoint
 	// format is applied by adding and removing those objects in place
 	// (AudioApplyEndpointFormats); FormatLock serializes the rebuilds and FormatsListed
-	// records which RenderFormats indices are listed now (one bit per index).
+	// records which RenderFormats indices are listed now (one bit per index). The DEFAULT
+	// mode list holds the same objects as the pin's built-in RAW list.
 	ACXPIN StreamingPin;
+	ACXDATAFORMATLIST DefaultModeFormats;
 	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
 	WDFWAITLOCK FormatLock;
 	ULONG FormatsListed;

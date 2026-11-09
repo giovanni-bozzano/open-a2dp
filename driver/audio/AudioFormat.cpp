@@ -222,7 +222,26 @@ NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 			return status;
 		}
 	}
-	return STATUS_SUCCESS;
+
+	// Sound settings' default format is the device format of the DEFAULT mode. A pin that
+	// lists only RAW gives Windows no mode to apply it to, so it stays on the list default.
+	WDF_OBJECT_ATTRIBUTES attrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
+	attrs.ParentObject = pin;
+	ACX_DATAFORMAT_LIST_CONFIG config;
+	ACX_DATAFORMAT_LIST_CONFIG_INIT(&config);
+	NTSTATUS status = AcxDataFormatListCreate(ctx->Device, &attrs, &config, &ctx->DefaultModeFormats);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_ERROR(ctx, "Audio", "creating the DEFAULT mode format list failed 0x%08X", status);
+		return status;
+	}
+	status = AcxPinAssignModeDataFormatList(pin, &AUDIO_SIGNALPROCESSINGMODE_DEFAULT, ctx->DefaultModeFormats);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_ERROR(ctx, "Audio", "assigning the DEFAULT mode format list failed 0x%08X", status);
+	}
+	return status;
 }
 
 } // namespace OpenA2dpDriver::Audio
@@ -236,7 +255,8 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 {
 	const ACXPIN pin = ctx->StreamingPin;
 	ACXDATAFORMATLIST list = pin != nullptr ? AcxPinGetRawDataFormatList(pin) : nullptr;
-	if (pin == nullptr || list == nullptr || ctx->FormatLock == nullptr)
+	const ACXDATAFORMATLIST defaultList = ctx->DefaultModeFormats;
+	if (pin == nullptr || list == nullptr || defaultList == nullptr || ctx->FormatLock == nullptr)
 	{
 		return STATUS_DEVICE_NOT_READY;
 	}
@@ -267,8 +287,20 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		{
 			continue;
 		}
-		const NTSTATUS result = wanted ? AcxDataFormatListAddDataFormat(list, ctx->FormatObjects[i])
-									  : AcxDataFormatListRemoveDataFormat(list, ctx->FormatObjects[i]);
+		const ACXDATAFORMAT format = ctx->FormatObjects[i];
+		NTSTATUS result = wanted ? AcxDataFormatListAddDataFormat(list, format)
+								 : AcxDataFormatListRemoveDataFormat(list, format);
+		if (NT_SUCCESS(result))
+		{
+			result = wanted ? AcxDataFormatListAddDataFormat(defaultList, format)
+							: AcxDataFormatListRemoveDataFormat(defaultList, format);
+			if (!NT_SUCCESS(result))
+			{
+				// Keep both modes identical: undo the RAW change the DEFAULT list did not take.
+				(void)(wanted ? AcxDataFormatListRemoveDataFormat(list, format)
+							  : AcxDataFormatListAddDataFormat(list, format));
+			}
+		}
 		if (!NT_SUCCESS(result))
 		{
 			OA2DP_ERROR(ctx, "Audio", "%s render format %u failed 0x%08X", wanted ? "adding" : "removing", i, result);
@@ -304,10 +336,14 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	}
 	const bool keepDefault = currentDefaultIndex < AudioRenderFormatCount &&
 		(listed & (1u << currentDefaultIndex)) != 0;
-	const NTSTATUS defaultStatus = keepDefault
-		? STATUS_SUCCESS
-		: AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[FirstListed(listed)]);
 	const ULONG defaultIndex = keepDefault ? currentDefaultIndex : FirstListed(listed);
+	NTSTATUS defaultStatus = keepDefault
+		? STATUS_SUCCESS
+		: AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[defaultIndex]);
+	if (NT_SUCCESS(defaultStatus))
+	{
+		defaultStatus = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[defaultIndex]);
+	}
 	if (NT_SUCCESS(defaultStatus))
 	{
 		KIRQL irql;
@@ -347,7 +383,7 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 			static_cast<unsigned>(AudioRenderChannels[i % AudioRenderChannelCount]));
 		(void)RtlStringCchCatA(formats, ARRAYSIZE(formats), entry);
 	}
-	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (16-bit PCM, %s)", formats,
+	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (16-bit PCM, RAW and DEFAULT modes, %s)", formats,
 		sinkFormats == 0 ? "provisional; sink not discovered" : "sink SBC capabilities");
 	if (NT_SUCCESS(defaultStatus))
 	{

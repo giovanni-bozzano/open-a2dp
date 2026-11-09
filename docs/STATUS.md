@@ -9,7 +9,7 @@
 | M3 AVDTP negotiation | Done | — |
 | M4 ACX endpoint + rings | Done | — |
 | M5 Encoder service + streaming | Done | - |
-| M5b Codec configuration | In progress | No preference narrows the sink-supported PCM list. Blocker: Windows selections still open 44.1 kHz stereo on hardware; capture preferred-format query routing and stream processing mode with the unconditional mode-format refusal before choosing the next fix |
+| M5b Codec configuration | In progress | No preference narrows the sink-supported PCM list. Blocker: Windows selections opened 44.1 kHz stereo on hardware with a RAW-only pin; verify the DEFAULT-mode list makes the stream (processing mode `default`) follow Sound settings |
 | M6 Config UI + install/uninstall | In progress | The `OpenA2dpConfig` window covers device selection, status and the codec/endpoint settings; the clean restore of `BthA2dp.sys` remains |
 | M7 System testing | Not started | System test matrix and long-run validation |
 | M8 Signing + release | Not started | Signed release package |
