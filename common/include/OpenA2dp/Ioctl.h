@@ -119,6 +119,11 @@ constexpr ULONG kIoctlGetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHO
 constexpr ULONG kIoctlGetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlSetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
+// How long a caller waits for one of these requests before cancelling it. The service and the
+// tools each wrap DeviceIoControl differently, but they wait on the same driver, so the bound
+// is one value here instead of a copy per caller.
+constexpr ULONG kIoctlTimeoutMs = 5000;
+
 struct VersionInfo {
 	uint32_t abiVersion;      // kAbiVersion
 	uint32_t driverVersion;   // 0xMMmmpppp

@@ -101,9 +101,10 @@ void OpenLog()
 // FILE_FLAG_OVERLAPPED so WAIT_EVENT can be cancelled, which makes every other
 // call need an OVERLAPPED as well. The wait is bounded: a driver that stops
 // answering must not take the service thread (and with it the service stop) along.
+// The tools have their own wrapper because it reports through std::string, and the
+// service must not pull that in; both use Ioctl::kIoctlTimeoutMs.
 bool IoctlSync(HANDLE device, DWORD code, void* in, DWORD inLength, void* out, DWORD outLength, DWORD* bytes)
 {
-	constexpr DWORD kIoctlTimeoutMs = 5000;
 	OVERLAPPED ov = {};
 	ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	if (ov.hEvent == nullptr) {
@@ -112,7 +113,7 @@ bool IoctlSync(HANDLE device, DWORD code, void* in, DWORD inLength, void* out, D
 	DWORD returned = 0;
 	BOOL ok = DeviceIoControl(device, code, in, inLength, out, outLength, &returned, &ov);
 	if (!ok && GetLastError() == ERROR_IO_PENDING) {
-		if (WaitForSingleObject(ov.hEvent, kIoctlTimeoutMs) == WAIT_OBJECT_0) {
+		if (WaitForSingleObject(ov.hEvent, Ioctl::kIoctlTimeoutMs) == WAIT_OBJECT_0) {
 			ok = GetOverlappedResult(device, &ov, &returned, FALSE);
 		} else {
 			CancelIoEx(device, &ov);

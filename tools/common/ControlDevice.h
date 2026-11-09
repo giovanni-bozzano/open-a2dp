@@ -43,7 +43,8 @@ HANDLE OpenControl(const Device& device, std::string& error);
 // later, a timeout cancels it rather than leaving the caller waiting, and a short reply is a
 // failure instead of a half-filled structure.
 bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* out,
-			   DWORD outLength, DWORD& bytes, std::string& error, DWORD timeoutMs = 5000);
+			   DWORD outLength, DWORD& bytes, std::string& error,
+			   DWORD timeoutMs = Ioctl::kIoctlTimeoutMs);
 
 // The requests the driver serves; a reply whose ABI is not this tool's is refused, because the
 // buffer it filled would be laid out differently.
