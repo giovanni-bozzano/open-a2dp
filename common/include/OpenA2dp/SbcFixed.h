@@ -34,39 +34,27 @@ inline int SampleRateIndex(uint32_t rate) noexcept
 	return rate == 16000 ? 0 : rate == 32000 ? 1 : rate == 44100 ? 2 : rate == 48000 ? 3 : -1;
 }
 
-inline bool SingleBit(uint8_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
-
-// Parses a configured SBC IE (one bit per field); the max bitpool is used. The field masks
-// are SbcConfig's, so this reads the same table the driver's selector picks from.
+// Decodes a configured SBC IE with the shared parser in SbcConfig (one bit per field, the
+// max bitpool used) into the frame parameters the encoder takes.
 inline bool ParseIe(const uint8_t* ie, size_t len, Params& out) noexcept
 {
-	if (len < SbcConfig::kIeLength) {
+	SbcConfig::Configuration config;
+	if (!SbcConfig::ParseConfiguredIe(ie, len, config)) {
 		return false;
 	}
-	const uint8_t fs = ie[0] & SbcConfig::kAllRates;
-	const uint8_t mode = ie[0] & SbcConfig::kAllModes;
-	const uint8_t blocks = ie[1] & SbcConfig::kAllBlocks;
-	const uint8_t subbands = ie[1] & SbcConfig::kAllSubbands;
-	const uint8_t alloc = ie[1] & SbcConfig::kAllAllocations;
-	if (!SingleBit(fs) || !SingleBit(mode) || !SingleBit(blocks) || !SingleBit(subbands) || !SingleBit(alloc)) {
-		return false;
-	}
-	out.sampleRate = fs == SbcConfig::kFs16000 ? 16000
-					: fs == SbcConfig::kFs32000 ? 32000
-					: fs == SbcConfig::kFs44100 ? 44100
-					: 48000;
-	out.channelMode = mode == SbcConfig::kModeMono ? ChannelMode::Mono
-					: mode == SbcConfig::kModeDual ? ChannelMode::DualChannel
-					: mode == SbcConfig::kModeStereo ? ChannelMode::Stereo
-					: ChannelMode::JointStereo;
-	out.blocks = blocks == SbcConfig::kBlocks4 ? 4
-					: blocks == SbcConfig::kBlocks8 ? 8
-					: blocks == SbcConfig::kBlocks12 ? 12
-					: 16;
-	out.subbands = subbands == SbcConfig::kSubbands4 ? 4 : 8;
-	out.allocation = alloc == SbcConfig::kAllocationSnr ? Allocation::Snr : Allocation::Loudness;
-	out.bitpool = ie[3];
-	return out.bitpool >= SbcConfig::kMinBitpool && out.bitpool >= ie[2];
+	static_assert(static_cast<uint8_t>(ChannelMode::Mono) == 0 &&
+			static_cast<uint8_t>(ChannelMode::DualChannel) == 1 &&
+			static_cast<uint8_t>(ChannelMode::Stereo) == 2 &&
+			static_cast<uint8_t>(ChannelMode::JointStereo) == 3, "ChannelMode must match the frame header");
+	static_assert(static_cast<uint8_t>(Allocation::Loudness) == 0 &&
+			static_cast<uint8_t>(Allocation::Snr) == 1, "Allocation must match the frame header");
+	out.sampleRate = config.sampleRate;
+	out.channelMode = static_cast<ChannelMode>(config.mode);
+	out.blocks = config.blocks;
+	out.subbands = config.subbands;
+	out.allocation = static_cast<Allocation>(config.allocation);
+	out.bitpool = config.bitpool;
+	return true;
 }
 
 inline size_t FrameLength(const Params& p) noexcept

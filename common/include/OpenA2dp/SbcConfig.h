@@ -42,6 +42,9 @@ constexpr uint8_t kAllAllocations = kAllocationLoudness | kAllocationSnr;
 constexpr uint8_t kLocalCapabilities[kIeLength] = {
 	kAllRates | kAllModes, kAllBlocks | kAllSubbands | kAllAllocations, kMinBitpool, kMaxBitpool};
 
+// A field of a configured IE carries exactly one bit; anything else is ambiguous.
+constexpr bool SingleBit(uint8_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
+
 constexpr uint8_t PickFirst(uint8_t available, const uint8_t* order, size_t count) noexcept
 {
 	for (size_t i = 0; i < count; ++i) {
@@ -91,6 +94,49 @@ constexpr uint8_t SampleRateBit(uint32_t rate) noexcept
 		: rate == 44100 ? kFs44100
 		: rate == 48000 ? kFs48000
 		: 0;
+}
+
+// The other direction: the value a single bit stands for. A bit outside its field is a
+// programming error, so these return the field's last value the way the codecs always have.
+constexpr uint32_t SampleRateValue(uint8_t rateBit) noexcept
+{
+	return rateBit == kFs16000 ? 16000u
+		: rateBit == kFs32000 ? 32000u
+		: rateBit == kFs44100 ? 44100u
+		: 48000u;
+}
+
+constexpr uint8_t BlocksValue(uint8_t blocksBit) noexcept
+{
+	return blocksBit == kBlocks4 ? 4 : blocksBit == kBlocks8 ? 8 : blocksBit == kBlocks12 ? 12 : 16;
+}
+
+constexpr uint8_t SubbandsValue(uint8_t subbandsBit) noexcept
+{
+	return subbandsBit == kSubbands4 ? 4 : 8;
+}
+
+// The SBC frame header channel-mode field: 0 mono, 1 dual channel, 2 stereo, 3 joint stereo.
+// Both encoders declare their ChannelMode enum in exactly this order.
+constexpr uint8_t ModeValue(uint8_t modeBit) noexcept
+{
+	return modeBit == kModeMono ? 0 : modeBit == kModeDual ? 1 : modeBit == kModeStereo ? 2 : 3;
+}
+
+// The SBC frame header allocation field: 0 loudness, 1 SNR.
+constexpr uint8_t AllocationValue(uint8_t allocationBit) noexcept
+{
+	return allocationBit == kAllocationSnr ? 1 : 0;
+}
+
+// The highest bitpool the spec allows for a channel mode (a ModeValue) and subband count.
+// Mono and dual channel carry one bitpool per channel, so their limit is half of the stereo
+// modes': 16 * subbands instead of 32 * subbands.
+constexpr uint8_t MaxBitpoolForMode(uint8_t mode, uint8_t subbands) noexcept
+{
+	const bool perChannel = mode == ModeValue(kModeMono) || mode == ModeValue(kModeDual);
+	const unsigned limit = (perChannel ? 16u : 32u) * (subbands == 4 ? 4u : 8u);
+	return static_cast<uint8_t>(limit > kMaxBitpool ? kMaxBitpool : limit);
 }
 
 // The sample rates and channel modes an advertised capability byte (IE byte 0) offers, as
@@ -162,12 +208,7 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 		return false;
 	}
 
-	const unsigned nsb = subbands == kSubbands4 ? 4u : 8u;
-	const bool singleChannelLimit = mode == kModeMono || mode == kModeDual;
-	unsigned modeLimit = (singleChannelLimit ? 16u : 32u) * nsb;
-	if (modeLimit > kMaxBitpool) {
-		modeLimit = kMaxBitpool;
-	}
+	const unsigned modeLimit = MaxBitpoolForMode(ModeValue(mode), SubbandsValue(subbands));
 
 	const uint8_t minBitpool = remoteIe[2] > kMinBitpool ? remoteIe[2] : kMinBitpool;
 	unsigned maxBitpool = remoteIe[3] < modeLimit ? remoteIe[3] : modeLimit;
@@ -183,6 +224,48 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 	out[1] = static_cast<uint8_t>(blocks | subbands | alloc);
 	out[2] = minBitpool;
 	out[3] = static_cast<uint8_t>(maxBitpool);
+	return true;
+}
+
+// A configured IE decoded into frame parameters, shared by the driver's encoder and the
+// service codec so both accept and reject exactly the same configurations.
+struct Configuration {
+	uint32_t sampleRate = 44100;
+	uint8_t mode = 3;       // ModeValue: 0 mono, 1 dual channel, 2 stereo, 3 joint stereo
+	uint8_t blocks = 16;
+	uint8_t subbands = 8;
+	uint8_t allocation = 0; // AllocationValue: 0 loudness, 1 SNR
+	uint8_t bitpool = 53;   // the maximum bitpool from the IE
+};
+
+// Parses a fully configured IE (exactly one bit per field) and checks the bitpool bounds,
+// including the per-mode maximum. Leaves `out` untouched when it returns false.
+constexpr bool ParseConfiguredIe(const uint8_t* ie, size_t len, Configuration& out) noexcept
+{
+	if (ie == nullptr || len < kIeLength) {
+		return false;
+	}
+	const uint8_t fs = ie[0] & kAllRates;
+	const uint8_t mode = ie[0] & kAllModes;
+	const uint8_t blocks = ie[1] & kAllBlocks;
+	const uint8_t subbands = ie[1] & kAllSubbands;
+	const uint8_t allocation = ie[1] & kAllAllocations;
+	if (!SingleBit(fs) || !SingleBit(mode) || !SingleBit(blocks) || !SingleBit(subbands) ||
+			!SingleBit(allocation)) {
+		return false;
+	}
+	Configuration parsed;
+	parsed.sampleRate = SampleRateValue(fs);
+	parsed.mode = ModeValue(mode);
+	parsed.blocks = BlocksValue(blocks);
+	parsed.subbands = SubbandsValue(subbands);
+	parsed.allocation = AllocationValue(allocation);
+	if (ie[2] < kMinBitpool || ie[3] < ie[2] ||
+			ie[3] > MaxBitpoolForMode(parsed.mode, parsed.subbands)) {
+		return false;
+	}
+	parsed.bitpool = ie[3];
+	out = parsed;
 	return true;
 }
 

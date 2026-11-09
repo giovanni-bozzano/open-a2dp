@@ -46,12 +46,6 @@ uint32_t Bitrate(const FrameParams& p) noexcept
 	return static_cast<uint32_t>((8ull * FrameLength(p) * p.sampleRate) / (static_cast<uint64_t>(p.subbands) * p.blocks));
 }
 
-uint8_t MaxBitpoolForMode(ChannelMode mode, uint8_t subbands) noexcept
-{
-	const unsigned limit = (mode == ChannelMode::Mono || mode == ChannelMode::DualChannel) ? 16u * subbands : 32u * subbands;
-	return static_cast<uint8_t>(std::min<unsigned>(limit, kMaxBitpool));
-}
-
 uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept
 {
 	uint8_t crc = 0x0F;
@@ -187,37 +181,28 @@ void CalculateBits(const FrameParams& p, const uint8_t scaleFactors[2][8], int b
 	}
 }
 
-namespace {
-
-bool SingleBit(uint8_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
-
-} // namespace
+// The shared decode lives in SbcConfig; this only maps it to the codec's own parameter type.
+static_assert(static_cast<uint8_t>(ChannelMode::Mono) == 0 &&
+		static_cast<uint8_t>(ChannelMode::DualChannel) == 1 &&
+		static_cast<uint8_t>(ChannelMode::Stereo) == 2 &&
+		static_cast<uint8_t>(ChannelMode::JointStereo) == 3, "ChannelMode must match the frame header");
+static_assert(static_cast<uint8_t>(Allocation::Loudness) == 0 && static_cast<uint8_t>(Allocation::Snr) == 1,
+		"Allocation must match the frame header");
 
 bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept
 {
-	if (len < kIeLength) {
+	SbcConfig::Configuration config;
+	if (!SbcConfig::ParseConfiguredIe(ie, len, config)) {
 		return false;
 	}
-	const uint8_t fs = ie[0] & kAllRates;
-	const uint8_t mode = ie[0] & kAllModes;
-	const uint8_t blocks = ie[1] & kAllBlocks;
-	const uint8_t subbands = ie[1] & kAllSubbands;
-	const uint8_t alloc = ie[1] & kAllAllocations;
-	if (!SingleBit(fs) || !SingleBit(mode) || !SingleBit(blocks) || !SingleBit(subbands) || !SingleBit(alloc)) {
-		return false;
-	}
-	out.sampleRate = fs == kFs16000 ? 16000 : fs == kFs32000 ? 32000 : fs == kFs44100 ? 44100 : 48000;
-	out.channelMode = mode == kModeMono ? ChannelMode::Mono
-					: mode == kModeDual ? ChannelMode::DualChannel
-					: mode == kModeStereo ? ChannelMode::Stereo
-					: ChannelMode::JointStereo;
-	out.blocks = blocks == kBlocks4 ? 4 : blocks == kBlocks8 ? 8 : blocks == kBlocks12 ? 12 : 16;
-	out.subbands = subbands == kSubbands4 ? 4 : 8;
-	out.allocation = alloc == kAllocationSnr ? Allocation::Snr : Allocation::Loudness;
-	if (ie[2] < kMinBitpool || ie[3] < ie[2] || ie[3] > MaxBitpoolForMode(out.channelMode, out.subbands)) {
-		return false;
-	}
-	out.bitpool = ie[3];
+	FrameParams parsed;
+	parsed.sampleRate = config.sampleRate;
+	parsed.channelMode = static_cast<ChannelMode>(config.mode);
+	parsed.blocks = config.blocks;
+	parsed.subbands = config.subbands;
+	parsed.allocation = static_cast<Allocation>(config.allocation);
+	parsed.bitpool = config.bitpool;
+	out = parsed;
 	return true;
 }
 
@@ -263,19 +248,19 @@ uint8_t SbcCodec::ValidateConfiguration(const uint8_t* ie, size_t ieLength) cons
 	if (ieLength < kIeLength) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::BadLength);
 	}
-	if (!SingleBit(ie[0] & kAllRates)) {
+	if (!SbcConfig::SingleBit(ie[0] & kAllRates)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency);
 	}
-	if (!SingleBit(ie[0] & kAllModes)) {
+	if (!SbcConfig::SingleBit(ie[0] & kAllModes)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidChannelMode);
 	}
-	if (!SingleBit(ie[1] & kAllSubbands)) {
+	if (!SbcConfig::SingleBit(ie[1] & kAllSubbands)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSubbands);
 	}
-	if (!SingleBit(ie[1] & kAllAllocations)) {
+	if (!SbcConfig::SingleBit(ie[1] & kAllAllocations)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidAllocationMethod);
 	}
-	if (!SingleBit(ie[1] & kAllBlocks)) {
+	if (!SbcConfig::SingleBit(ie[1] & kAllBlocks)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::BadPayloadFormat);
 	}
 	if (ie[2] < kMinBitpool || ie[2] > kMaxBitpool) {

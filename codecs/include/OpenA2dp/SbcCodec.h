@@ -57,7 +57,6 @@ int SampleRateIndex(uint32_t sampleRate) noexcept;
 
 size_t FrameLength(const FrameParams& p) noexcept;
 uint32_t Bitrate(const FrameParams& p) noexcept;
-uint8_t MaxBitpoolForMode(ChannelMode mode, uint8_t subbands) noexcept;
 
 // Parses a fully configured IE (exactly one bit per field). Uses the max bitpool.
 bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept;
