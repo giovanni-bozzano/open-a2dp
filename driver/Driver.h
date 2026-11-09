@@ -294,8 +294,7 @@ struct DEVICE_CONTEXT
 	// Set by the ACX stream run (SignalingOnAudioRun) for the signaling work item.
 	volatile LONG AudioRunPending;
 	// Byte 0 of the SBC capabilities the sink advertised in the last discovery (rates and
-	// channel modes), 0 until one ran. Written by the selector, read by SET_PREFERENCE to
-	// refuse a pinned endpoint format the sink cannot serve.
+	// channel modes), 0 until one ran. Determines PCM availability independently of preferences.
 	volatile LONG SinkSbcCapabilities;
 	// Ioctl::kSinkCodec* bits for the codecs the sink advertised in the last discovery,
 	// written by the selector so SET_PREFERENCE and the CLI can refuse a codec the sink
@@ -327,7 +326,7 @@ struct DEVICE_CONTEXT
 	KSPIN_LOCK AudioLock;
 	WDFTIMER AudioTimer;
 	ACXSTREAM AudioStream;
-	// PCM format of the current ACX stream (44.1 or 48 kHz, always stereo). The encoder
+	// PCM format of the current ACX stream (44.1 or 48 kHz, mono or stereo). The encoder
 	// input and the position math follow it; without a stream it holds the default.
 	ULONG PinSampleRate;
 	USHORT PinChannels;
@@ -343,9 +342,6 @@ struct DEVICE_CONTEXT
 	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
 	WDFWAITLOCK FormatLock;
 	ULONG FormatsListed;
-	// 1 when the list comes from the sink's formats instead of the stored pin, because the
-	// last discovery does not serve that pin. Reported by GET_STATUS.
-	volatile LONG PinNotServed;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
@@ -537,8 +533,7 @@ void BuildRenderFormats();
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx);
 
-// Rebuilds the streaming pin's format list in place from the stored preference, so a
-// changed endpoint rate or channel mode reaches Windows without the device restarting.
+// Rebuilds the streaming pin's format list from discovered sink capabilities in place.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx);
 

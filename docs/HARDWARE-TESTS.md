@@ -59,7 +59,7 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
   [--blocks n] [--subbands n] [--allocation loudness|snr]` (elevated). `status` shows
   AVDTP state, media state, codec, encoder registration and counters.
 - `OpenA2dpConfig` (elevated): the settings window over the same IOCTLs. It lists the
-  sinks, refreshes the status every second and stores the codec and endpoint preference.
+  sinks, refreshes the status every second and stores the codec preference.
 - Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
 - Device node: Device Manager, or `pnputil /enum-devices /class MEDIA` /
   `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
@@ -264,32 +264,26 @@ it), reattach.
    0xC4 (sampling frequency), 0xC6 (channel mode) or 0xD9 (channels) and the sink should
    retry. If it insists, the stream never opens; `does not match the endpoint format` in
    the media log is the safety net, not the normal path.
-6. `OpenA2dpCtl codec --rate 48000 --channels 2` while Windows plays at 44.1 kHz: `status`
-   lists the pin (`endpoint 48000 Hz, stereo`) and the command notes that the endpoint
-   formats were rebuilt in place. The driver logs `endpoint formats 48000 Hz 2 ch`, then
-   `the endpoint now runs at 48000 Hz 2 ch while the stream is configured for another
-   format; closing to renegotiate`, and the A2DP stream is closed and configured again at
-   48 kHz - the sink stays connected and the endpoint keeps running. *Advanced* in Sound
-   settings now offers only 48 kHz formats, without a reconnect.
-7. On a sink that advertises only 44.1 kHz or only stereo, `OpenA2dpCtl codec --rate 48000`
-   or `--channels 1` is refused before anything is stored (`the sink does not advertise
-   48000 Hz (it offers 44100 Hz, mono, stereo). No preference was stored.`); the same request
-   sent to the driver anyway (`SET_PREFERENCE: ... not supported`) logs `the sink does not
-   advertise the pinned endpoint format ...`. `status` keeps the previous preference and
-   lists only the formats the sink covers. Before the first discovery (no `sink formats`
-   line) the pin is accepted and the negotiation check decides.
-7a. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
+6. Switch codec and SBC/AAC parameters while playing: the Windows *Advanced* list remains
+   unchanged and contains every driver-supported format the sink advertises over SBC.
+   The config UI has no rate/channel filter; CLI `--rate`/`--channels` explain their removal.
+7. With old global/per-device `CodecPreferenceEndpointRate`/`EndpointChannels` values
+   already present, load ABI 9: `GET_PREFERENCE` returns both fields zero and Windows still
+   offers all sink-supported driver formats. Even invalid old format values must not
+   discard valid codec parameters. On a stereo-only/44.1-only sink only those supported
+   choices appear after discovery; the initial four-format log is labelled provisional.
+8. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
    advertise AAC (it offers SBC)`, and `status` lists `sink formats 44100 Hz, 48000 Hz, mono,
    stereo (SBC)`; Windows offers only the sink's formats.
-8. `OpenA2dpCtl codec --rate 0 --channels 0` lists every served format again in place; the
-   *Advanced* list offers both rates and both channel counts without a reconnect.
-9. While the pin is set and audio plays at the pinned format, pinning the same format is a
-   no-op: no `closing to renegotiate` line and no interruption.
+9. Discovery with an unchanged format set does not repeat `endpoint formats` or emit an
+   explicit format-change notification. `advertised default` initially names the first
+   available entry (44100 stereo first), while `stream format` and `endpoint format ...
+   (actual stream)` follow the Windows selection; neither proves the Windows mix value.
 
 **T24 Config UI (S/A)**
 1. Start `OpenA2dpConfig` elevated: the sink list shows the addresses `OpenA2dpCtl list`
    prints, the status box matches `OpenA2dpCtl status` field for field, and the controls
-   show the stored codec and endpoint preference.
+   show the stored codec preference.
 2. Play, then choose `SBC only` and press Apply: the window reports `Stored. The active
    stream renegotiates to apply it.` and the status box follows the renegotiation within a
    few seconds, with no sink reconnect.

@@ -132,13 +132,17 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 
 	if (codec == Avdtp::CodecType::Sbc)
 	{
-		// Remember the rates and channel modes the sink advertises, so SET_PREFERENCE can
-		// refuse a pinned endpoint format the sink cannot serve instead of storing it, and
-		// drop the render formats the sink cannot play so Windows does not offer them.
-		const uint8_t sinkFormats = remoteIeLength >= 1 ? remoteIe[0] : 0;
+		if (remoteIeLength < SbcConfig::kIeLength)
+		{
+			return 0;
+		}
+		// PCM availability is independent of codec and parameter preferences.
+		const uint8_t sinkFormats = remoteIe[0];
 		InterlockedOr(&ctx->SinkCodecs, static_cast<LONG>(Ioctl::kSinkCodecSbc));
 		if (InterlockedExchange(&ctx->SinkSbcCapabilities, sinkFormats) != static_cast<LONG>(sinkFormats))
 		{
+			OA2DP_INFO(ctx, "AVDTP", "sink SBC PCM capabilities: rates 0x%02X, channels 0x%02X",
+				SbcConfig::AdvertisedRates(sinkFormats), SbcConfig::AdvertisedChannels(sinkFormats));
 			const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
 			if (!NT_SUCCESS(formatStatus))
 			{

@@ -1,7 +1,7 @@
 // OpenA2dpConfig.exe - desktop settings window for the OpenA2dp A2DP source driver.
 //
 // One window for every sink the driver owns: it lists the control devices, shows the
-// session and what the last negotiation produced, and stores the codec and endpoint
+// session and what the last negotiation produced, and stores the codec
 // preference through SET_PREFERENCE. Status is re-read on a timer; a stored change is
 // applied by the driver itself (an active stream renegotiates in place), so the window
 // never has to wait or guess.
@@ -40,8 +40,6 @@ enum ControlId : int {
 	kBlocksCombo,
 	kSubbandsCombo,
 	kAllocationCombo,
-	kRateCombo,
-	kChannelsCombo,
 	kApplyButton,
 	kMessageLabel,
 };
@@ -282,13 +280,8 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"STATIC", L"The frame shape and bitpool apply to SBC; the bitrate to AAC.",
 				SS_LEFT, 24, 396, 592, 20, 0, font);
 
-	CreateChild(hwnd, L"BUTTON", L"Endpoint format", BS_GROUPBOX, 12, 436, 616, 72, 0, font);
-	CreateChild(hwnd, L"STATIC", L"Rate", SS_LEFT, 24, 458, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 454, 190, 120,
-				kRateCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Channels", SS_LEFT, 320, 458, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 454, 196, 120,
-				kChannelsCombo, font);
+	CreateChild(hwnd, L"STATIC", L"Choose the PCM format in Windows Sound settings; all supported formats remain available.",
+				SS_LEFT, 24, 454, 592, 40, 0, font);
 
 	CreateChild(hwnd, L"BUTTON", L"Apply", BS_PUSHBUTTON | WS_TABSTOP, 496, 516, 132, 28, kApplyButton, font);
 	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 12, 522, 476, 20, kMessageLabel, font);
@@ -319,16 +312,7 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kAllocationCombo, L"Loudness", Ioctl::kSbcAllocationLoudness);
 	AddComboItem(hwnd, kAllocationCombo, L"SNR", Ioctl::kSbcAllocationSnr);
 
-	AddComboItem(hwnd, kRateCombo, L"Any (44.1 and 48 kHz)", 0);
-	AddComboItem(hwnd, kRateCombo, L"44.1 kHz", 44100);
-	AddComboItem(hwnd, kRateCombo, L"48 kHz", 48000);
-
-	AddComboItem(hwnd, kChannelsCombo, L"Any (mono and stereo)", 0);
-	AddComboItem(hwnd, kChannelsCombo, L"Mono", 1);
-	AddComboItem(hwnd, kChannelsCombo, L"Stereo", 2);
-
-	for (const int id : {kCodecCombo, kBitrateCombo, kBlocksCombo, kSubbandsCombo, kAllocationCombo, kRateCombo,
-						 kChannelsCombo})
+	for (const int id : {kCodecCombo, kBitrateCombo, kBlocksCombo, kSubbandsCombo, kAllocationCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -352,8 +336,6 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	SelectComboValue(hwnd, kBlocksCombo, preference.sbcBlocks);
 	SelectComboValue(hwnd, kSubbandsCombo, preference.sbcSubbands);
 	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
-	SelectComboValue(hwnd, kRateCombo, preference.endpointRate);
-	SelectComboValue(hwnd, kChannelsCombo, preference.endpointChannels);
 	const std::wstring bitpool = preference.sbcBitpool != 0 ? Format(L"%u", preference.sbcBitpool) : L"";
 	SetWindowTextW(GetDlgItem(hwnd, kBitpoolEdit), bitpool.c_str());
 }
@@ -626,8 +608,9 @@ void ApplySettings(HWND hwnd)
 	preference.sbcBlocks = ComboValue(hwnd, kBlocksCombo);
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
-	preference.endpointRate = ComboValue(hwnd, kRateCombo);
-	preference.endpointChannels = ComboValue(hwnd, kChannelsCombo);
+	preference.aacSampleRate = 0;
+	preference.endpointRate = 0;
+	preference.endpointChannels = 0;
 
 	std::string failure;
 	if (!WritePreference(state->control, preference, failure))

@@ -254,13 +254,12 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		KeReleaseSpinLock(&ctx->AudioLock, irql);
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
 		out->bitrateLimit = AacConfig::MaxBitrateForMtu(out->mediaMtu - Rtp::kHeaderSize, sampleRate);
-		// What the sink advertised, so a format it cannot serve is visible before it is
-		// pinned. SBC is mandatory, so its capabilities describe the sink's PCM formats.
+		// SBC PCM capabilities are the baseline, not the AAC capability set or Windows mix format.
 		const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
 		out->sinkChannels = SbcConfig::AdvertisedChannels(sinkFormats);
 		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
-		out->pinNotServed = InterlockedCompareExchange(&ctx->PinNotServed, 0, 0) != 0 ? 1u : 0u;
+		out->pinNotServed = 0; // retired ABI field
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Status));
 		return;
 	}
@@ -314,25 +313,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_NOT_SUPPORTED);
 			return;
 		}
-		// A pinned endpoint format has to be one the sink advertises, or the stream could
-		// never be configured. The sink's capabilities are known once it has been
-		// discovered; before that the pin is stored and the negotiation check applies.
-		uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
-		if (sinkFormats != 0 &&
-			!SbcConfig::SupportsFormat(sinkFormats, in->endpointRate, static_cast<uint8_t>(in->endpointChannels)))
-		{
-			OA2DP_WARN(ctx, "Service",
-				"the sink does not advertise the pinned endpoint format %u Hz %u ch (sink rates 0x%02X, "
-				"channels 0x%02X)",
-				in->endpointRate, in->endpointChannels, SbcConfig::AdvertisedRates(sinkFormats),
-				SbcConfig::AdvertisedChannels(sinkFormats));
-			Complete(request, STATUS_NOT_SUPPORTED);
-			return;
-		}
 		bool changed = false;
 		bool selectionChanged = false;
 		bool parametersChanged = false;
-		bool endpointChanged = false;
 		{
 			KIRQL irql;
 			KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
@@ -343,15 +326,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 								ctx->Preference.sbcSubbands != in->sbcSubbands ||
 								ctx->Preference.sbcAllocation != in->sbcAllocation ||
 								ctx->Preference.aacBitrate != in->aacBitrate;
-			// The render formats, and with them the rate and channel count AVDTP negotiates,
-			// are rebuilt in place below, so an endpoint change needs no device restart.
-			endpointChanged = ctx->Preference.endpointRate != in->endpointRate ||
-							  ctx->Preference.endpointChannels != in->endpointChannels;
-			// aacSampleRate is stored but does not affect selection until the endpoint
-			// is multi-rate, so on its own it must be saved without renegotiating.
-			changed = selectionChanged || parametersChanged || endpointChanged ||
-					  ctx->Preference.aacSampleRate != in->aacSampleRate;
+			changed = selectionChanged || parametersChanged;
 			ctx->Preference = *in;
+			ctx->Preference.aacSampleRate = 0;
+			ctx->Preference.endpointRate = 0;
+			ctx->Preference.endpointChannels = 0;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 		}
 		if (changed)
@@ -364,24 +343,13 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			}
 			OA2DP_INFO(ctx, "Service",
 				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, blocks %u, subbands %u, "
-				"allocation 0x%02X, AAC bitrate %u, endpoint %u Hz %u ch)",
+				"allocation 0x%02X, AAC bitrate %u)",
 				in->flags, static_cast<unsigned>(in->codec), in->sbcBitpool, in->sbcBlocks, in->sbcSubbands,
-				in->sbcAllocation, in->aacBitrate, in->endpointRate, in->endpointChannels);
-			if (endpointChanged)
-			{
-				// Rebuilt in place, so Windows re-queries the endpoint formats instead of
-				// waiting for the device to restart; an active stream follows through the
-				// renegotiation requested below.
-				const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
-				if (!NT_SUCCESS(formatStatus))
-				{
-					OA2DP_WARN(ctx, "Service", "applying the endpoint format failed 0x%08X", formatStatus);
-				}
-			}
+				in->sbcAllocation, in->aacBitrate);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
 			ConfigSavePreference(ctx);
-			if (selectionChanged || parametersChanged || endpointChanged)
+			if (selectionChanged || parametersChanged)
 			{
 				SignalingOnPreferenceChanged(ctx);
 			}

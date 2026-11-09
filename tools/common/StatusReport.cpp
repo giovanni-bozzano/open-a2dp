@@ -110,10 +110,6 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	{
 		AppendLine(text, "AAC bitrate", Format("%u bps", preference.aacBitrate));
 	}
-	if (preference.aacSampleRate != 0)
-	{
-		AppendLine(text, "AAC rate", Format("%u Hz (used once the endpoint is multi-rate)", preference.aacSampleRate));
-	}
 	if (preference.sbcBlocks != 0 || preference.sbcSubbands != 0 || preference.sbcAllocation != 0)
 	{
 		AppendLine(text, "SBC frame",
@@ -121,13 +117,7 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 						  preference.sbcSubbands != 0 ? preference.sbcSubbands : 8u,
 						  preference.sbcAllocation == Ioctl::kSbcAllocationSnr ? "SNR" : "loudness"));
 	}
-	const char* const rate = preference.endpointRate == 0
-								 ? "any rate"
-								 : (preference.endpointRate == 44100 ? "44100 Hz" : "48000 Hz");
-	const char* const channels = preference.endpointChannels == 1
-									 ? "mono"
-									 : (preference.endpointChannels == 2 ? "stereo" : "any channels");
-	AppendLine(text, "endpoint", Format("%s, %s", rate, channels));
+	AppendLine(text, "endpoint", "Windows-selected; all supported PCM formats");
 }
 
 void AppendDriver(std::string& text, const Ioctl::VersionInfo& version)
@@ -310,12 +300,6 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkFormats(text, status);
-	// A stored pin the sink does not serve is not listed; saying so explains why the endpoint
-	// reports another rate or channel count than the one stored.
-	if (status.pinNotServed != 0)
-	{
-		AppendLine(text, "fallback", "the stored endpoint format is not served by the sink");
-	}
 	AppendPreference(text, preference);
 	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
 	AppendLine(text, "rings",

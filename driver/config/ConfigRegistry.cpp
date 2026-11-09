@@ -16,13 +16,10 @@ const wchar_t kDevicesKeyName[] = L"Devices";
 const wchar_t kFlagsValueName[] = L"CodecPreferenceFlags";
 const wchar_t kCodecValueName[] = L"CodecPreferenceCodec";
 const wchar_t kAacBitrateValueName[] = L"CodecPreferenceAacBitrate";
-const wchar_t kAacSampleRateValueName[] = L"CodecPreferenceAacSampleRate";
 const wchar_t kSbcBitpoolValueName[] = L"CodecPreferenceSbcBitpool";
 const wchar_t kSbcBlocksValueName[] = L"CodecPreferenceSbcBlocks";
 const wchar_t kSbcSubbandsValueName[] = L"CodecPreferenceSbcSubbands";
 const wchar_t kSbcAllocationValueName[] = L"CodecPreferenceSbcAllocation";
-const wchar_t kEndpointRateValueName[] = L"CodecPreferenceEndpointRate";
-const wchar_t kEndpointChannelsValueName[] = L"CodecPreferenceEndpointChannels";
 
 const char* PreferenceName(const Ioctl::Preference& preference)
 {
@@ -98,13 +95,10 @@ bool ReadPreference(WDFKEY key, Ioctl::Preference& preference)
 	found |= ReadDword(key, kFlagsValueName, preference.flags);
 	found |= ReadDword(key, kCodecValueName, preference.codec);
 	found |= ReadDword(key, kAacBitrateValueName, preference.aacBitrate);
-	found |= ReadDword(key, kAacSampleRateValueName, preference.aacSampleRate);
 	found |= ReadDword(key, kSbcBitpoolValueName, preference.sbcBitpool);
 	found |= ReadDword(key, kSbcBlocksValueName, preference.sbcBlocks);
 	found |= ReadDword(key, kSbcSubbandsValueName, preference.sbcSubbands);
 	found |= ReadDword(key, kSbcAllocationValueName, preference.sbcAllocation);
-	found |= ReadDword(key, kEndpointRateValueName, preference.endpointRate);
-	found |= ReadDword(key, kEndpointChannelsValueName, preference.endpointChannels);
 	return found;
 }
 
@@ -144,9 +138,8 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx)
 	if (!Ioctl::ValidPreference(preference))
 	{
 		OA2DP_WARN(ctx, "Config",
-			"ignoring the stored codec preference (flags 0x%08X, codec %u, endpoint %u Hz %u ch)",
-			preference.flags, static_cast<unsigned>(preference.codec), preference.endpointRate,
-			preference.endpointChannels);
+			"ignoring the stored codec preference (flags 0x%08X, codec %u)",
+			preference.flags, static_cast<unsigned>(preference.codec));
 		preference = {};
 		preference.abiVersion = Ioctl::kAbiVersion;
 		stored = false;
@@ -161,10 +154,9 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx)
 	{
 		OA2DP_INFO(ctx, "Config",
 			"codec preference %s restored from the registry (SBC bitpool %u, blocks %u, subbands %u, "
-			"allocation 0x%02X, AAC bitrate %u, endpoint %u Hz %u ch)",
+			"allocation 0x%02X, AAC bitrate %u)",
 			PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
-			preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate,
-			preference.endpointRate, preference.endpointChannels);
+			preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate);
 	}
 }
 
@@ -195,13 +187,10 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 			WriteDword(ctx, sink, kFlagsValueName, preference.flags);
 			WriteDword(ctx, sink, kCodecValueName, preference.codec);
 			WriteDword(ctx, sink, kAacBitrateValueName, preference.aacBitrate);
-			WriteDword(ctx, sink, kAacSampleRateValueName, preference.aacSampleRate);
 			WriteDword(ctx, sink, kSbcBitpoolValueName, preference.sbcBitpool);
 			WriteDword(ctx, sink, kSbcBlocksValueName, preference.sbcBlocks);
 			WriteDword(ctx, sink, kSbcSubbandsValueName, preference.sbcSubbands);
 			WriteDword(ctx, sink, kSbcAllocationValueName, preference.sbcAllocation);
-			WriteDword(ctx, sink, kEndpointRateValueName, preference.endpointRate);
-			WriteDword(ctx, sink, kEndpointChannelsValueName, preference.endpointChannels);
 			WdfRegistryClose(sink);
 		}
 		WdfRegistryClose(devices);
@@ -210,8 +199,7 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 
 	OA2DP_INFO(ctx, "Config",
 		"codec preference %s stored for this sink (SBC bitpool %u, blocks %u, subbands %u, "
-		"allocation 0x%02X, AAC bitrate %u, endpoint %u Hz %u ch)",
+		"allocation 0x%02X, AAC bitrate %u)",
 		PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
-		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate,
-		preference.endpointRate, preference.endpointChannels);
+		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate);
 }

@@ -137,14 +137,14 @@ struct.
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
-| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR, endpoint rate 0/44100/48000 and endpoint channels 0/1/2. The endpoint pair and a forced AAC are refused with `STATUS_NOT_SUPPORTED` once the sink's advertised capabilities are known and do not cover them. Changing the codec CLOSEs and rediscovers the stream; changing a parameter keeps the codec and applies it in place through SUSPEND/RECONFIGURE/START, while an endpoint change rebuilds the pin's format list in place, so it needs no device restart |
+| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. Forced AAC is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks AAC. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. Rate/channel preference fields are ignored on input and zero on output; they never narrow Windows' list |
 
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
 `Status` carries `negotiatedCodec` (valid before streaming starts), `preferenceFlags` and
 `preferenceCodec` (both added in ABI 2); `GET_STATUS` reads published atomic session
 snapshots rather than waiting on `SessionLock`. `Preference` (ABI 4) adds the SBC bitpool,
-block length, subbands and allocation; its AAC sample-rate field is stored but not honoured
+block length, subbands and allocation; its AAC sample-rate field is retired
 while negotiation follows the rate Windows opened the endpoint with. `Status` (ABI 5) adds
 `mediaMtu` and `bitrateLimit`, the AAC bitrate one media packet carries at the current
 endpoint rate, which is what `OpenA2dpCtl status` shows as the ceiling. ABI 6 adds
@@ -156,7 +156,9 @@ the endpoint only offers formats the sink can play and `SET_PREFERENCE` refuses 
 codec that is not among them, so neither Windows nor `OpenA2dpCtl` shows a choice the sink
 cannot serve. ABI 8 adds `Status.pinNotServed`: the endpoint lists the sink's own formats
 when the last discovery does not serve the stored rate/channel pin, and the CLI reports it
-on a `fallback` line.
+on a `fallback` line. ABI 9 retires that fallback and all format preferences: their
+struct slots remain for layout stability but are ignored/zeroed. The CLI and UI no longer
+offer rate/channel filters. Rebuild the driver, tools and service together.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.
@@ -279,7 +281,7 @@ exceed `kMaxFramePayload`, and enters the service path.
   maps its own pages, so there is no `ProbeForRead`/`ProbeForWrite` surface and no
   double-mapping of arbitrary user memory.
 - Input structs are validated for size, `abiVersion` and value ranges: the codec, the SBC
-  bitpool and frame parameters, and the endpoint rate and channel count through
+  bitpool and frame parameters through
   `Ioctl::ValidPreference`; `maxFramePayload` is clamped to `kMaxFramePayload`.
 - The service runs as LocalSystem (it must open the interface), reads PCM from the
   mapping only and never writes the PCM ring; the driver never trusts `samples` beyond

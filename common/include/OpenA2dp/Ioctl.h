@@ -26,7 +26,8 @@ namespace OpenA2dp::Ioctl {
 // 7: Status carries the codecs the sink advertises.
 // 8: Status carries whether the endpoint lists the sink's formats instead of a stored pin
 //    the sink does not serve.
-constexpr uint32_t kAbiVersion = 8;
+// 9: Format preferences are retired; Windows chooses from all supported endpoint formats.
+constexpr uint32_t kAbiVersion = 9;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -100,19 +101,6 @@ constexpr bool ValidSbcFrameParameters(uint32_t blocks, uint32_t subbands, uint3
 	return blocksOk && subbandsOk && allocationOk;
 }
 
-// The endpoint formats a stored preference may pin; 0 means the driver default (every
-// rate and channel count the endpoint serves). Pinning one narrows the render formats
-// Windows may open, which is the only way to force the rate an A2DP stream uses.
-constexpr bool ValidEndpointRate(uint32_t sampleRate) noexcept
-{
-	return sampleRate == 0 || sampleRate == 44100 || sampleRate == 48000;
-}
-
-constexpr bool ValidEndpointChannels(uint32_t channels) noexcept
-{
-	return channels == 0 || channels == 1 || channels == 2;
-}
-
 // Status.sinkCodecs bits; the codec constants above cannot be used as bits because
 // kCodecSbc is 0.
 constexpr uint32_t kSinkCodecSbc = 1u << 0;
@@ -154,7 +142,7 @@ struct RegisterEncoderOut {
 	uint32_t codec;
 	uint32_t maxFramePayload; // authoritative limit for the frame payload
 	uint32_t pcmSampleRate;   // endpoint rate Windows opened (44100 or 48000)
-	uint32_t pcmChannels;     // 2
+	uint32_t pcmChannels;     // 1 or 2
 	uint32_t reserved[3];
 };
 
@@ -227,14 +215,13 @@ struct Status {
 	uint32_t bitrateLimit;
 	// Formats the sink advertised in the last discovery, 0 until one ran: a bit per rate
 	// (1 = 44100 Hz, 2 = 48000 Hz) and a bit per channel count (1 = mono, 2 = stereo). A
-	// pinned endpoint format has to be covered by both masks.
+	// supported endpoint format has to be covered by both masks.
 	uint32_t sinkRates;
 	uint32_t sinkChannels;
 	// kSinkCodec* bits for the codecs the sink advertised in the last discovery, 0 until
 	// one ran. SBC is mandatory, so it is only ever clear before the first discovery.
 	uint32_t sinkCodecs;
-	// 1 when the endpoint lists the sink's own formats instead of a stored rate/channel
-	// pin the last discovery does not serve, so the stored pin is not what Windows offers.
+	// Retired in ABI 9; always zero.
 	uint32_t pinNotServed;
 };
 
@@ -243,13 +230,13 @@ struct Preference {
 	uint32_t flags;            // kPreference*
 	uint32_t codec;            // kCodec*
 	uint32_t aacBitrate;       // 0 = driver default (highest supported <= sink max)
-	uint32_t aacSampleRate;    // 0 = driver default; unused until the endpoint is multi-rate
+	uint32_t aacSampleRate;    // retired: ignored on input, zero on output
 	uint32_t sbcBitpool;       // 0 = driver default; clamped to the sink's range
 	uint32_t sbcBlocks;        // 0 = driver default; 4, 8, 12 or 16 blocks per frame
 	uint32_t sbcSubbands;      // 0 = driver default; 4 or 8 subbands
 	uint32_t sbcAllocation;    // 0 = driver default; kSbcAllocation*
-	uint32_t endpointRate;     // 0 = driver default; 44100 or 48000 Hz, applied when the device starts
-	uint32_t endpointChannels; // 0 = driver default; 1 or 2, applied when the device starts
+	uint32_t endpointRate;     // retired: ignored on input, zero on output
+	uint32_t endpointChannels; // retired: ignored on input, zero on output
 	uint32_t reserved;
 };
 
@@ -268,11 +255,6 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 		return false;
 	}
 	if (!ValidSbcFrameParameters(preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation))
-	{
-		return false;
-	}
-	if (!ValidEndpointRate(preference.endpointRate) ||
-		!ValidEndpointChannels(preference.endpointChannels))
 	{
 		return false;
 	}

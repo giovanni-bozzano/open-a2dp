@@ -52,11 +52,7 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 
 namespace
 {
-// Records the format the endpoint now produces and asks for a renegotiation when it moved.
-// Both ways the driver learns it - the stream Windows created, and the device format it
-// set - end up here, so the encoder rate and the negotiated A2DP stream always follow the
-// pin. The A2DP stream is still configured at the previous format, so the request is only
-// dropped by the signaling work item while no stream is configured.
+// The encoder follows the actual stream, not the Windows mix or advertised default.
 void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ USHORT channels)
 {
 	KIRQL irql;
@@ -75,110 +71,94 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 }
 } // namespace
 
-// Records the PCM format of the ACX stream Windows opened. The encoder input and the
-// position math follow it, so a pin at 48 kHz is negotiated and encoded at 48 kHz.
-void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
+void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT, _In_ WDFREQUEST request)
 {
-	ULONG sampleRate = AudioSampleRate;
-	USHORT channels = AudioChannels;
-	// ACX hands over the format of the stream Windows created, so these raw fields are the
-	// only record of what it actually opened. Logged before the fallback: a missing or
-	// non-WAVEFORMATEX format would otherwise print the same 44100 Hz 2 ch as a real 44.1 kHz
-	// stream, leaving it unclear whether the endpoint format list or the read was at fault.
-	const auto* wave = format != nullptr
-		? static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format))
-		: nullptr;
-	const bool waveFormat = wave != nullptr &&
-		RtlCompareMemory(&wave->DataFormat.Specifier, &KSDATAFORMAT_SPECIFIER_WAVEFORMATEX, sizeof(GUID)) ==
-			sizeof(GUID);
-	if (!waveFormat)
+	ACX_REQUEST_PARAMETERS parameters;
+	ACX_REQUEST_PARAMETERS_INIT(&parameters);
+	AcxRequestGetParameters(request, &parameters);
+	if (parameters.Parameters.Property.ItemType == AcxItemTypePin &&
+		parameters.Parameters.Property.ItemId == StreamingPinId)
 	{
-		OA2DP_INFO(ctx, "Audio", "stream format %s, size %u; keeping the default %u Hz %u ch",
-			wave == nullptr ? "not supplied" : "not WAVEFORMATEX",
-			wave != nullptr ? wave->DataFormat.FormatSize : 0u, sampleRate, static_cast<unsigned>(channels));
+		// PROPOSEDATAFORMAT2 overrides the user's mix format: Windows always opens the
+		// preferred mode format. No DSP here requires one, so leave selection to Windows.
+		WdfRequestComplete(request, STATUS_NOT_SUPPORTED);
+		return;
 	}
-	else
+	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
+	if (!NT_SUCCESS(status))
 	{
-		OA2DP_INFO(ctx, "Audio", "stream format %u B, WAVEFORMATEX, tag %u, cbSize %u, %u Hz %u ch %u bit",
-			wave->DataFormat.FormatSize, static_cast<unsigned>(wave->WaveFormatEx.wFormatTag),
-			static_cast<unsigned>(wave->WaveFormatEx.cbSize), wave->WaveFormatEx.nSamplesPerSec,
-			static_cast<unsigned>(wave->WaveFormatEx.nChannels),
-			static_cast<unsigned>(wave->WaveFormatEx.wBitsPerSample));
-		if (wave->WaveFormatEx.nSamplesPerSec != 0 && wave->WaveFormatEx.nChannels != 0)
-		{
-			sampleRate = wave->WaveFormatEx.nSamplesPerSec;
-			channels = wave->WaveFormatEx.nChannels;
-		}
+		WdfRequestComplete(request, status);
 	}
-
-	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch", sampleRate, channels);
-	// What the driver publishes as the pin default, next to what Windows asked for: when
-	// the two differ, the engine opened the default instead of the format chosen in Sound
-	// settings, which is what to look at when a stored rate or channel count does not apply.
-	ACXDATAFORMATLIST list = ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
-	ACXDATAFORMAT defaultFormat = nullptr;
-	if (list != nullptr && NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &defaultFormat)) &&
-		defaultFormat != nullptr)
-	{
-		const auto* defaultWave =
-			static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(defaultFormat));
-		if (defaultWave != nullptr)
-		{
-			OA2DP_INFO(ctx, "Audio", "pin default %u Hz %u ch", defaultWave->WaveFormatEx.nSamplesPerSec,
-				static_cast<unsigned>(defaultWave->WaveFormatEx.nChannels));
-		}
-	}
-	RecordEndpointFormat(ctx, sampleRate, channels);
 }
 
-// Windows sets the endpoint's device (mixed) format here: the Sound settings Advanced list,
-// and the format a new shared-mode engine starts from. ACX only calls back when the driver
-// registers this, and without it the request is refused - the endpoint keeps serving the
-// format the list was first built with, so a rate or channel count picked in Sound settings
-// never reaches a stream. The end of a stream-format line above shows the stream Windows
-// actually created, which is the format this callback settled on.
-NTSTATUS OnPinSetDataFormat(_In_ ACXPIN pin, _In_ ACXDATAFORMAT format)
+NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
-	DEVICE_CONTEXT* ctx = GetPinContext(pin)->Device;
-	if (ctx == nullptr || format == nullptr)
+	if (format == nullptr)
 	{
 		return STATUS_INVALID_PARAMETER;
 	}
-	ULONG index = AudioRenderFormatCount;
+	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
+	if (wave == nullptr ||
+		wave->DataFormat.FormatSize < FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx) + sizeof(WAVEFORMATEX) ||
+		!IsEqualGUID(wave->DataFormat.Specifier, KSDATAFORMAT_SPECIFIER_WAVEFORMATEX))
+	{
+		OA2DP_WARN(ctx, "Audio", "stream format missing or not WAVEFORMATEX; refusing it");
+		return STATUS_NOT_SUPPORTED;
+	}
+	OA2DP_INFO(ctx, "Audio", "stream format %u B, WAVEFORMATEX, tag %u, cbSize %u, %u Hz %u ch %u bit",
+		wave->DataFormat.FormatSize, static_cast<unsigned>(wave->WaveFormatEx.wFormatTag),
+		static_cast<unsigned>(wave->WaveFormatEx.cbSize), wave->WaveFormatEx.nSamplesPerSec,
+		static_cast<unsigned>(wave->WaveFormatEx.nChannels),
+		static_cast<unsigned>(wave->WaveFormatEx.wBitsPerSample));
+	NTSTATUS status = STATUS_NOT_SUPPORTED;
+	const WAVEFORMATEX& pcm = wave->WaveFormatEx;
+	bool pcm16 = IsEqualGUID(wave->DataFormat.MajorFormat, KSDATAFORMAT_TYPE_AUDIO) &&
+		IsEqualGUID(wave->DataFormat.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
+		pcm.wBitsPerSample == 16 && pcm.nBlockAlign == pcm.nChannels * sizeof(INT16) &&
+		pcm.nAvgBytesPerSec == pcm.nSamplesPerSec * pcm.nBlockAlign;
+	if (pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+	{
+		pcm16 = pcm16 && pcm.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
+			wave->DataFormat.FormatSize >= sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEXTENSIBLE);
+		if (pcm16)
+		{
+			const auto& extended = *reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(&pcm);
+			pcm16 = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
+				extended.Samples.wValidBitsPerSample == 16 &&
+				(extended.dwChannelMask == 0 || extended.dwChannelMask ==
+					static_cast<ULONG>(pcm.nChannels == 1 ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO));
+		}
+	}
+	else
+	{
+		pcm16 = pcm16 && pcm.wFormatTag == WAVE_FORMAT_PCM;
+	}
+	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (AcxDataFormatIsEqual(ctx->FormatObjects[i], format))
+		if (pcm16 &&
+			pcm.nSamplesPerSec == AudioRenderRates[i / AudioRenderChannelCount] &&
+			pcm.nChannels == AudioRenderChannels[i % AudioRenderChannelCount] &&
+			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
+				static_cast<uint8_t>(pcm.nChannels))))
 		{
-			index = i;
+			status = STATUS_SUCCESS;
 			break;
 		}
 	}
-	if (index == AudioRenderFormatCount)
+	if (!NT_SUCCESS(status))
 	{
-		const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
-		OA2DP_INFO(ctx, "Audio", "device format %u Hz %u ch is not one the endpoint lists",
-			wave != nullptr ? wave->WaveFormatEx.nSamplesPerSec : 0u,
-			wave != nullptr ? static_cast<unsigned>(wave->WaveFormatEx.nChannels) : 0u);
-		return STATUS_NOT_SUPPORTED;
+		OA2DP_WARN(ctx, "Audio", "stream format is not in the supported endpoint list; refusing it");
 	}
-	// The chosen format becomes the pin default, so the next rebuild and every later stream
-	// keep it instead of falling back to the first listed format.
-	ACXDATAFORMATLIST list = ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
-	if (list != nullptr && ctx->FormatLock != nullptr)
-	{
-		WdfWaitLockAcquire(ctx->FormatLock, nullptr);
-		const NTSTATUS status = AcxDataFormatListAssignDefaultDataFormat(list, format);
-		WdfWaitLockRelease(ctx->FormatLock);
-		if (!NT_SUCCESS(status))
-		{
-			OA2DP_WARN(ctx, "Audio", "assigning the device format as the endpoint default failed 0x%08X", status);
-		}
-	}
-	const ULONG sampleRate = AudioRenderRates[index / AudioRenderChannelCount];
-	const USHORT channels = AudioRenderChannels[index % AudioRenderChannelCount];
-	OA2DP_INFO(ctx, "Audio", "device format %u Hz %u ch", sampleRate, static_cast<unsigned>(channels));
-	RecordEndpointFormat(ctx, sampleRate, channels);
-	return STATUS_SUCCESS;
+	return status;
+}
+
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
+{
+	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
+	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch (actual stream, 16-bit PCM)",
+		wave->WaveFormatEx.nSamplesPerSec, static_cast<unsigned>(wave->WaveFormatEx.nChannels));
+	RecordEndpointFormat(ctx, wave->WaveFormatEx.nSamplesPerSec, wave->WaveFormatEx.nChannels);
 }
 
 namespace
@@ -196,52 +176,22 @@ ULONG FirstListed(_In_ ULONG listed)
 	return index < AudioRenderFormatCount ? index : 0;
 }
 
-// The RenderFormats indices Windows may open: the ones the stored preference admits and
-// the sink advertised. Hiding what the sink cannot play keeps its unsupported rates out of
-// Sound settings and out of the negotiation. A sink whose capabilities are unknown leaves
-// the preference's own set, and a stored pin that the sink no longer covers leaves the
-// sink's set: either way the endpoint stays openable and negotiable. `pinNotServed` reports
-// the second case, so the fallback is visible in GET_STATUS.
-ULONG DesiredFormats(_In_ const Ioctl::Preference& preference, _In_ uint8_t sinkFormats,
-	_Out_ bool& pinNotServed)
+ULONG DesiredFormats(_In_ uint8_t sinkFormats)
 {
-	ULONG allowed = 0;
-	ULONG covered = 0;
-	ULONG sinkCovered = 0;
+	if (sinkFormats == 0)
+	{
+		return AllFormatsMask;
+	}
+	ULONG supported = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		const bool sinkHas = sinkFormats != 0 &&
-			SbcConfig::SupportsFormat(sinkFormats, AudioRenderRates[i / AudioRenderChannelCount],
-									 static_cast<uint8_t>(AudioRenderChannels[i % AudioRenderChannelCount]));
-		if (sinkHas)
+		if (SbcConfig::SupportsFormat(sinkFormats, AudioRenderRates[i / AudioRenderChannelCount],
+			static_cast<uint8_t>(AudioRenderChannels[i % AudioRenderChannelCount])))
 		{
-			sinkCovered |= 1u << i;
-		}
-		if (!RenderFormatAllowed(preference, i))
-		{
-			continue;
-		}
-		allowed |= 1u << i;
-		if (sinkFormats == 0 || sinkHas)
-		{
-			covered |= 1u << i;
+			supported |= 1u << i;
 		}
 	}
-	if (covered != 0)
-	{
-		pinNotServed = false;
-		return covered;
-	}
-	// The pin is not one the sink advertises (its capabilities changed, or the pin was stored
-	// before the first discovery): listing it would give Windows a format nothing can
-	// configure, so the sink's own formats are listed and the stream still plays.
-	if (sinkCovered != 0)
-	{
-		pinNotServed = true;
-		return sinkCovered;
-	}
-	pinNotServed = false;
-	return allowed != 0 ? allowed : AllFormatsMask;
+	return supported;
 }
 } // namespace
 
@@ -270,10 +220,7 @@ NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 // outside the subsystem namespace like AudioInitialize.
 using namespace OpenA2dpDriver::Audio;
 
-// The pin's raw format list is what Windows offers as the endpoint's format and what it
-// opens a stream with, so a stored rate or channel mode reaches the audio stack by
-// rebuilding that list in place: ACX fires the pin's format-change event after the list
-// changes and Windows re-queries, so the device does not have to restart.
+// Only driver and sink capabilities determine this list; preferences never narrow it.
 NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 {
 	const ACXPIN pin = ctx->StreamingPin;
@@ -283,28 +230,22 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		return STATUS_DEVICE_NOT_READY;
 	}
 
-	Ioctl::Preference preference;
-	{
-		KIRQL irql;
-		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
-		preference = ctx->Preference;
-		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
-	}
-	bool pinNotServed = false;
-	const ULONG desired = DesiredFormats(
-		preference, static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0)), pinNotServed);
-	if (InterlockedExchange(&ctx->PinNotServed, pinNotServed ? 1 : 0) == 0 && pinNotServed)
-	{
-		OA2DP_WARN(ctx, "Audio",
-			"the stored endpoint format (rate %u, channels %u) is not served by the sink; listing its own",
-			preference.endpointRate, preference.endpointChannels);
-	}
-
 	NTSTATUS status = STATUS_SUCCESS;
 	WdfWaitLockAcquire(ctx->FormatLock, nullptr);
-	// The first call builds the list while the pin is not part of the circuit yet, so no
-	// client is listening for the change and the list order alone decides the default.
+	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	const ULONG desired = DesiredFormats(sinkFormats);
+	if (desired == 0)
+	{
+		WdfWaitLockRelease(ctx->FormatLock);
+		OA2DP_ERROR(ctx, "Audio", "sink SBC formats 0x%02X have no driver-supported PCM format", sinkFormats);
+		return STATUS_NOT_SUPPORTED;
+	}
 	const ULONG listedBefore = ctx->FormatsListed;
+	if (listedBefore == desired)
+	{
+		WdfWaitLockRelease(ctx->FormatLock);
+		return STATUS_SUCCESS;
+	}
 	const bool firstBuild = listedBefore == 0;
 	ULONG listed = listedBefore;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
@@ -336,19 +277,14 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		return NT_SUCCESS(status) ? STATUS_UNSUCCESSFUL : status;
 	}
 
-	// The default format is what Windows opens the endpoint with in shared mode, so a
-	// default that is still listed is kept: a rebuild (a discovery, or a preference that
-	// does not pin the format) must not put the first listed format back over the one
-	// Windows or the user chose. The first build and a narrowing pin have no usable
-	// default of their own and get the first listed one, which for a pin is the pinned
-	// format.
+	// This is the advertised initial default, not Windows' persisted mix format.
 	ACXDATAFORMAT currentDefault = nullptr;
 	ULONG currentDefaultIndex = AudioRenderFormatCount;
 	if (NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &currentDefault)) && currentDefault != nullptr)
 	{
 		for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 		{
-			if (currentDefault == ctx->FormatObjects[i])
+			if (AcxDataFormatIsEqual(currentDefault, ctx->FormatObjects[i]))
 			{
 				currentDefaultIndex = i;
 				break;
@@ -360,6 +296,19 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	const NTSTATUS defaultStatus = keepDefault
 		? STATUS_SUCCESS
 		: AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[FirstListed(listed)]);
+	const ULONG defaultIndex = keepDefault ? currentDefaultIndex : FirstListed(listed);
+	if (NT_SUCCESS(defaultStatus))
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		if (ctx->AudioStream == nullptr)
+		{
+			ctx->PinSampleRate = AudioRenderRates[defaultIndex / AudioRenderChannelCount];
+			ctx->PinChannels = AudioRenderChannels[defaultIndex % AudioRenderChannelCount];
+			ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
+		}
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+	}
 	WdfWaitLockRelease(ctx->FormatLock);
 	if (!NT_SUCCESS(defaultStatus))
 	{
@@ -370,17 +319,6 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		else
 		{
 			OA2DP_WARN(ctx, "Audio", "assigning the endpoint default format failed 0x%08X", defaultStatus);
-		}
-	}
-	if (!firstBuild)
-	{
-		// ACX already notifies Windows of a list change; the explicit call only makes sure a
-		// client re-queries, and a pin without one (a device that has not started yet)
-		// says so with an error status.
-		const NTSTATUS notifyStatus = AcxPinNotifyDataFormatChange(pin);
-		if (!NT_SUCCESS(notifyStatus))
-		{
-			OA2DP_INFO(ctx, "Audio", "the format change notification returned 0x%08X", notifyStatus);
 		}
 	}
 
@@ -398,19 +336,13 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 			static_cast<unsigned>(AudioRenderChannels[i % AudioRenderChannelCount]));
 		(void)RtlStringCchCatA(formats, ARRAYSIZE(formats), entry);
 	}
-	OA2DP_INFO(ctx, "Audio", "endpoint formats %s", formats);
-
-	// The endpoint reports the pinned format until Windows opens a stream; with a stream
-	// the opened format stays authoritative and the renegotiation below follows it.
-	if (ctx->AudioStream == nullptr)
+	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (16-bit PCM, %s)", formats,
+		sinkFormats == 0 ? "provisional; sink not discovered" : "sink SBC capabilities");
+	if (NT_SUCCESS(defaultStatus))
 	{
-		const ULONG first = FirstListed(listed);
-		KIRQL irql;
-		KeAcquireSpinLock(&ctx->AudioLock, &irql);
-		ctx->PinSampleRate = AudioRenderRates[first / AudioRenderChannelCount];
-		ctx->PinChannels = AudioRenderChannels[first % AudioRenderChannelCount];
-		ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
-		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		OA2DP_INFO(ctx, "Audio", "advertised default %u Hz %u ch; Windows selects the stream format",
+			AudioRenderRates[defaultIndex / AudioRenderChannelCount],
+			static_cast<unsigned>(AudioRenderChannels[defaultIndex % AudioRenderChannelCount]));
 	}
-	return status;
+	return NT_SUCCESS(status) ? defaultStatus : status;
 }

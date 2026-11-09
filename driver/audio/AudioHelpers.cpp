@@ -22,17 +22,6 @@ const GUID* EndpointCategory(_In_ BTH_COD cod)
 }
 
 RENDER_FORMAT RenderFormats[AudioRenderFormatCount];
-
-bool RenderFormatAllowed(_In_ const Ioctl::Preference& preference, _In_ ULONG index)
-{
-	const ULONG rate = AudioRenderRates[index / AudioRenderChannelCount];
-	const USHORT channels = AudioRenderChannels[index % AudioRenderChannelCount];
-	if (preference.endpointRate != 0 && rate != preference.endpointRate)
-	{
-		return false;
-	}
-	return preference.endpointChannels == 0 || channels == preference.endpointChannels;
-}
 } // namespace OpenA2dpDriver::Audio
 
 // Declared in Driver.h with the rest of the driver-wide audio interface, so it lives
@@ -52,6 +41,7 @@ void BuildRenderFormats()
 		const USHORT bytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
 		RtlZeroMemory(&format, sizeof(format));
 		format.DataFormat.FormatSize = sizeof(RENDER_FORMAT);
+		format.DataFormat.SampleSize = bytesPerFrame;
 		format.DataFormat.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
 		format.DataFormat.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
 		format.DataFormat.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;

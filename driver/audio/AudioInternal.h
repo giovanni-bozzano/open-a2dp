@@ -26,14 +26,6 @@ struct SINK_JACK_CONTEXT
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SINK_JACK_CONTEXT, GetSinkJackContext)
 
-// The streaming pin's callback needs the device to reach the format objects it was created
-// with; the bridge pin is created without one.
-struct PIN_CONTEXT
-{
-	DEVICE_CONTEXT* Device;
-};
-WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PIN_CONTEXT, GetPinContext)
-
 struct RENDER_FORMAT
 {
 	KSDATAFORMAT DataFormat;
@@ -43,7 +35,7 @@ struct RENDER_FORMAT
 extern RENDER_FORMAT RenderFormats[AudioRenderFormatCount];
 
 EVT_ACX_CIRCUIT_CREATE_STREAM OnCreateStream;
-EVT_ACX_PIN_SET_DATAFORMAT OnPinSetDataFormat;
+EVT_ACX_OBJECT_PREPROCESS_REQUEST OnProposeModeFormat;
 EVT_ACX_JACK_RETRIEVE_PRESENCE_STATE OnRetrieveJackPresence;
 EVT_ACX_STREAM_PREPARE_HARDWARE OnStreamPrepareHardware;
 EVT_ACX_STREAM_RELEASE_HARDWARE OnStreamReleaseHardware;
@@ -76,12 +68,10 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket);
 NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG positionInBlocks, _Out_ PULONGLONG qpcPosition);
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected);
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
-// Whether the stored preference admits this index of RenderFormats; a pinned rate or
-// channel mode drops the formats Windows could otherwise open instead.
-bool RenderFormatAllowed(_In_ const OpenA2dp::Ioctl::Preference& preference, _In_ ULONG index);
 // Creates the ACX format objects for RenderFormats, parented to the streaming pin, so
-// they can be listed and unlisted as the stored endpoint format changes.
+// they can be listed and unlisted as the sink capabilities change.
 NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
+NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
 void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
 const GUID* EndpointCategory(_In_ BTH_COD cod);
 } // namespace OpenA2dpDriver::Audio

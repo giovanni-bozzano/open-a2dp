@@ -13,21 +13,8 @@ void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeSpinLock(&ctx->AudioLock);
-	// The stored preference was restored before the endpoint was created, so a pinned rate
-	// or channel mode also decides the default format reported until Windows opens a stream.
-	Ioctl::Preference preference;
-	{
-		KIRQL irql;
-		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
-		preference = ctx->Preference;
-		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
-	}
-	ctx->PinSampleRate = preference.endpointRate != 0 ? preference.endpointRate : AudioSampleRate;
+	ctx->PinSampleRate = AudioSampleRate;
 	ctx->PinChannels = AudioChannels;
-	if (preference.endpointChannels != 0)
-	{
-		ctx->PinChannels = static_cast<USHORT>(preference.endpointChannels);
-	}
 	ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
 	// RenderFormats was filled once in DriverEntry; the table is shared by every endpoint and
 	// must not be rewritten here, or two device adds could expose a half-built format.
@@ -70,6 +57,15 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	}
 	if (NT_SUCCESS(status))
 	{
+		status = AcxCircuitInitAssignAcxRequestPreprocessCallback(circuitInit, OnProposeModeFormat,
+			nullptr, AcxRequestTypeProperty, &KSPROPSETID_Pin, KSPROPERTY_PIN_PROPOSEDATAFORMAT2);
+		if (!NT_SUCCESS(status))
+		{
+			OA2DP_ERROR(ctx, "Audio", "registering the mode format policy failed 0x%08X", status);
+		}
+	}
+	if (NT_SUCCESS(status))
+	{
 		// Clears circuitInit on success.
 		WDF_OBJECT_ATTRIBUTES circuitAttrs;
 		WDF_OBJECT_ATTRIBUTES_INIT(&circuitAttrs);
@@ -90,21 +86,14 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
-	// Without a set-data-format callback the device format Windows asks for in Sound settings
-	// is refused, so the format chosen there never reaches a stream.
-	ACX_PIN_CALLBACKS pinCallbacks;
-	ACX_PIN_CALLBACKS_INIT(&pinCallbacks);
-	pinCallbacks.EvtAcxPinSetDataFormat = OnPinSetDataFormat;
-
 	ACX_PIN_CONFIG pinConfig;
 	ACX_PIN_CONFIG_INIT_ID(&pinConfig, StreamingPinId);
 	pinConfig.Type = AcxPinTypeSink;
 	pinConfig.Communication = AcxPinCommunicationSink;
 	pinConfig.Category = &KSCATEGORY_AUDIO;
-	pinConfig.PinCallbacks = &pinCallbacks;
 	pinConfig.MaxStreams = 1;
 	WDF_OBJECT_ATTRIBUTES pinAttrs;
-	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&pinAttrs, PIN_CONTEXT);
+	WDF_OBJECT_ATTRIBUTES_INIT(&pinAttrs);
 	pinAttrs.ParentObject = circuit;
 	ACXPIN pins[2];
 	status = AcxPinCreate(circuit, &pinAttrs, &pinConfig, &pins[0]);
@@ -113,10 +102,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_ERROR(ctx, "Audio", "creating the streaming pin failed 0x%08X", status);
 		return status;
 	}
-	GetPinContext(pins[0])->Device = ctx;
-	// The format list is the set Windows may open the endpoint with, and the format it
-	// picks is what AVDTP negotiates. It is built here from the stored preference and
-	// rebuilt in place when that preference changes (AudioApplyEndpointFormats).
+	// Discovery replaces the provisional list with the sink-supported formats.
 	WDF_OBJECT_ATTRIBUTES formatAttrs;
 	WDF_OBJECT_ATTRIBUTES_INIT(&formatAttrs);
 	formatAttrs.ParentObject = ctx->Device;

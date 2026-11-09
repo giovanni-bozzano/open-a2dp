@@ -93,20 +93,19 @@ TEST(StatusReport_FormatsTheSession)
 	CHECK(Contains(report, "672 B, 660 B payload; AAC up to 352000 bps"));
 	CHECK(Contains(report, "44100 Hz, 48000 Hz, stereo (SBC, AAC)"));
 	CHECK(Contains(report, "force AAC"));
-	// The endpoint keeps its rate and leaves the channel count to Windows.
-	CHECK(Contains(report, "endpoint        48000 Hz, any channels"));
+	CHECK(Contains(report, "endpoint        Windows-selected; all supported PCM formats"));
 	CHECK(Contains(report, "registered"));
 	CHECK(Contains(report, "packets 12"));
 	CHECK(Contains(report, "ABI " + std::to_string(Ioctl::kAbiVersion) + ", version 1.2.3"));
 	CHECK(Contains(report, "not reported yet") == false);
-	// Nothing to explain: the endpoint serves the stored pin and no field is unknown.
+	// Retired format preferences are not presented as active restrictions.
 	CHECK(Contains(report, "fallback") == false);
 	CHECK(Contains(report, "-- raw fields --") == false);
 }
 
 TEST(StatusReport_ExplainsTheUnknowns)
 {
-	// Before the first discovery, and with a stored pin the sink does not serve.
+	// Before the first discovery; the retired fallback field must not mislead users.
 	Ioctl::Status status = StreamingStatus();
 	status.mediaState = Ioctl::MediaState::Idle;
 	status.codec = 0;
@@ -121,7 +120,7 @@ TEST(StatusReport_ExplainsTheUnknowns)
 	CHECK(Contains(report, "codec           none"));
 	CHECK(Contains(report, "media MTU       not reported yet"));
 	CHECK(Contains(report, "sink formats    not discovered yet"));
-	CHECK(Contains(report, "fallback"));
+	CHECK(!Contains(report, "fallback"));
 	CHECK(Contains(report, "last error      none"));
 	CHECK(Contains(report, "preference      force AAC"));
 }
@@ -144,8 +143,24 @@ TEST(StatusReport_VerboseListsEveryField)
 	{
 		CHECK(Contains(report, field));
 	}
+
 	CHECK(Contains(report, "0xC000009A"));
 	CHECK(Contains(report, "last error      0xC000009A"));
+}
+
+TEST(StatusReport_IgnoresLegacyFormatFilters)
+{
+	Ioctl::Preference preference = StreamingPreference();
+	preference.endpointChannels = 1;
+	preference.aacSampleRate = 44100;
+	const std::string report = Report(false, StreamingStatus(), preference);
+	CHECK(Contains(report, "Windows-selected; all supported PCM formats"));
+	CHECK(!Contains(report, "48000 Hz, mono"));
+	CHECK(!Contains(report, "AAC rate"));
+	preference.endpointRate = 0;
+	preference.endpointChannels = 0;
+	preference.aacSampleRate = 0;
+	CHECK(report == Report(false, StreamingStatus(), preference));
 }
 
 TEST(StatusReport_NeedsAStatus)

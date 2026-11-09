@@ -6,42 +6,50 @@ Which fields exist, who chooses them, and what a change does. The design notes a
 ## Who chooses the PCM format
 
 Windows does. The ACX render endpoint publishes the formats it supports, the audio engine
-opens a stream with one of them (shared mode uses the endpoint's default format, changeable
+opens a stream with one of them (shared mode uses Windows' persisted mix format, changeable
 in *Sound settings > the endpoint > Advanced*), and the driver receives that
 `ACXDATAFORMAT` when the stream is created. The driver never asserts a format on its own.
 
-The endpoint publishes 16-bit PCM at 44.1 and 48 kHz, mono and stereo: the rates every A2DP
-sink must support and the channel counts both codecs can encode. The selected format is
+The driver can publish 16-bit PCM at 44.1 and 48 kHz, mono and stereo. After discovery it
+lists the intersection with the sink's SBC rate/channel capabilities. The selected format is
 recorded as the device's `PinSampleRate`/`PinChannels`, drives the position and packet math
 and the PCM buffers, and AVDTP then negotiates a configuration that matches it.
 
-Restricting that list is therefore the only way to make a stream run at a chosen rate or
-channel count, which is what the endpoint settings below do: a pinned rate or channel mode
-removes the other formats from the pin, so the engine can only open the pinned one and AVDTP
-negotiates it. The list cannot be empty - the validator only accepts 44.1/48 kHz and 1/2
-channels, and a preference that failed validation is discarded as a whole.
+No preference narrows this list. Rate/channel controls and `--rate`/`--channels` have been
+removed; old registry values are ignored, including global defaults. SBC is the baseline
+because it is mandatory; AAC has separate capabilities and may not support every listed
+PCM format. Automatic selection can use SBC in that case; forced AAC can fail rather than
+silently encode a different format. A forced codec the sink does not advertise is refused.
+Before discovery the list is provisional and contains all four driver formats, not proof
+that the sink supports them. Rates above 48 kHz, SBC 16/32 kHz and wider PCM depths are not
+implemented, so Windows does not enumerate every theoretical Bluetooth codec format.
 
-The list is filtered by what the sink advertises, too: after a discovery the driver keeps
-only the formats the sink's SBC capabilities cover, so Sound settings never offers a rate or
-channel count the sink cannot play. The sink's capabilities describe its PCM support for both
-codecs, since SBC is mandatory. A forced codec the sink does not advertise is refused - AAC
-is the only one that can be missing - and `OpenA2dpCtl codec` checks the same masks before it
-sends anything, so an unusable choice is named instead of stored.
-
-The list is also edited while the device runs: `AcxDataFormatListRemoveDataFormat` and
+Discovery edits the list while the device runs: `AcxDataFormatListRemoveDataFormat` and
 `AcxDataFormatListAddDataFormat` change the pin's raw format list in place, ACX fires the
 pin's format-change event after that, and Windows re-queries the endpoint instead of needing
 it restarted. The driver keeps one `ACXDATAFORMAT` object per entry so a change is an
-add/remove of objects it already owns. The endpoint default is assigned only when there is
-none worth keeping: a default that is still listed survives a rebuild, so a format chosen
-in Sound settings is not replaced by the first listed one, while a first build or a pin
-that narrows the list gets the first listed format - which for a pin is the pinned one.
+add/remove of objects it already owns. Unchanged lists cause no notification or repeated log.
+The advertised initial default is the first available format in this order: 44100 stereo,
+44100 mono, 48000 stereo, 48000 mono. A still-listed default survives discovery. Windows
+persists its own mix format; that value and this advertised default are not the same state.
+An active stream is never relabelled with the list default.
 
-The format picked in Sound settings arrives through the streaming pin's set-data-format
-callback (`EvtAcxPinSetDataFormat`), which the driver has to register: ACX refuses the
-request otherwise and every stream opens at the format the list was first built with. The
-handler accepts a format the list holds, makes it the pin default and renegotiates, so the
-stream Windows opens next runs at it.
+`KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is deliberately not supported on the streaming pin:
+[Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2).
+ACX otherwise supplies the list default, explaining a fixed 44100 stereo hardware stream
+despite changing the mix format. The normal format list and initial-default queries remain
+ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
+[ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
+The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
+and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not
+reported as a fabricated 44100 stereo fallback.
+
+Logs distinguish `endpoint formats` (availability, 16-bit and provisional/discovered source),
+`advertised default` (initial suggestion), `stream format` (Windows' raw request), and
+`endpoint format ... (actual stream)` (encoder input). The media/AVDTP logs report the
+negotiated codec format, not the Windows mix format. Previously the same availability line
+was printed at initialization and discovery even if nothing changed, with an extra explicit
+notification despite ACX already notifying; neither is needed.
 
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
@@ -57,17 +65,12 @@ One preference per sink, kept in the registry and restored when the device start
 - `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
 
 All values are `REG_DWORD`, `0` means "driver default", and `OpenA2dpCtl codec` writes them
-through `SET_PREFERENCE` (`kAbiVersion` 6). Deleting the sink subkey returns it to auto.
-The driver reads it in `OnDeviceAdd`, before the endpoint exists, because the endpoint rate
-and channel mode decide the render formats.
-
-A pin is refused by `SET_PREFERENCE` (`STATUS_NOT_SUPPORTED`) once the sink's advertised SBC
-capabilities are known and do not cover it, rather than stored and left to fail later; the
-`status` line `sink formats` lists the same capabilities, with the sink's codecs, for the
-user. Before the first discovery nothing is known, so the pin is stored and the negotiation
-check refuses it. `OpenA2dpCtl codec` applies the same checks against that line before it
-sends the request, and refuses `codec aac` (or a forced AAC via the driver) on a sink that
-does not advertise AAC.
+through `SET_PREFERENCE` (`kAbiVersion` 9). Deleting the sink subkey returns it to auto.
+The driver reads it in `OnDeviceAdd`, before the endpoint exists. ABI 9 retires the format
+preference fields without changing struct sizes: they are ignored on input and zero on
+output. Rebuild the tools and AAC service with the driver; older ABI clients are refused.
+`status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows
+mix-format query. `codec aac` is refused on a sink that does not advertise AAC.
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|
@@ -77,9 +80,9 @@ does not advertise AAC.
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to the MTU ceiling |
-| AAC sample rate | `CodecPreferenceAacSampleRate` | - | 0, 44100, 48000 | stored, not honoured: the stream follows the endpoint rate |
-| Endpoint rate | `CodecPreferenceEndpointRate` | `--rate hz` | 44100, 48000 | both served rates |
-| Endpoint channels | `CodecPreferenceEndpointChannels` | `--channels n` | 1, 2 | mono and stereo |
+
+`CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
+`CodecPreferenceEndpointChannels` are retired and no longer read or written.
 
 The Media Foundation encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps
 are rejected). A2DP sends one access unit per media packet, so the bitrate is also capped
@@ -98,12 +101,6 @@ silent instead of retried. The MTU the channel reported is kept for the rest of 
 connection, so a codec switch - which rediscovers and negotiates again with no channel open
 - is already capped by it, and it is dropped when the connection ends.
 
-A stored endpoint rate or channel count that the sink no longer advertises (its
-capabilities changed, or the pin predates the first discovery) is not listed on the
-endpoint: the sink's own formats are, so the stream still negotiates, and the pin applies
-again as soon as the sink advertises it. The driver logs that fallback once, and
-`OpenA2dpCtl status` shows it on a `fallback` line under the sink's formats.
-
 PCM depth is 16-bit everywhere: the endpoint publishes 16-bit formats, SBC carries 16-bit
 samples by definition, and the Media Foundation AAC encoder rejects 24-bit, 32-bit and
 float input (`0xC00D36B4`), so a 24-bit endpoint would only add a truncation step.
@@ -116,7 +113,7 @@ maximum for the chosen mode.
 
 | Field | Supported | Chosen by |
 |---|---|---|
-| Sample rate | 44.1, 48 kHz | endpoint format (mandatory sink rates) |
+| Sample rate | 44.1, 48 kHz | endpoint format, must be advertised by the sink |
 | Channel mode | mono, dual, stereo, joint stereo | endpoint channel count, mono or joint stereo preferred; must be advertised by the sink |
 | Block length | 4, 8, 12, 16 | preference, else 16 first |
 | Subbands | 4, 8 | preference, else 8 first |
@@ -144,14 +141,9 @@ maximum for the chosen mode.
   unknown falls back to close-and-rediscover.
 - Format change in Windows: applies the next time a stream is opened; the endpoint rate is
   preferred for the new negotiation.
-- Endpoint rate or channel mode change: the pin's format list is rebuilt in place, so
-  Windows offers the new set without the device restarting. A stream configured for another
-  format is closed and negotiated again (RECONFIGURE cannot change the sampling frequency or
-  channel count); a stream that already runs at the new format is left alone. A pinned format
-  the sink does not advertise leaves no usable configuration: the driver refuses its own
-  selection and logs `the sink cannot serve the endpoint format`, so the stream fails instead
-  of running at a rate the endpoint cannot produce. A sink that only supports 44.1 kHz
-  therefore needs `--rate 44100`.
+  A stream configured for another PCM format is closed and negotiated again (RECONFIGURE
+  cannot change the sampling frequency or channel count). A stream already matching it is
+  left alone. Codec/parameter settings do not change the available PCM formats.
 - Configuration the endpoint format cannot serve, whichever side proposed it: refused at
   negotiation, not at media start - `NotSupportedSamplingFrequency` (0xC4),
   `NotSupportedChannelMode` (0xC6), `NotSupportedChannels` (0xD9) or `NotSupportedBitRate`

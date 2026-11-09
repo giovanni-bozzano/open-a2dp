@@ -138,10 +138,10 @@ TEST(Ioctl_PreferenceValidation)
 	preference.endpointChannels = 1;
 	CHECK(Ioctl::ValidPreference(preference));
 	preference.endpointRate = 96000;
-	CHECK(!Ioctl::ValidPreference(preference));
+	CHECK(Ioctl::ValidPreference(preference)); // retired format fields cannot restrict PCM
 	preference.endpointRate = 48000;
 	preference.endpointChannels = 3;
-	CHECK(!Ioctl::ValidPreference(preference));
+	CHECK(Ioctl::ValidPreference(preference));
 	preference.endpointChannels = 2;
 	CHECK(Ioctl::ValidPreference(preference));
 	preference.endpointRate = 0;

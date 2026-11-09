@@ -5,13 +5,19 @@ namespace OpenA2dpDriver::Audio
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,
 	_In_ ACXDATAFORMAT format, _In_ const GUID*, _In_ ACXOBJECTBAG)
 {
+	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	NTSTATUS status = AudioValidatePinFormat(ctx, format);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
 	ACX_STREAM_CALLBACKS streamCallbacks;
 	ACX_STREAM_CALLBACKS_INIT(&streamCallbacks);
 	streamCallbacks.EvtAcxStreamPrepareHardware = OnStreamPrepareHardware;
 	streamCallbacks.EvtAcxStreamReleaseHardware = OnStreamReleaseHardware;
 	streamCallbacks.EvtAcxStreamRun = OnStreamRun;
 	streamCallbacks.EvtAcxStreamPause = OnStreamPause;
-	NTSTATUS status = AcxStreamInitAssignAcxStreamCallbacks(streamInit, &streamCallbacks);
+	status = AcxStreamInitAssignAcxStreamCallbacks(streamInit, &streamCallbacks);
 	if (!NT_SUCCESS(status))
 	{
 		return status;
@@ -44,14 +50,13 @@ NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACX
 		return status;
 	}
 
-	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
 	GetStreamContext(stream)->Device = ctx;
-	AudioSetPinFormat(ctx, format);
 
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	ctx->AudioStream = stream;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	AudioSetPinFormat(ctx, format);
 	return STATUS_SUCCESS;
 }
 
