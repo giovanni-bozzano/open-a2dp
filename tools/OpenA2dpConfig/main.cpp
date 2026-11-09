@@ -130,6 +130,17 @@ struct SinkState
 	HWND formatHint = nullptr;
 };
 
+// What a sink is doing as far as the window can tell. The driver keeps a sink's control
+// device only while the link is up, so every listed sink is connected; a running stream is
+// what makes it playing.
+enum class DeviceState {
+	Connected,
+	Playing,
+};
+
+// Relabels one sink in the list; defined with the rest of the sink list code.
+void UpdateDeviceItemLabel(HWND hwnd, size_t device, DeviceState state);
+
 std::wstring Widen(const std::string& text)
 {
 	if (text.empty())
@@ -847,6 +858,9 @@ void OpenSelected(HWND hwnd)
 	LoadPreferenceIntoControls(hwnd);
 	SetMessage(hwnd, L"Loaded " + Widen(FormatAddress(device.reference)) + L".");
 	RefreshStatusView(hwnd);
+	UpdateDeviceItemLabel(hwnd, state->selected, state->status.mediaState == Ioctl::MediaState::Streaming
+														   ? DeviceState::Playing
+														   : DeviceState::Connected);
 }
 
 // Puts the report on the clipboard: the same text the box shows, which is the text the CLI
@@ -907,8 +921,70 @@ void RefreshStatus(HWND hwnd)
 		RefreshStatusView(hwnd);
 		return;
 	}
+	const bool wasPlaying = state->status.mediaState == Ioctl::MediaState::Streaming;
 	state->status = status;
+	const bool playing = status.mediaState == Ioctl::MediaState::Streaming;
+	if (wasPlaying != playing)
+	{
+		// The sink that starts or stops streaming is the one the list should show as playing.
+		UpdateDeviceItemLabel(hwnd, state->selected, playing ? DeviceState::Playing : DeviceState::Connected);
+	}
 	RefreshStatusView(hwnd);
+}
+
+DeviceState ReadDeviceState(const Device& device)
+{
+	std::string error;
+	const HANDLE control = OpenControl(device, error);
+	if (control == INVALID_HANDLE_VALUE)
+	{
+		return DeviceState::Connected;
+	}
+	Ioctl::Status status = {};
+	const bool read = ReadStatus(control, status, error);
+	CloseHandle(control);
+	return read && status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
+																  : DeviceState::Connected;
+}
+
+std::wstring DeviceLabel(const std::string& reference, DeviceState state)
+{
+	const wchar_t* const text = state == DeviceState::Playing ? L" (playing)" : L" (connected)";
+	return Widen(FormatAddress(reference)) + text;
+}
+
+// Relabels one sink in place, so the list shows the state of the one just opened or one whose
+// stream started, without rebuilding the whole list and losing the user's selection.
+void UpdateDeviceItemLabel(HWND hwnd, size_t device, DeviceState state)
+{
+	const SinkState* sink = StateOf(hwnd);
+	const HWND combo = GetDlgItem(hwnd, kSinkCombo);
+	if (sink == nullptr || combo == nullptr || device >= sink->devices.size())
+	{
+		return;
+	}
+	const LRESULT count = SendMessageW(combo, CB_GETCOUNT, 0, 0);
+	for (LRESULT index = 0; index < count; ++index)
+	{
+		if (SendMessageW(combo, CB_GETITEMDATA, static_cast<WPARAM>(index), 0) != static_cast<LRESULT>(device))
+		{
+			continue;
+		}
+		const LRESULT selected = SendMessageW(combo, CB_GETCURSEL, 0, 0);
+		const std::wstring label = DeviceLabel(sink->devices[device].reference, state);
+		SendMessageW(combo, CB_DELETESTRING, static_cast<WPARAM>(index), 0);
+		const LRESULT added = SendMessageW(combo, CB_INSERTSTRING, static_cast<WPARAM>(index),
+										 reinterpret_cast<LPARAM>(label.c_str()));
+		if (added != CB_ERR)
+		{
+			SendMessageW(combo, CB_SETITEMDATA, static_cast<WPARAM>(added), static_cast<LPARAM>(device));
+		}
+		if (selected != CB_ERR)
+		{
+			SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(selected), 0);
+		}
+		return;
+	}
 }
 
 // Points the sink list at a device index, which the items carry as their item data.
@@ -947,21 +1023,33 @@ void ReloadDevices(HWND hwnd)
 	const HWND combo = GetDlgItem(hwnd, kSinkCombo);
 	SendMessageW(combo, CB_RESETCONTENT, 0, 0);
 	state->devices = std::move(devices);
-	state->selected = 0;
+	// The sink the user already had stays selected; with none, the one that is playing is
+	// the one the window opens, and only then the first of the list.
+	size_t selected = state->devices.size();
+	size_t playing = state->devices.size();
 	for (size_t i = 0; i < state->devices.size(); ++i)
 	{
-		const std::wstring label = Widen(FormatAddress(state->devices[i].reference));
+		const DeviceState deviceState = ReadDeviceState(state->devices[i]);
+		const std::wstring label = DeviceLabel(state->devices[i].reference, deviceState);
 		const LRESULT index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
-		if (index == CB_ERR)
+		if (index != CB_ERR)
 		{
-			continue;
+			SendMessageW(combo, CB_SETITEMDATA, static_cast<WPARAM>(index), static_cast<LPARAM>(i));
 		}
-		SendMessageW(combo, CB_SETITEMDATA, static_cast<WPARAM>(index), static_cast<LPARAM>(i));
 		if (!previous.empty() && state->devices[i].reference == previous)
 		{
-			state->selected = i;
+			selected = i;
+		}
+		if (playing == state->devices.size() && deviceState == DeviceState::Playing)
+		{
+			playing = i;
 		}
 	}
+	if (selected == state->devices.size())
+	{
+		selected = playing != state->devices.size() || state->devices.empty() ? playing : 0;
+	}
+	state->selected = selected;
 	SelectDeviceItem(hwnd, state->selected);
 	// Another sink arriving or leaving does not change the open one: keep its control device
 	// and the settings the user may have changed but not applied yet.

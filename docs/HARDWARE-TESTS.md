@@ -301,9 +301,11 @@ it), reattach.
 
 **T24 Config UI (S/A)**
 1. Start `OpenA2dpConfig` elevated: the sink list shows the addresses `OpenA2dpCtl list`
-   prints, the status list shows the same fields as `OpenA2dpCtl status` under its
-   Session, Sink, Endpoint, Service and Driver sections, and the controls show the stored
-   codec preference and endpoint format.
+   prints, each suffixed with `(connected)` or `(playing)`, and with no sink opened yet the
+   one that is playing is the one selected. The status list shows the same fields as
+   `OpenA2dpCtl status` under its Session, Sink, Endpoint, Service and Driver sections, and
+   the controls show the stored codec preference and endpoint format. A sink that starts or
+   stops streaming is relabelled within a second.
 2. Play, then choose `SBC only` and press Apply: the window reports `Stored. The active
    stream renegotiates to apply it.` and the status list follows the renegotiation within a
    few seconds, with no sink reconnect.
