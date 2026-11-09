@@ -106,6 +106,13 @@ constexpr uint32_t SampleRateValue(uint8_t rateBit) noexcept
 		: 48000u;
 }
 
+// Index into the sampling-frequency dependent tables (the loudness offsets): 0 = 16 kHz,
+// 1 = 32 kHz, 2 = 44.1 kHz, 3 = 48 kHz, -1 for a rate the codec does not have.
+constexpr int SampleRateIndex(uint32_t rate) noexcept
+{
+	return rate == 16000 ? 0 : rate == 32000 ? 1 : rate == 44100 ? 2 : rate == 48000 ? 3 : -1;
+}
+
 constexpr uint8_t BlocksValue(uint8_t blocksBit) noexcept
 {
 	return blocksBit == kBlocks4 ? 4 : blocksBit == kBlocks8 ? 8 : blocksBit == kBlocks12 ? 12 : 16;
@@ -127,6 +134,12 @@ constexpr uint8_t ModeValue(uint8_t modeBit) noexcept
 constexpr uint8_t AllocationValue(uint8_t allocationBit) noexcept
 {
 	return allocationBit == kAllocationSnr ? 1 : 0;
+}
+
+// Channels a channel mode (a ModeValue) carries.
+constexpr uint8_t ChannelCount(uint8_t mode) noexcept
+{
+	return mode == ModeValue(kModeMono) ? 1 : 2;
 }
 
 // The highest bitpool the spec allows for a channel mode (a ModeValue) and subband count.

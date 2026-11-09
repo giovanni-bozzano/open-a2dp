@@ -49,7 +49,17 @@ struct FrameParams {
 	Allocation allocation = Allocation::Loudness;
 	uint8_t bitpool = 53;
 
-	uint8_t Channels() const noexcept { return channelMode == ChannelMode::Mono ? 1 : 2; }
+	uint8_t Channels() const noexcept
+	{
+		return static_cast<uint8_t>(SbcConfig::ChannelCount(static_cast<uint8_t>(channelMode)));
+	}
+
+	// The same frame in the form the shared allocation solver takes.
+	SbcConfig::Configuration ToConfiguration() const noexcept
+	{
+		return {sampleRate, static_cast<uint8_t>(channelMode), blocks, subbands,
+				static_cast<uint8_t>(allocation), bitpool};
+	}
 };
 
 // Index into the sampling-frequency dependent tables (0=16k, 1=32k, 2=44.1k, 3=48k), or -1.

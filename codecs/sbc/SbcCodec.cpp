@@ -1,10 +1,6 @@
 #include <OpenA2dp/SbcCodec.h>
+#include <OpenA2dp/SbcAllocation.h>
 #include <OpenA2dp/SbcConfig.h>
-
-#include "SbcTables.h"
-
-#include <algorithm>
-#include <climits>
 
 namespace OpenA2dp {
 
@@ -12,13 +8,7 @@ namespace Sbc {
 
 int SampleRateIndex(uint32_t sampleRate) noexcept
 {
-	switch (sampleRate) {
-	case 16000: return 0;
-	case 32000: return 1;
-	case 44100: return 2;
-	case 48000: return 3;
-	default: return -1;
-	}
+	return SbcConfig::SampleRateIndex(sampleRate);
 }
 
 size_t FrameLength(const FrameParams& p) noexcept
@@ -58,128 +48,12 @@ uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept
 		}
 	}
 	return crc;
-}
-
-namespace {
-
-void ComputeBitneed(const FrameParams& p, const uint8_t scaleFactors[2][8], int ch, int bitneed[2][8]) noexcept
-{
-	const int fsIndex = SampleRateIndex(p.sampleRate);
-	for (int sb = 0; sb < p.subbands; ++sb) {
-		if (p.allocation == Allocation::Snr) {
-			bitneed[ch][sb] = scaleFactors[ch][sb];
-		} else if (scaleFactors[ch][sb] == 0) {
-			bitneed[ch][sb] = -5;
-		} else {
-			const int offset = p.subbands == 4 ? Tables::kOffset4[fsIndex][sb] : Tables::kOffset8[fsIndex][sb];
-			const int loudness = scaleFactors[ch][sb] - offset;
-			bitneed[ch][sb] = loudness > 0 ? loudness / 2 : loudness;
-		}
-	}
-}
-
-int CountSlice(int bitneed, int bitslice) noexcept
-{
-	if (bitneed > bitslice + 1 && bitneed < bitslice + 16) {
-		return 1;
-	}
-	if (bitneed == bitslice + 1) {
-		return 2;
-	}
-	return 0;
-}
-
-// Allocates `bitpool` bits over the listed channels (1 for mono/dual per channel, 2 for stereo/joint).
-void Allocate(const FrameParams& p, const int* channels, int channelCount, int bitneed[2][8], int bits[2][8]) noexcept
-{
-	const int nsb = p.subbands;
-	const int bitpool = p.bitpool;
-
-	int maxBitneed = INT_MIN;
-	for (int c = 0; c < channelCount; ++c) {
-		for (int sb = 0; sb < nsb; ++sb) {
-			maxBitneed = std::max(maxBitneed, bitneed[channels[c]][sb]);
-		}
-	}
-
-	int bitcount = 0;
-	int slicecount = 0;
-	int bitslice = maxBitneed + 1;
-	do {
-		--bitslice;
-		bitcount += slicecount;
-		slicecount = 0;
-		for (int c = 0; c < channelCount; ++c) {
-			for (int sb = 0; sb < nsb; ++sb) {
-				slicecount += CountSlice(bitneed[channels[c]][sb], bitslice);
-			}
-		}
-	} while (bitcount + slicecount < bitpool);
-
-	if (bitcount + slicecount == bitpool) {
-		bitcount += slicecount;
-		--bitslice;
-	}
-
-	for (int c = 0; c < channelCount; ++c) {
-		const int ch = channels[c];
-		for (int sb = 0; sb < nsb; ++sb) {
-			bits[ch][sb] = bitneed[ch][sb] < bitslice + 2 ? 0 : std::min(bitneed[ch][sb] - bitslice, 16);
-		}
-	}
-
-	// Distribute remaining bits, interleaving channels per subband.
-	int idx = 0;
-	const int total = nsb * channelCount;
-	while (bitcount < bitpool && idx < total) {
-		const int ch = channels[idx % channelCount];
-		const int sb = idx / channelCount;
-		if (bits[ch][sb] >= 2 && bits[ch][sb] < 16) {
-			++bits[ch][sb];
-			++bitcount;
-		} else if (bitneed[ch][sb] == bitslice + 1 && bitpool > bitcount + 1) {
-			bits[ch][sb] = 2;
-			bitcount += 2;
-		}
-		++idx;
-	}
-
-	idx = 0;
-	while (bitcount < bitpool && idx < total) {
-		const int ch = channels[idx % channelCount];
-		const int sb = idx / channelCount;
-		if (bits[ch][sb] < 16) {
-			++bits[ch][sb];
-			++bitcount;
-		}
-		++idx;
-	}
-}
-
-} // namespace
-
+}// The allocation solver is shared with the kernel encoder (SbcAllocation.h).
 void CalculateBits(const FrameParams& p, const uint8_t scaleFactors[2][8], int bits[2][8]) noexcept
 {
-	int bitneed[2][8] = {};
-	for (int ch = 0; ch < 2; ++ch) {
-		for (int sb = 0; sb < 8; ++sb) {
-			bits[ch][sb] = 0;
-		}
-	}
-
-	if (p.channelMode == ChannelMode::Mono || p.channelMode == ChannelMode::DualChannel) {
-		for (int ch = 0; ch < p.Channels(); ++ch) {
-			ComputeBitneed(p, scaleFactors, ch, bitneed);
-			const int channels[1] = {ch};
-			Allocate(p, channels, 1, bitneed, bits);
-		}
-	} else {
-		ComputeBitneed(p, scaleFactors, 0, bitneed);
-		ComputeBitneed(p, scaleFactors, 1, bitneed);
-		const int channels[2] = {0, 1};
-		Allocate(p, channels, 2, bitneed, bits);
-	}
+	SbcAllocation::CalculateBits(p.ToConfiguration(), scaleFactors, bits);
 }
+
 
 // The shared decode lives in SbcConfig; this only maps it to the codec's own parameter type.
 static_assert(static_cast<uint8_t>(ChannelMode::Mono) == 0 &&

@@ -4,6 +4,7 @@
 // Kernel-safe: no STL, no exceptions, no allocation, no floating point.
 
 #include <OpenA2dp/BitWriter.h>
+#include <OpenA2dp/SbcAllocation.h>
 #include <OpenA2dp/SbcConfig.h>
 #include <OpenA2dp/SbcFixedTables.h>
 #include <OpenA2dp/Types.h>
@@ -25,14 +26,16 @@ struct Params {
 	Allocation allocation = Allocation::Loudness;
 	uint8_t bitpool = 53;
 
-	uint8_t Channels() const noexcept { return channelMode == ChannelMode::Mono ? 1 : 2; }
+	uint8_t Channels() const noexcept { return static_cast<uint8_t>(SbcConfig::ChannelCount(static_cast<uint8_t>(channelMode))); }
 	uint32_t SamplesPerFrame() const noexcept { return static_cast<uint32_t>(blocks) * subbands; }
-};
 
-inline int SampleRateIndex(uint32_t rate) noexcept
-{
-	return rate == 16000 ? 0 : rate == 32000 ? 1 : rate == 44100 ? 2 : rate == 48000 ? 3 : -1;
-}
+	// The same frame in the form the shared allocation solver and IE writer take.
+	SbcConfig::Configuration ToConfiguration() const noexcept
+	{
+		return {sampleRate, static_cast<uint8_t>(channelMode), blocks, subbands,
+				static_cast<uint8_t>(allocation), bitpool};
+	}
+};
 
 // Decodes a configured SBC IE with the shared parser in SbcConfig (one bit per field, the
 // max bitpool used) into the frame parameters the encoder takes.
@@ -96,129 +99,12 @@ inline uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept
 		}
 	}
 	return crc;
-}
-
-namespace Detail {
-
-constexpr int kOffset4[4][4] = {{-1, 0, 0, 0}, {-2, 0, 0, 1}, {-2, 0, 0, 1}, {-2, 0, 0, 1}};
-constexpr int kOffset8[4][8] = {
-	{-2, 0, 0, 0, 0, 0, 0, 1}, {-3, 0, 0, 0, 0, 0, 1, 2}, {-4, 0, 0, 0, 0, 0, 1, 2}, {-4, 0, 0, 0, 0, 0, 1, 2}};
-
-inline void ComputeBitneed(const Params& p, const uint8_t sf[2][8], int ch, int bitneed[2][8]) noexcept
-{
-	const int fsIndex = SampleRateIndex(p.sampleRate);
-	for (int sb = 0; sb < p.subbands; ++sb) {
-		if (p.allocation == Allocation::Snr) {
-			bitneed[ch][sb] = sf[ch][sb];
-		} else if (sf[ch][sb] == 0) {
-			bitneed[ch][sb] = -5;
-		} else {
-			const int offset = p.subbands == 4 ? kOffset4[fsIndex][sb] : kOffset8[fsIndex][sb];
-			const int loudness = sf[ch][sb] - offset;
-			bitneed[ch][sb] = loudness > 0 ? loudness / 2 : loudness;
-		}
-	}
-}
-
-inline int CountSlice(int bitneed, int bitslice) noexcept
-{
-	if (bitneed > bitslice + 1 && bitneed < bitslice + 16) {
-		return 1;
-	}
-	return bitneed == bitslice + 1 ? 2 : 0;
-}
-
-inline void Allocate(const Params& p, const int* channels, int channelCount, int bitneed[2][8], int bits[2][8]) noexcept
-{
-	const int nsb = p.subbands;
-	const int bitpool = p.bitpool;
-
-	int maxBitneed = -1000;
-	for (int c = 0; c < channelCount; ++c) {
-		for (int sb = 0; sb < nsb; ++sb) {
-			if (bitneed[channels[c]][sb] > maxBitneed) {
-				maxBitneed = bitneed[channels[c]][sb];
-			}
-		}
-	}
-
-	int bitcount = 0;
-	int slicecount = 0;
-	int bitslice = maxBitneed + 1;
-	do {
-		--bitslice;
-		bitcount += slicecount;
-		slicecount = 0;
-		for (int c = 0; c < channelCount; ++c) {
-			for (int sb = 0; sb < nsb; ++sb) {
-				slicecount += CountSlice(bitneed[channels[c]][sb], bitslice);
-			}
-		}
-	} while (bitcount + slicecount < bitpool);
-
-	if (bitcount + slicecount == bitpool) {
-		bitcount += slicecount;
-		--bitslice;
-	}
-
-	for (int c = 0; c < channelCount; ++c) {
-		const int ch = channels[c];
-		for (int sb = 0; sb < nsb; ++sb) {
-			const int b = bitneed[ch][sb] - bitslice;
-			bits[ch][sb] = bitneed[ch][sb] < bitslice + 2 ? 0 : (b < 16 ? b : 16);
-		}
-	}
-
-	int idx = 0;
-	const int total = nsb * channelCount;
-	while (bitcount < bitpool && idx < total) {
-		const int ch = channels[idx % channelCount];
-		const int sb = idx / channelCount;
-		if (bits[ch][sb] >= 2 && bits[ch][sb] < 16) {
-			++bits[ch][sb];
-			++bitcount;
-		} else if (bitneed[ch][sb] == bitslice + 1 && bitpool > bitcount + 1) {
-			bits[ch][sb] = 2;
-			bitcount += 2;
-		}
-		++idx;
-	}
-
-	idx = 0;
-	while (bitcount < bitpool && idx < total) {
-		const int ch = channels[idx % channelCount];
-		const int sb = idx / channelCount;
-		if (bits[ch][sb] < 16) {
-			++bits[ch][sb];
-			++bitcount;
-		}
-		++idx;
-	}
-}
-
-} // namespace Detail
-
+}// The allocation solver is shared with the codec library (SbcAllocation.h).
 inline void CalculateBits(const Params& p, const uint8_t sf[2][8], int bits[2][8]) noexcept
 {
-	int bitneed[2][8] = {};
-	for (int ch = 0; ch < 2; ++ch) {
-		for (int sb = 0; sb < 8; ++sb) {
-			bits[ch][sb] = 0;
-		}
-	}
-	if (p.channelMode == ChannelMode::Mono || p.channelMode == ChannelMode::DualChannel) {
-		for (int ch = 0; ch < p.Channels(); ++ch) {
-			Detail::ComputeBitneed(p, sf, ch, bitneed);
-			const int channels[1] = {ch};
-			Detail::Allocate(p, channels, 1, bitneed, bits);
-		}
-	} else {
-		Detail::ComputeBitneed(p, sf, 0, bitneed);
-		Detail::ComputeBitneed(p, sf, 1, bitneed);
-		const int channels[2] = {0, 1};
-		Detail::Allocate(p, channels, 2, bitneed, bits);
-	}
+	SbcAllocation::CalculateBits(p.ToConfiguration(), sf, bits);
 }
+
 
 // Subband samples are kept in Q12 relative to 16-bit PCM units (|x| < 2^16 fits in int32).
 constexpr int kFracBits = 12;
@@ -255,7 +141,7 @@ public:
 	{
 		const Params& p = params_;
 		const size_t frameLength = FrameLength(p);
-		if (pcm == nullptr || out == nullptr || capacity < frameLength || SampleRateIndex(p.sampleRate) < 0 ||
+		if (pcm == nullptr || out == nullptr || capacity < frameLength || SbcConfig::SampleRateIndex(p.sampleRate) < 0 ||
 			(p.subbands != 4 && p.subbands != 8) || p.blocks == 0 || p.blocks > 16) {
 			return 0;
 		}
@@ -317,7 +203,7 @@ public:
 
 		BitWriter w(out, capacity);
 		w.Write(kSyncWord, 8);
-		w.Write(static_cast<uint32_t>(SampleRateIndex(p.sampleRate)), 2);
+		w.Write(static_cast<uint32_t>(SbcConfig::SampleRateIndex(p.sampleRate)), 2);
 		w.Write(static_cast<uint32_t>(nblk / 4 - 1), 2);
 		w.Write(static_cast<uint32_t>(p.channelMode), 2);
 		w.Write(static_cast<uint32_t>(p.allocation), 1);

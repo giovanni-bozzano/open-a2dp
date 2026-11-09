@@ -1,6 +1,8 @@
 #pragma once
 
-// SBC tables from the A2DP specification, Appendix B (Tables 12.23 / 12.24, 12.6.3 offsets).
+// SBC analysis prototype filters from the A2DP specification, Appendix B (Tables 12.23 /
+// 12.24). The loudness offsets these prototypes pair with are integers and live in
+// OpenA2dp/SbcAllocation.h, which the kernel encoder shares.
 
 namespace OpenA2dp::Sbc::Tables {
 
@@ -40,21 +42,6 @@ inline constexpr double kProto8[80] = {
 	9.02154502E-04,  1.61656283E-03,  1.99454554E-03,  2.10371989E-03,
 	2.01182542E-03,  1.78371725E-03,  1.47640169E-03,  1.13992507E-03,
 	8.23919506E-04,  5.54620202E-04,  3.43256425E-04,  1.56575398E-04,
-};
-
-// Loudness offsets [sampleRateIndex][subband].
-inline constexpr int kOffset4[4][4] = {
-	{-1, 0, 0, 0},
-	{-2, 0, 0, 1},
-	{-2, 0, 0, 1},
-	{-2, 0, 0, 1},
-};
-
-inline constexpr int kOffset8[4][8] = {
-	{-2, 0, 0, 0, 0, 0, 0, 1},
-	{-3, 0, 0, 0, 0, 0, 1, 2},
-	{-4, 0, 0, 0, 0, 0, 1, 2},
-	{-4, 0, 0, 0, 0, 0, 1, 2},
 };
 
 } // namespace OpenA2dp::Sbc::Tables

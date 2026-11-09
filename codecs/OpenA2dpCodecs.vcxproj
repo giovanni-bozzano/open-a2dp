@@ -19,6 +19,8 @@
 	<ClInclude Include="..\common\include\OpenA2dp\RingBuffer.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\BitWriter.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\FrameRecord.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\SbcAllocation.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\SbcConfig.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixed.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixedTables.h" />
   </ItemGroup>
