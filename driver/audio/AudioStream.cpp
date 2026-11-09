@@ -3,9 +3,14 @@
 namespace OpenA2dpDriver::Audio
 {
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,
-	_In_ ACXDATAFORMAT format, _In_ const GUID*, _In_ ACXOBJECTBAG)
+	_In_ ACXDATAFORMAT format, _In_ const GUID* processingMode, _In_ ACXOBJECTBAG)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
+	const char* mode = processingMode == nullptr ? "unspecified"
+		: IsEqualGUID(*processingMode, AUDIO_SIGNALPROCESSINGMODE_RAW) ? "raw"
+		: IsEqualGUID(*processingMode, AUDIO_SIGNALPROCESSINGMODE_DEFAULT) ? "default"
+		: "other";
+	OA2DP_INFO(ctx, "Audio", "creating stream, processing mode %s", mode);
 	NTSTATUS status = AudioValidatePinFormat(ctx, format);
 	if (!NT_SUCCESS(status))
 	{

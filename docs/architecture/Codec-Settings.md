@@ -36,8 +36,11 @@ An active stream is never relabelled with the list default.
 
 `KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is deliberately not supported on the streaming pin:
 [Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2).
-ACX otherwise supplies the list default, explaining a fixed 44100 stereo hardware stream
-despite changing the mix format. The normal format list and initial-default queries remain
+ACX can otherwise supply the list default, but disabling this property has not yet resolved
+the fixed 44100 stereo hardware stream reported during testing. The refusal applies to the
+whole circuit, regardless of the request's target classification. Logs record these queries,
+legacy `PROPOSEDATAFORMAT` requests (still ACX-managed), and stream processing mode to
+establish the remaining selection path. The normal format list and initial-default queries remain
 ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
