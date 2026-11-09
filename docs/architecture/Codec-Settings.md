@@ -31,36 +31,39 @@ instead of needing it restarted. The driver keeps one `ACXDATAFORMAT` object per
 by both lists, so a change is an add/remove of objects it already owns and both modes always
 list the same formats with the same default. Unchanged lists cause no notification or
 repeated log.
-The advertised initial default is the first available format in this order: 44100 stereo,
-44100 mono, 48000 stereo, 48000 mono. A still-listed default survives discovery. Windows
-persists its own mix format; that value and this advertised default are not the same state.
-An active stream is never relabelled with the list default.
+The first available format in this order is only the starting default: 44100 stereo,
+44100 mono, 48000 stereo, 48000 mono. A still-listed default survives discovery, and the
+default follows the format of the stream the engine opened last. Hardware showed the engine
+building the next stream from this default rather than from the format Sound settings
+persisted, so a selection only sticks once the default moves with it. An active stream is
+never relabelled with the list default.
 
-The Sound-settings default format is the device format of the DEFAULT processing mode. ACX
-pins have only a built-in RAW list, so a RAW-only pin leaves that selection with no DEFAULT
-mode to apply it to. Hardware logs still showed a 44.1 kHz stereo RAW stream, but Windows
-asked for that format explicitly, so the list default is not where it came from and this is
-not proven to be the source. The streaming pin therefore also assigns a DEFAULT mode list,
-as Microsoft's SDCA ACX sample does; whether shared-mode playback then follows the selection
-needs a new hardware capture.
+The Sound-settings selection reaches the driver as an explicit stream open: with 48 kHz mono
+and with 48 kHz stereo applied, the first stream matched the selection and the next engine
+stream opened at 44.1 kHz stereo again, which is the list default. Shared-mode playback
+therefore follows the pin default, not the persisted selection. The streaming pin also
+assigns a DEFAULT mode list, as Microsoft's SDCA ACX sample does; the engine opened both
+observed streams in RAW mode.
 
-`KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is deliberately not supported on the streaming pin:
+`KSPROPERTY_PIN_PROPOSEDATAFORMAT2` stays ACX-managed:
 [Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2),
-and ACX would otherwise answer it with the list default for either mode. The refusal applies
-to the whole circuit, regardless of the request's target classification. Legacy
-`PROPOSEDATAFORMAT` requests stay ACX-managed. The queries are not logged per request; the
-stream processing mode is logged once per stream and should be `default` for shared-mode
-playback. The normal format list and initial-default queries stay ACX-managed.
-`EvtAcxPinSetDataFormat` is not a Sound-settings callback:
+and ACX answers it from the mode's list default, so that default has to be the selection.
+Refusing the query left Windows on the pin default instead. Legacy `PROPOSEDATAFORMAT`
+requests stay ACX-managed. The queries are not logged per request; the stream processing
+mode is logged once per stream and should be `default` for shared-mode playback. The normal
+format list and initial-default queries remain ACX-managed. `EvtAcxPinSetDataFormat` is not
+a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
 and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not
 reported as a fabricated 44100 stereo fallback.
 
 Logs distinguish `endpoint formats` (availability, 16-bit and provisional/discovered source),
-`advertised default` (initial suggestion), the stream processing mode, `stream format`
-(Windows' raw request), and `endpoint format ... (actual stream)` (encoder input). The
-media/AVDTP logs report the negotiated codec format, not the Windows mix format. Previously
+`advertised default` (initial suggestion when the lists change), `endpoint default follows
+the stream format` (the default moved to the format the engine opened), the stream
+processing mode, `stream format` (Windows' raw request), and `endpoint format ... (actual
+stream)` (encoder input). The media/AVDTP logs report the negotiated codec format, not the
+Windows mix format. Previously
 the same availability line was printed at initialization and discovery even if nothing
 changed, with an extra explicit notification despite ACX already notifying; neither is
 needed.

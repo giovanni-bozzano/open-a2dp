@@ -69,30 +69,67 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 		SignalingOnPreferenceChanged(ctx);
 	}
 }
-} // namespace
-
-void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT, _In_ WDFREQUEST request)
+// The engine builds the next stream from the pin's default format and ACX answers the
+// preferred-mode-format query from it. A Sound-settings selection only reaches the driver
+// as an explicit stream open, so the format the engine actually opened becomes the default
+// of both mode lists; the first listed format is only the default until a stream has run.
+void AdoptStreamFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
-	ACX_REQUEST_PARAMETERS parameters;
-	ACX_REQUEST_PARAMETERS_INIT(&parameters);
-	AcxRequestGetParameters(request, &parameters);
-	const auto& property = parameters.Parameters.Property;
-	if (parameters.Type == AcxRequestTypeProperty &&
-		IsEqualGUID(property.Set, KSPROPSETID_Pin) && property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT2)
+	const ACXDATAFORMATLIST list =
+		ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
+	const ACXDATAFORMATLIST defaultList = ctx->DefaultModeFormats;
+	const auto* wave = format != nullptr
+		? static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format)) : nullptr;
+	if (wave == nullptr || list == nullptr || defaultList == nullptr || ctx->FormatLock == nullptr)
 	{
-		// This circuit has no mode-specific hardware format, including on its bridge. Do not
-		// let the target classification bypass this policy: a preferred mode format here
-		// overrides the format picked in Sound settings. Legacy PROPOSEDATAFORMAT requests
-		// stay ACX-managed; neither query is logged per request.
-		WdfRequestComplete(request, STATUS_NOT_SUPPORTED);
 		return;
 	}
-	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
-	if (!NT_SUCCESS(status))
+	ULONG index = 0;
+	while (index < AudioRenderFormatCount &&
+		(wave->WaveFormatEx.nSamplesPerSec != AudioRenderRates[index / AudioRenderChannelCount] ||
+			wave->WaveFormatEx.nChannels != AudioRenderChannels[index % AudioRenderChannelCount]))
 	{
-		WdfRequestComplete(request, status);
+		++index;
+	}
+	if (index == AudioRenderFormatCount)
+	{
+		return;
+	}
+
+	WdfWaitLockAcquire(ctx->FormatLock, nullptr);
+	NTSTATUS status = STATUS_SUCCESS;
+	bool adopted = false;
+	if ((ctx->FormatsListed & (1u << index)) == 0)
+	{
+		status = STATUS_NOT_FOUND;
+	}
+	else
+	{
+		ACXDATAFORMAT current = nullptr;
+		if (!NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &current)) || current == nullptr ||
+			!AcxDataFormatIsEqual(current, ctx->FormatObjects[index]))
+		{
+			status = AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[index]);
+			if (NT_SUCCESS(status))
+			{
+				status = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[index]);
+			}
+			adopted = NT_SUCCESS(status);
+		}
+	}
+	WdfWaitLockRelease(ctx->FormatLock);
+	if (adopted)
+	{
+		OA2DP_INFO(ctx, "Audio", "endpoint default follows the stream format: %u Hz %u ch",
+			AudioRenderRates[index / AudioRenderChannelCount],
+			static_cast<unsigned>(AudioRenderChannels[index % AudioRenderChannelCount]));
+	}
+	else if (!NT_SUCCESS(status))
+	{
+		OA2DP_WARN(ctx, "Audio", "adopting the stream format as the endpoint default failed 0x%08X", status);
 	}
 }
+} // namespace
 
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
@@ -161,6 +198,7 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
 	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch (actual stream, 16-bit PCM)",
 		wave->WaveFormatEx.nSamplesPerSec, static_cast<unsigned>(wave->WaveFormatEx.nChannels));
+	AdoptStreamFormat(ctx, format);
 	RecordEndpointFormat(ctx, wave->WaveFormatEx.nSamplesPerSec, wave->WaveFormatEx.nChannels);
 }
 
