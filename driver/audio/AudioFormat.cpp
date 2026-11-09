@@ -143,12 +143,15 @@ void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WD
 	if (parameters.Type == AcxRequestTypeProperty && IsEqualGUID(property.Set, KSPROPSETID_Pin) &&
 		property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT && property.Verb == AcxPropertyVerbSet &&
 		property.ItemType == AcxItemTypePin && property.ItemId == StreamingPinId &&
-		property.Value != nullptr && property.ValueCb >= sizeof(KSDATAFORMAT) &&
+		property.Value != nullptr && property.ValueCb >= sizeof(KSDATAFORMAT_WAVEFORMATEX) &&
+		static_cast<const KSDATAFORMAT*>(property.Value)->FormatSize >= sizeof(KSDATAFORMAT_WAVEFORMATEX) &&
 		IsEqualGUID(static_cast<const KSDATAFORMAT*>(property.Value)->Specifier, KSDATAFORMAT_SPECIFIER_WAVEFORMATEX))
 	{
 		// Windows tests the Sound-settings format with this SET before it opens the stream,
 		// and opens another format when it fails. Answer it from the same check stream
-		// creation uses, so a format the endpoint lists is never refused here.
+		// creation uses, so a format the endpoint lists is never refused here. Bare
+		// KSDATAFORMAT probes (no WAVEFORMATEX body) stay with ACX: refusing them removes
+		// the endpoint.
 		const NTSTATUS status = CheckPcmFormat(ctx, static_cast<const KSDATAFORMAT*>(property.Value),
 			property.ValueCb, "proposed");
 		WdfRequestComplete(request, status);
