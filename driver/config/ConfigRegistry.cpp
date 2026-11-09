@@ -20,6 +20,8 @@ const wchar_t kSbcBitpoolValueName[] = L"CodecPreferenceSbcBitpool";
 const wchar_t kSbcBlocksValueName[] = L"CodecPreferenceSbcBlocks";
 const wchar_t kSbcSubbandsValueName[] = L"CodecPreferenceSbcSubbands";
 const wchar_t kSbcAllocationValueName[] = L"CodecPreferenceSbcAllocation";
+const wchar_t kEndpointRateValueName[] = L"EndpointSampleRate";
+const wchar_t kEndpointChannelsValueName[] = L"EndpointChannels";
 
 const char* PreferenceName(const Ioctl::Preference& preference)
 {
@@ -100,6 +102,19 @@ bool ReadPreference(WDFKEY key, Ioctl::Preference& preference)
 	found |= ReadDword(key, kSbcSubbandsValueName, preference.sbcSubbands);
 	found |= ReadDword(key, kSbcAllocationValueName, preference.sbcAllocation);
 	return found;
+}
+
+bool KnownEndpointFormat(uint32_t sampleRate, uint32_t channels)
+{
+	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	{
+		if (sampleRate == AudioRenderRates[i / AudioRenderChannelCount] &&
+			channels == AudioRenderChannels[i % AudioRenderChannelCount])
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool FormatSinkKeyName(DEVICE_CONTEXT* ctx, wchar_t (&name)[Ioctl::kControlAddressChars + 1])
@@ -202,4 +217,77 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 		"allocation 0x%02X, AAC bitrate %u)",
 		PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
 		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate);
+}
+
+void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx)
+{
+	WDFKEY parameters = nullptr;
+	WDFKEY devices = nullptr;
+	WDFKEY sink = nullptr;
+	wchar_t sinkName[Ioctl::kControlAddressChars + 1] = {};
+	if (OpenParametersKey(KEY_READ, &parameters))
+	{
+		if (OpenSubkey(parameters, kDevicesKeyName, KEY_READ, &devices))
+		{
+			if (FormatSinkKeyName(ctx, sinkName) && OpenSubkey(devices, sinkName, KEY_READ, &sink))
+			{
+				uint32_t sampleRate = 0;
+				uint32_t channels = 0;
+				if (ReadDword(sink, kEndpointRateValueName, sampleRate) &&
+					ReadDword(sink, kEndpointChannelsValueName, channels))
+				{
+					if (KnownEndpointFormat(sampleRate, channels))
+					{
+						ctx->StoredSampleRate = sampleRate;
+						ctx->StoredChannels = static_cast<USHORT>(channels);
+						OA2DP_INFO(ctx, "Config",
+							"endpoint format %u Hz %u ch restored from the registry", sampleRate, channels);
+					}
+					else
+					{
+						OA2DP_WARN(ctx, "Config", "ignoring the stored endpoint format %u Hz %u ch",
+							sampleRate, channels);
+					}
+				}
+				WdfRegistryClose(sink);
+			}
+			WdfRegistryClose(devices);
+		}
+		WdfRegistryClose(parameters);
+	}
+}
+
+void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
+{
+	if (sampleRate == 0 || (ctx->StoredSampleRate == sampleRate && ctx->StoredChannels == channels) ||
+		KeGetCurrentIrql() != PASSIVE_LEVEL)
+	{
+		// The registry needs PASSIVE_LEVEL: a proposal that arrives higher is simply not kept.
+		return;
+	}
+
+	WDFKEY parameters = nullptr;
+	if (!OpenParametersKey(KEY_READ | KEY_WRITE | KEY_CREATE_SUB_KEY, &parameters))
+	{
+		OA2DP_WARN(ctx, "Config", "cannot open the Parameters key; the endpoint format is not stored");
+		return;
+	}
+	WDFKEY devices = nullptr;
+	if (CreateSubkey(ctx, parameters, kDevicesKeyName, &devices))
+	{
+		wchar_t sinkName[Ioctl::kControlAddressChars + 1] = {};
+		WDFKEY sink = nullptr;
+		if (FormatSinkKeyName(ctx, sinkName) && CreateSubkey(ctx, devices, sinkName, &sink))
+		{
+			WriteDword(ctx, sink, kEndpointRateValueName, sampleRate);
+			WriteDword(ctx, sink, kEndpointChannelsValueName, channels);
+			WdfRegistryClose(sink);
+			ctx->StoredSampleRate = sampleRate;
+			ctx->StoredChannels = channels;
+			OA2DP_INFO(ctx, "Config", "endpoint format %u Hz %u ch stored for this sink", sampleRate,
+				channels);
+		}
+		WdfRegistryClose(devices);
+	}
+	WdfRegistryClose(parameters);
 }

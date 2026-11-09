@@ -193,6 +193,7 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	// query leaves only the parameters default.
 	(void)L2capRetrieveRemoteAddress(ctx);
 	ConfigLoadPreference(ctx);
+	ConfigLoadEndpointFormat(ctx);
 
 	status = AudioInitialize(ctx);
 	if (!NT_SUCCESS(status))

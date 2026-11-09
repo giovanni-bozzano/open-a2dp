@@ -331,6 +331,10 @@ struct DEVICE_CONTEXT
 	ULONG PinSampleRate;
 	USHORT PinChannels;
 	USHORT PinBytesPerFrame;
+	// The PCM format Windows last proposed for the pin, restored from the sink's config key
+	// so a new device instance lists it first; 0 means nothing is stored yet.
+	ULONG StoredSampleRate;
+	USHORT StoredChannels;
 	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
 	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
@@ -344,6 +348,9 @@ struct DEVICE_CONTEXT
 	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
 	WDFWAITLOCK FormatLock;
 	ULONG FormatsListed;
+	// Index of the format that leads both lists. Windows opens the shared-mode stream with
+	// the first listed format, so the selection has to come first (AudioApplyEndpointFormats).
+	ULONG FirstListedIndex;
 	// One bit per KSPROPSETID_Pin property id (all are below 32) already logged from the
 	// request preprocess callback, so the log shows the format negotiation once per device
 	// start instead of once per request.
@@ -571,3 +578,12 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx);
 // Stores the current codec preference under the sink's configuration key.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx);
+
+// Restores the PCM format Windows last proposed for this sink.
+_IRQL_requires_(PASSIVE_LEVEL)
+void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx);
+
+// Stores the PCM format Windows proposed for this sink, so the next device instance lists
+// it first instead of starting from the table order.
+_IRQL_requires_(PASSIVE_LEVEL)
+void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);

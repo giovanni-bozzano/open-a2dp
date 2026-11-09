@@ -84,11 +84,73 @@ ULONG RenderFormatIndex(ULONG sampleRate, USHORT channels)
 	return AudioRenderFormatCount;
 }
 
+// Removes and re-adds the listed formats so startIndex comes first. Windows opens the
+// shared-mode stream with the first listed format, so the selection has to lead both lists;
+// the assigned default alone does not reach the engine. The caller holds FormatLock.
+NTSTATUS RebuildListing(_In_ DEVICE_CONTEXT* ctx, ULONG desired, ULONG startIndex)
+{
+	ACXDATAFORMATLIST list =
+		ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
+	const ACXDATAFORMATLIST defaultList = ctx->DefaultModeFormats;
+	if (list == nullptr || defaultList == nullptr)
+	{
+		return STATUS_DEVICE_NOT_READY;
+	}
+
+	NTSTATUS status = STATUS_SUCCESS;
+	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	{
+		if ((ctx->FormatsListed & (1u << i)) == 0)
+		{
+			continue;
+		}
+		NTSTATUS result = AcxDataFormatListRemoveDataFormat(list, ctx->FormatObjects[i]);
+		if (NT_SUCCESS(result))
+		{
+			result = AcxDataFormatListRemoveDataFormat(defaultList, ctx->FormatObjects[i]);
+		}
+		if (!NT_SUCCESS(result))
+		{
+			OA2DP_ERROR(ctx, "Audio", "removing render format %u failed 0x%08X", i, result);
+			if (NT_SUCCESS(status))
+			{
+				status = result;
+			}
+		}
+	}
+	ctx->FormatsListed = 0;
+	for (ULONG n = 0; n < AudioRenderFormatCount; ++n)
+	{
+		const ULONG i = (startIndex + n) % AudioRenderFormatCount;
+		if ((desired & (1u << i)) == 0)
+		{
+			continue;
+		}
+		NTSTATUS result = AcxDataFormatListAddDataFormat(list, ctx->FormatObjects[i]);
+		if (NT_SUCCESS(result))
+		{
+			result = AcxDataFormatListAddDataFormat(defaultList, ctx->FormatObjects[i]);
+		}
+		if (!NT_SUCCESS(result))
+		{
+			OA2DP_ERROR(ctx, "Audio", "adding render format %u failed 0x%08X", i, result);
+			if (NT_SUCCESS(status))
+			{
+				status = result;
+			}
+			continue;
+		}
+		ctx->FormatsListed |= 1u << i;
+	}
+	return status;
+}
+
 // Makes the format object the default of both mode lists. The engine builds its next stream
 // from that default and ACX answers its own format queries from it, so the format the engine
 // actually plays, or the one Windows proposes for the pin, has to be the default; the first
-// listed format is only the default until one has been adopted.
-void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* source)
+// listed format is only the default until one has been adopted. lead moves the format to the
+// front of the lists, which is what decides the Windows stream.
+void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* source, bool lead = false)
 {
 	const ACXDATAFORMATLIST list =
 		ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
@@ -118,6 +180,20 @@ void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* 
 				status = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[index]);
 			}
 			adopted = NT_SUCCESS(status);
+		}
+	}
+	if (NT_SUCCESS(status) && lead && ctx->FirstListedIndex != index &&
+		(ctx->FormatsListed & (1u << index)) != 0)
+	{
+		status = RebuildListing(ctx, ctx->FormatsListed, index);
+		if (NT_SUCCESS(status))
+		{
+			ctx->FirstListedIndex = index;
+		}
+		else
+		{
+			OA2DP_WARN(ctx, "Audio", "moving %s to the front of the format list failed 0x%08X", source,
+				status);
 		}
 	}
 	WdfWaitLockRelease(ctx->FormatLock);
@@ -248,8 +324,11 @@ void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFR
 			const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes));
 			if (wave != nullptr)
 			{
+				// The proposal is the selection: adopt it, put it in front of the lists so the next
+				// Windows stream uses it, and keep it for the next device instance.
 				AdoptFormatIndex(ctx,
-					RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels), "the proposed format");
+					RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels), "the proposed format", true);
+				ConfigSaveEndpointFormat(ctx, wave->nSamplesPerSec, wave->nChannels);
 			}
 			else if (buffer != nullptr && bytes >= sizeof(ULONG) * 4)
 			{
@@ -440,48 +519,33 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_ERROR(ctx, "Audio", "sink SBC formats 0x%02X have no driver-supported PCM format", sinkFormats);
 		return STATUS_NOT_SUPPORTED;
 	}
+	// The selection leads both lists: Windows opens the shared-mode stream with the first
+	// listed format, so the order is what carries the Sound-settings format to the engine.
+	// The stored selection comes first, the live stream format is only a fallback.
+	ULONG startIndex = ctx->StoredSampleRate != 0
+		? RenderFormatIndex(ctx->StoredSampleRate, ctx->StoredChannels) : AudioRenderFormatCount;
+	KIRQL irql;
+	if (startIndex >= AudioRenderFormatCount)
+	{
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		startIndex = RenderFormatIndex(ctx->PinSampleRate, ctx->PinChannels);
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+	}
+	if (startIndex >= AudioRenderFormatCount || (desired & (1u << startIndex)) == 0)
+	{
+		startIndex = FirstListed(desired);
+	}
+
 	const ULONG listedBefore = ctx->FormatsListed;
-	if (listedBefore == desired)
+	const bool firstBuild = listedBefore == 0;
+	if (listedBefore == desired && ctx->FirstListedIndex == startIndex)
 	{
 		WdfWaitLockRelease(ctx->FormatLock);
 		return STATUS_SUCCESS;
 	}
-	const bool firstBuild = listedBefore == 0;
-	ULONG listed = listedBefore;
-	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
-	{
-		const ULONG bit = 1u << i;
-		const bool wanted = (desired & bit) != 0;
-		if (wanted == ((listed & bit) != 0))
-		{
-			continue;
-		}
-		const ACXDATAFORMAT format = ctx->FormatObjects[i];
-		NTSTATUS result = wanted ? AcxDataFormatListAddDataFormat(list, format)
-								 : AcxDataFormatListRemoveDataFormat(list, format);
-		if (NT_SUCCESS(result))
-		{
-			result = wanted ? AcxDataFormatListAddDataFormat(defaultList, format)
-							: AcxDataFormatListRemoveDataFormat(defaultList, format);
-			if (!NT_SUCCESS(result))
-			{
-				// Keep both modes identical: undo the RAW change the DEFAULT list did not take.
-				(void)(wanted ? AcxDataFormatListRemoveDataFormat(list, format)
-							  : AcxDataFormatListAddDataFormat(list, format));
-			}
-		}
-		if (!NT_SUCCESS(result))
-		{
-			OA2DP_ERROR(ctx, "Audio", "%s render format %u failed 0x%08X", wanted ? "adding" : "removing", i, result);
-			if (NT_SUCCESS(status))
-			{
-				status = result;
-			}
-			continue;
-		}
-		listed ^= bit;
-	}
-	ctx->FormatsListed = listed;
+	status = RebuildListing(ctx, desired, startIndex);
+	ctx->FirstListedIndex = startIndex;
+	const ULONG listed = ctx->FormatsListed;
 	if (listed == 0)
 	{
 		OA2DP_ERROR(ctx, "Audio", "no render format is listed; the endpoint cannot be opened");
@@ -489,33 +553,15 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		return NT_SUCCESS(status) ? STATUS_UNSUCCESSFUL : status;
 	}
 
-	// This is the advertised initial default, not Windows' persisted mix format.
-	ACXDATAFORMAT currentDefault = nullptr;
-	ULONG currentDefaultIndex = AudioRenderFormatCount;
-	if (NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &currentDefault)) && currentDefault != nullptr)
-	{
-		for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
-		{
-			if (AcxDataFormatIsEqual(currentDefault, ctx->FormatObjects[i]))
-			{
-				currentDefaultIndex = i;
-				break;
-			}
-		}
-	}
-	const bool keepDefault = currentDefaultIndex < AudioRenderFormatCount &&
-		(listed & (1u << currentDefaultIndex)) != 0;
-	const ULONG defaultIndex = keepDefault ? currentDefaultIndex : FirstListed(listed);
-	NTSTATUS defaultStatus = keepDefault
-		? STATUS_SUCCESS
-		: AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[defaultIndex]);
+	// The leading format is the advertised default too, so ACX's own answers agree with it.
+	const ULONG defaultIndex = startIndex;
+	NTSTATUS defaultStatus = AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[defaultIndex]);
 	if (NT_SUCCESS(defaultStatus))
 	{
 		defaultStatus = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[defaultIndex]);
 	}
 	if (NT_SUCCESS(defaultStatus))
 	{
-		KIRQL irql;
 		KeAcquireSpinLock(&ctx->AudioLock, &irql);
 		if (ctx->AudioStream == nullptr)
 		{

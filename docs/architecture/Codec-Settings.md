@@ -37,11 +37,21 @@ the proposed format Windows sends and the format of a stream the engine opens ar
 as the default of both mode lists. An active stream is never relabelled with the list
 default.
 
+The assigned default does not reach the engine: hardware showed the stored selection listed
+fourth while Windows opened the first listed format for the shared-mode stream, and moving
+only the default changed nothing. The selection therefore leads both lists - `RebuildListing`
+removes and re-adds the objects so it is the first entry - and the format Windows proposes
+is kept as `EndpointSampleRate`/`EndpointChannels` under the sink's configuration key, so a
+new device instance lists it first before Windows opens anything. The stored value mirrors
+Windows' choice; it is not a driver preference and never narrows the list.
+
 Windows does not ask this pin for `KSPROPERTY_PIN_PROPOSEDATAFORMAT2`; a device-start log
 shows only the enumeration queries, then `MODEDATAFORMATS` as a size probe. It sends the
 selection as the legacy `KSPROPERTY_PIN_PROPOSEDATAFORMAT` **SET** when the link comes up,
-which is what the driver adopts. The property requests are logged once per device start,
-not per request, and the stream processing mode is logged once per stream.
+which is what the driver adopts, lists first and stores. The same property also arrives as
+a 64-byte bare `KSDATAFORMAT` (`KSDATAFORMAT_TYPE_AUDIO`, no `WAVEFORMATEX`): that is
+"audio, unspecified" and carries no selection. The property requests are logged once per
+device start, not per request, and the stream processing mode is logged once per stream.
 `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
