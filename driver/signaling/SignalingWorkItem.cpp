@@ -334,16 +334,19 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		}
 		ctx->CodecSwitchClosing = FALSE;
 		ctx->CodecSwitchWanted = FALSE;
+		if (ctx->FormatSwitchPending && state == Avdtp::SessionState::Idle && !ctx->MediaOpenRetry)
+		{
+			if (ReconfigureClosedStream(ctx))
+			{
+				return;
+			}
+			OA2DP_WARN(ctx, "Signaling", "the closed stream cannot be configured again; rediscovering");
+		}
+		// Only this CLOSE was meant to re-configure the SEP; anything else that settles the
+		// session (a media retry, a failed close) must not carry the flag into a later switch.
+		ctx->FormatSwitchPending = FALSE;
 		if (state == Avdtp::SessionState::Idle && !ctx->MediaOpenRetry)
 		{
-			if (ctx->FormatSwitchPending)
-			{
-				if (ReconfigureClosedStream(ctx))
-				{
-					return;
-				}
-				OA2DP_WARN(ctx, "Signaling", "the closed stream cannot be configured again; rediscovering");
-			}
 			Avdtp::CodecType desired;
 			if (DesiredCodec(ctx, desired))
 			{
