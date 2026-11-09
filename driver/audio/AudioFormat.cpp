@@ -71,9 +71,8 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 }
 } // namespace
 
-void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFREQUEST request)
+void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT, _In_ WDFREQUEST request)
 {
-	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
 	ACX_REQUEST_PARAMETERS parameters;
 	ACX_REQUEST_PARAMETERS_INIT(&parameters);
 	AcxRequestGetParameters(request, &parameters);
@@ -81,19 +80,12 @@ void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WD
 	if (parameters.Type == AcxRequestTypeProperty &&
 		IsEqualGUID(property.Set, KSPROPSETID_Pin) && property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT2)
 	{
-		// This circuit has no mode-specific hardware format, including on its bridge.
-		// Do not let the request's target classification bypass this policy.
-		OA2DP_INFO(ctx, "Audio", "PROPOSEDATAFORMAT2 verb %u, target %u/%u: no preferred mode format",
-			static_cast<unsigned>(property.Verb), static_cast<unsigned>(property.ItemType), property.ItemId);
+		// This circuit has no mode-specific hardware format, including on its bridge. Do not
+		// let the target classification bypass this policy: a preferred mode format here
+		// overrides the format picked in Sound settings. Legacy PROPOSEDATAFORMAT requests
+		// stay ACX-managed; neither query is logged per request.
 		WdfRequestComplete(request, STATUS_NOT_SUPPORTED);
 		return;
-	}
-	if (parameters.Type == AcxRequestTypeProperty &&
-		IsEqualGUID(property.Set, KSPROPSETID_Pin) && property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT)
-	{
-		OA2DP_INFO(ctx, "Audio", "PROPOSEDATAFORMAT verb %u, target %u/%u, control %u B, value %u B: ACX handles it",
-			static_cast<unsigned>(property.Verb), static_cast<unsigned>(property.ItemType), property.ItemId,
-			property.ControlCb, property.ValueCb);
 	}
 	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
 	if (!NT_SUCCESS(status))

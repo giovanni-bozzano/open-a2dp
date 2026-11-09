@@ -58,19 +58,10 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	if (NT_SUCCESS(status))
 	{
 		status = AcxCircuitInitAssignAcxRequestPreprocessCallback(circuitInit, OnProposeModeFormat,
-			ctx, AcxRequestTypeProperty, &KSPROPSETID_Pin, KSPROPERTY_PIN_PROPOSEDATAFORMAT2);
+			nullptr, AcxRequestTypeProperty, &KSPROPSETID_Pin, KSPROPERTY_PIN_PROPOSEDATAFORMAT2);
 		if (!NT_SUCCESS(status))
 		{
 			OA2DP_ERROR(ctx, "Audio", "registering the mode format policy failed 0x%08X", status);
-		}
-	}
-	if (NT_SUCCESS(status))
-	{
-		status = AcxCircuitInitAssignAcxRequestPreprocessCallback(circuitInit, OnProposeModeFormat,
-			ctx, AcxRequestTypeProperty, &KSPROPSETID_Pin, KSPROPERTY_PIN_PROPOSEDATAFORMAT);
-		if (!NT_SUCCESS(status))
-		{
-			OA2DP_ERROR(ctx, "Audio", "registering the legacy format diagnostics failed 0x%08X", status);
 		}
 	}
 	if (NT_SUCCESS(status))

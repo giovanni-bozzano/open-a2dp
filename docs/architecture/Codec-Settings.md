@@ -37,29 +37,33 @@ persists its own mix format; that value and this advertised default are not the 
 An active stream is never relabelled with the list default.
 
 The Sound-settings default format is the device format of the DEFAULT processing mode. ACX
-pins have only a built-in RAW list, and a RAW-only pin gives Windows no DEFAULT mode to apply
-that selection to, so the endpoint stayed on the list default (44100 stereo) on hardware even
-with the preferred-format query refused. The streaming pin therefore also assigns a DEFAULT
-mode list, as Microsoft's SDCA ACX sample does.
+pins have only a built-in RAW list, so a RAW-only pin leaves that selection with no DEFAULT
+mode to apply it to. Hardware logs still showed a 44.1 kHz stereo RAW stream, but Windows
+asked for that format explicitly, so the list default is not where it came from and this is
+not proven to be the source. The streaming pin therefore also assigns a DEFAULT mode list,
+as Microsoft's SDCA ACX sample does; whether shared-mode playback then follows the selection
+needs a new hardware capture.
 
 `KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is deliberately not supported on the streaming pin:
 [Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2),
 and ACX would otherwise answer it with the list default for either mode. The refusal applies
-to the whole circuit, regardless of the request's target classification. Logs record these
-queries, legacy `PROPOSEDATAFORMAT` requests (still ACX-managed), and the stream processing
-mode, which should now be `default` for shared-mode playback. The normal format list and initial-default queries remain
-ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
+to the whole circuit, regardless of the request's target classification. Legacy
+`PROPOSEDATAFORMAT` requests stay ACX-managed. The queries are not logged per request; the
+stream processing mode is logged once per stream and should be `default` for shared-mode
+playback. The normal format list and initial-default queries stay ACX-managed.
+`EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
 and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not
 reported as a fabricated 44100 stereo fallback.
 
 Logs distinguish `endpoint formats` (availability, 16-bit and provisional/discovered source),
-`advertised default` (initial suggestion), `stream format` (Windows' raw request), and
-`endpoint format ... (actual stream)` (encoder input). The media/AVDTP logs report the
-negotiated codec format, not the Windows mix format. Previously the same availability line
-was printed at initialization and discovery even if nothing changed, with an extra explicit
-notification despite ACX already notifying; neither is needed.
+`advertised default` (initial suggestion), the stream processing mode, `stream format`
+(Windows' raw request), and `endpoint format ... (actual stream)` (encoder input). The
+media/AVDTP logs report the negotiated codec format, not the Windows mix format. Previously
+the same availability line was printed at initialization and discovery even if nothing
+changed, with an extra explicit notification despite ACX already notifying; neither is
+needed.
 
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
