@@ -1211,11 +1211,24 @@ void ApplySettings(HWND hwnd)
 							   : L"Stored. The setting applies at the next negotiation.");
 }
 
+// The colour the window and every label on it are drawn in. The window is filled with it
+// explicitly instead of by the class brush, so the labels, the group box captions and the
+// checkbox cannot end up as rectangles of a second colour.
+constexpr int kBackgroundColor = COLOR_WINDOW;
+
+LRESULT OnEraseBackground(HWND hwnd, HDC dc)
+{
+	RECT client = {};
+	GetClientRect(hwnd, &client);
+	FillRect(dc, &client, GetSysColorBrush(kBackgroundColor));
+	return 1;
+}
+
 LRESULT OnColorStatic(WPARAM wParam, LPARAM lParam)
 {
 	UNREFERENCED_PARAMETER(lParam);
 	SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
-	return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+	return reinterpret_cast<LRESULT>(GetSysColorBrush(kBackgroundColor));
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -1297,7 +1310,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 	case kDeviceChangeMessage:
 		ReloadDevices(hwnd);
 		return 0;
+	case WM_ERASEBKGND:
+		return OnEraseBackground(hwnd, reinterpret_cast<HDC>(wParam));
 	case WM_CTLCOLORSTATIC:
+	case WM_CTLCOLORBTN:
 		return OnColorStatic(wParam, lParam);
 	case WM_CLOSE:
 		DestroyWindow(hwnd);
@@ -1342,7 +1358,7 @@ int Run(HINSTANCE instance, int showCommand)
 	windowClass.lpfnWndProc = WindowProc;
 	windowClass.hInstance = instance;
 	windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-	windowClass.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+	windowClass.hbrBackground = GetSysColorBrush(kBackgroundColor);
 	windowClass.lpszClassName = className;
 	if (RegisterClassExW(&windowClass) == 0)
 	{
