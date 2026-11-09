@@ -52,6 +52,43 @@ enum ControlId : int {
 	kMessageLabel,
 };
 
+// The captions are constants because the layout measures them: the window is sized to the
+// strings it shows instead of to fixed coordinates, so a larger system font or a longer
+// caption cannot cut a control off.
+constexpr wchar_t kSinkText[] = L"Sink";
+constexpr wchar_t kRefreshText[] = L"Refresh";
+constexpr wchar_t kCopyText[] = L"Copy";
+constexpr wchar_t kDetailsText[] = L"Details";
+constexpr wchar_t kApplyText[] = L"Apply";
+constexpr wchar_t kSessionGroupText[] = L"Session";
+constexpr wchar_t kCodecGroupText[] = L"Codec";
+constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
+constexpr wchar_t kCodecHintText[] = L"The frame shape and bitpool apply to SBC; the bitrate to AAC.";
+constexpr wchar_t kFormatHintText[] = L"Windows plays the first format the endpoint lists and ignores the "
+									 L"Sound-settings pick, so a pinned format is offered alone.";
+// A combo box is created with the height of its drop-down list, which is never resized.
+constexpr int kComboListHeight = 320;
+// Rows the session panel shows when the screen has room for them; it scrolls itself for the
+// rows that do not fit, so the window never has to scroll as a whole.
+constexpr int kMinPanelRows = 6;
+constexpr int kMaxPanelRows = 16;
+
+// A label and the control it describes, in one of the two columns of a group.
+struct Field
+{
+	HWND label;
+	HWND control;
+	int column; // 0 = left, 1 = right
+	int row;    // row inside its column
+};
+std::vector<Field> Fields;
+
+constexpr DWORD kWindowStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
+
+int MaxOf(int first, int second)
+{
+	return first > second ? first : second;
+}
 constexpr int kStatusTimerId = 1;
 constexpr int kStatusRefreshMs = 1000;
 // Posted from the interface notification thread; the list is re-enumerated on the UI thread.
@@ -84,6 +121,13 @@ struct SinkState
 	HFONT font = nullptr;  // the window's font, owned by the window
 	bool details = false;  // show every field, including the ones the formatted lines hide
 	HCMNOTIFICATION notify = nullptr; // control-device arrival/removal
+	HWND sinkLabel = nullptr;
+	HWND sessionGroup = nullptr;
+	HWND sessionPanel = nullptr;
+	HWND codecGroup = nullptr;
+	HWND codecHint = nullptr;
+	HWND formatGroup = nullptr;
+	HWND formatHint = nullptr;
 };
 
 std::wstring Widen(const std::string& text)
@@ -172,6 +216,72 @@ void SetMessage(HWND hwnd, const std::wstring& message)
 		state->message = message;
 	}
 	SetWindowTextW(GetDlgItem(hwnd, kMessageLabel), message.c_str());
+}
+
+int TextWidth(HDC dc, const wchar_t* text)
+{
+	SIZE size = {};
+	if (dc == nullptr || text == nullptr || *text == L'\0' ||
+		GetTextExtentPoint32W(dc, text, static_cast<int>(wcslen(text)), &size) == FALSE)
+	{
+		return 0;
+	}
+	return size.cx;
+}
+
+// Height a sentence needs at the given width, so a hint wraps onto more lines instead of
+// being cut; the string is what decides, not a fixed control height.
+int TextHeight(HDC dc, const wchar_t* text, int width)
+{
+	if (dc == nullptr || text == nullptr || *text == L'\0' || width <= 0)
+	{
+		return 0;
+	}
+	RECT rect = {0, 0, width, 0};
+	DrawTextW(dc, text, -1, &rect, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+	return rect.bottom - rect.top;
+}
+
+// The widest item in a combo, which is what its width has to fit.
+int ComboContentWidth(HDC dc, HWND combo)
+{
+	int widest = 0;
+	const LRESULT count = SendMessageW(combo, CB_GETCOUNT, 0, 0);
+	for (LRESULT index = 0; index < count; ++index)
+	{
+		const LRESULT length = SendMessageW(combo, CB_GETLBTEXTLEN, static_cast<WPARAM>(index), 0);
+		if (length == CB_ERR || length <= 0)
+		{
+			continue;
+		}
+		std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+		if (SendMessageW(combo, CB_GETLBTEXT, static_cast<WPARAM>(index),
+						 reinterpret_cast<LPARAM>(text.data())) == CB_ERR)
+		{
+			continue;
+		}
+		widest = MaxOf(widest, TextWidth(dc, text.c_str()));
+	}
+	return widest;
+}
+
+int WorkAreaHeight(HWND hwnd)
+{
+	MONITORINFO monitor = {};
+	monitor.cbSize = sizeof(monitor);
+	if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &monitor))
+	{
+		return monitor.rcWork.bottom - monitor.rcWork.top;
+	}
+	return 720;
+}
+
+// Places one control (and resizes it when `resize` is set). A combo keeps the height it was
+// created with, because that height is its drop-down list.
+void Place(HWND control, int x, int y, int width, int height, bool resize)
+{
+	SetWindowPos(control, nullptr, x, y, width, height,
+				 SWP_NOZORDER | SWP_NOACTIVATE | (resize ? 0u : SWP_NOSIZE));
 }
 
 // Which section of the list a report line belongs to, or null for the raw field dump, whose
@@ -311,6 +421,15 @@ HWND CreateChild(HWND parent, const wchar_t* className, const wchar_t* text, DWO
 	return child;
 }
 
+// A label and its field, which the layout sizes from the label text and the combo contents.
+void CreateField(HWND hwnd, const wchar_t* text, int id, int column, int row, HFONT font)
+{
+	const HWND label = CreateChild(hwnd, L"STATIC", text, SS_LEFT, 0, 0, 10, 10, 0, font);
+	const HWND control = CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0,
+									 10, kComboListHeight, id, font);
+	Fields.push_back({label, control, column, row});
+}
+
 void AddComboItem(HWND hwnd, int id, const wchar_t* text, uint32_t value)
 {
 	const HWND combo = GetDlgItem(hwnd, id);
@@ -383,65 +502,227 @@ void SelectComboValueOrAdd(HWND hwnd, int id, uint32_t value)
 	SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(count), 0);
 }
 
-// Creates every control once; the layout is fixed, so the window is not resizable.
+// Sizes and places every control from the strings it holds. The window has no scroll bar of
+// its own: it is made as large as its contents need, and the session panel - the one part
+// whose length the driver decides - scrolls itself for the rows that do not fit.
+void ApplyLayout(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	const HFONT font = state->font != nullptr ? state->font
+											 : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+	const HDC dc = CreateCompatibleDC(nullptr);
+	const HGDIOBJ previous = font != nullptr ? SelectObject(dc, font) : nullptr;
+	TEXTMETRICW metrics = {};
+	GetTextMetricsW(dc, &metrics);
+	const int textHeight = metrics.tmHeight > 0 ? metrics.tmHeight : 16;
+	const int gap = textHeight / 2 + 2;
+	const int margin = gap;
+	const int inset = gap;
+	const int rowHeight = textHeight + 10;
+	const int arrow = GetSystemMetrics(SM_CXVSCROLL) + 6;
+	const int captionHeight = textHeight + gap;
+
+	// Each column is as wide as its widest label plus its widest combo content.
+	int labelWidth[2] = {0, 0};
+	int fieldWidth[2] = {0, 0};
+	for (const Field& field : Fields)
+	{
+		wchar_t text[256] = {};
+		GetWindowTextW(field.label, text, ARRAYSIZE(text));
+		labelWidth[field.column] = MaxOf(labelWidth[field.column], TextWidth(dc, text));
+		fieldWidth[field.column] = MaxOf(fieldWidth[field.column], ComboContentWidth(dc, field.control) + arrow);
+	}
+	const int columnGap = gap * 3;
+	const int columnWidth[2] = {labelWidth[0] + gap + fieldWidth[0], labelWidth[1] + gap + fieldWidth[1]};
+	const int contentWidth = columnWidth[0] + columnGap + columnWidth[1];
+
+	// The header row: the sink picker and the three buttons.
+	const int sinkLabelWidth = TextWidth(dc, kSinkText);
+	const int sinkComboWidth = ComboContentWidth(dc, GetDlgItem(hwnd, kSinkCombo)) + arrow;
+	const int refreshWidth = TextWidth(dc, kRefreshText) + gap * 2;
+	const int copyWidth = TextWidth(dc, kCopyText) + gap * 2;
+	const int detailsWidth = TextWidth(dc, kDetailsText) + gap * 5;
+	const int headerWidth = margin + sinkLabelWidth + gap + sinkComboWidth + gap + refreshWidth + gap +
+							copyWidth + gap + detailsWidth + margin;
+
+	int width = contentWidth + (margin + inset) * 2;
+	if (headerWidth > width)
+	{
+		width = headerWidth;
+	}
+	const int groupLeft = margin;
+	const int groupWidth = width - margin * 2;
+	const int innerLeft = groupLeft + inset;
+	const int innerWidth = groupWidth - inset * 2;
+
+	const int applyWidth = TextWidth(dc, kApplyText) + gap * 4;
+	const int applyHeight = rowHeight + 4;
+	const int codecHintHeight = MaxOf(TextHeight(dc, kCodecHintText, innerWidth), textHeight);
+	const int formatHintHeight = MaxOf(TextHeight(dc, kFormatHintText, innerWidth), textHeight);
+	const int codecHeight = captionHeight + 3 * rowHeight + codecHintHeight + gap;
+	const int formatHeight = captionHeight + rowHeight + formatHintHeight + gap;
+	const int bottomHeight = MaxOf(applyHeight, textHeight);
+
+	// The session panel takes as many rows as the screen can show and scrolls for the rest.
+	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
+	const int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + codecHeight + gap +
+							formatHeight + gap + bottomHeight + margin;
+	// The border and the title bar count too, or the window as a whole would hang off the
+	// screen even though its client area fits.
+	RECT frame = {0, 0, 100, 100};
+	AdjustWindowRectEx(&frame, kWindowStyle, FALSE, 0);
+	const int frameHeight = (frame.bottom - frame.top) - 100;
+	const int available = WorkAreaHeight(hwnd) - frameHeight - fixedHeight - 24;
+	int panelRows = available / statusRowHeight;
+	if (panelRows > kMaxPanelRows)
+	{
+		panelRows = kMaxPanelRows;
+	}
+	if (panelRows < kMinPanelRows)
+	{
+		panelRows = kMinPanelRows;
+	}
+	const int panelHeight = panelRows * statusRowHeight;
+
+	const int headerTop = margin;
+	const int sessionTop = headerTop + rowHeight + gap * 2;
+	const int sessionHeight = captionHeight + panelHeight + gap;
+	const int codecTop = sessionTop + sessionHeight + gap;
+	const int formatTop = codecTop + codecHeight + gap;
+	const int bottomTop = formatTop + formatHeight + gap;
+	const int height = bottomTop + bottomHeight + margin;
+
+	// Header row, with the sink picker filling the space the buttons leave.
+	Place(state->sinkLabel, margin, headerTop + (rowHeight - textHeight) / 2, sinkLabelWidth, textHeight, true);
+	const int detailsLeft = width - margin - detailsWidth;
+	const int copyLeft = detailsLeft - gap - copyWidth;
+	const int refreshLeft = copyLeft - gap - refreshWidth;
+	Place(GetDlgItem(hwnd, kDetailsCheck), detailsLeft, headerTop + (rowHeight - textHeight) / 2, detailsWidth,
+		  textHeight + 2, true);
+	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, rowHeight, true);
+	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, rowHeight, true);
+	const int sinkLeft = margin + sinkLabelWidth + gap;
+	Place(GetDlgItem(hwnd, kSinkCombo), sinkLeft, headerTop, refreshLeft - gap - sinkLeft, 0, false);
+
+	// The three groups.
+	Place(state->sessionGroup, groupLeft, sessionTop, groupWidth, sessionHeight, true);
+	Place(state->codecGroup, groupLeft, codecTop, groupWidth, codecHeight, true);
+	Place(state->formatGroup, groupLeft, formatTop, groupWidth, formatHeight, true);
+	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight, true);
+
+	// One row per field: label first, then the combo it describes.
+	for (const Field& field : Fields)
+	{
+		const bool format = field.control == GetDlgItem(hwnd, kFormatCombo);
+		const int groupTop = format ? formatTop : codecTop;
+		const int top = groupTop + captionHeight + field.row * rowHeight;
+		const int left = innerLeft + (field.column == 0 ? 0 : columnWidth[0] + columnGap);
+		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight, true);
+		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column], 0, false);
+	}
+	Place(state->codecHint, innerLeft, codecTop + captionHeight + 3 * rowHeight, innerWidth, codecHintHeight, true);
+	Place(state->formatHint, innerLeft, formatTop + captionHeight + rowHeight, innerWidth, formatHintHeight, true);
+
+	// Apply sits under the right edge, the outcome of the last action fills the rest.
+	const int applyLeft = width - margin - applyWidth;
+	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, bottomTop + (bottomHeight - applyHeight) / 2, applyWidth,
+		  applyHeight, true);
+	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop + (bottomHeight - textHeight) / 2,
+		  applyLeft - gap - margin, textHeight, true);
+
+	if (dc != nullptr)
+	{
+		if (previous != nullptr)
+		{
+			SelectObject(dc, previous);
+		}
+		DeleteDC(dc);
+	}
+
+	RECT rect = {0, 0, width, height};
+	AdjustWindowRectEx(&rect, kWindowStyle, FALSE, 0);
+	const int windowWidth = rect.right - rect.left;
+	const int windowHeight = rect.bottom - rect.top;
+	SetWindowPos(hwnd, nullptr, 0, 0, windowWidth, windowHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	// The size is known only now, so the window is centered here rather than left where the
+	// default placement put it - which can hang off the bottom of a short screen.
+	MONITORINFO monitor = {};
+	monitor.cbSize = sizeof(monitor);
+	if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &monitor) != FALSE)
+	{
+		const int left = monitor.rcWork.left +
+						 MaxOf(0, (monitor.rcWork.right - monitor.rcWork.left - windowWidth) / 2);
+		const int top = monitor.rcWork.top +
+						MaxOf(0, (monitor.rcWork.bottom - monitor.rcWork.top - windowHeight) / 2);
+		SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+}
+
+// Creates every control with a placeholder rect; ApplyLayout gives them their real ones, so
+// the geometry comes from the measured strings and not from coordinates typed by hand.
 void CreateControls(HWND hwnd)
 {
-	const SinkState* state = StateOf(hwnd);
+	SinkState* state = StateOf(hwnd);
 	const HFONT font = state != nullptr && state->font != nullptr
 					   ? state->font
 					   : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-	CreateChild(hwnd, L"STATIC", L"Sink", SS_LEFT, 12, 16, 96, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 12, 260, 220,
-				kSinkCombo, font);
-	CreateChild(hwnd, L"BUTTON", L"Refresh", BS_PUSHBUTTON | WS_TABSTOP, 380, 11, 76, 27, kRefreshButton,
+	Fields.clear();
+
+	if (state != nullptr)
+	{
+		state->sinkLabel = CreateChild(hwnd, L"STATIC", kSinkText, SS_LEFT, 0, 0, 10, 10, 0, font);
+	}
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0, 10,
+				kComboListHeight, kSinkCombo, font);
+	CreateChild(hwnd, L"BUTTON", kRefreshText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kRefreshButton,
 				font);
 	// The clipboard text is the report itself, so it can be pasted next to a CLI paste.
-	CreateChild(hwnd, L"BUTTON", L"Copy", BS_PUSHBUTTON | WS_TABSTOP, 462, 11, 76, 27, kCopyButton, font);
-	CreateChild(hwnd, L"BUTTON", L"Details", BS_AUTOCHECKBOX | WS_TABSTOP, 548, 15, 80, 22, kDetailsCheck,
+	CreateChild(hwnd, L"BUTTON", kCopyText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kCopyButton, font);
+	CreateChild(hwnd, L"BUTTON", kDetailsText, BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0, 10, 10, kDetailsCheck,
 				font);
 
-	CreateChild(hwnd, L"BUTTON", L"Status", BS_GROUPBOX, 12, 48, 616, 284, 0, font);
-	CreateStatusView(hwnd, kStatusList, 24, 68, 592, 252, font);
+	if (state != nullptr)
+	{
+		state->sessionGroup = CreateChild(hwnd, L"BUTTON", kSessionGroupText, BS_GROUPBOX, 0, 0, 10, 10, 0,
+										  font);
+	}
+	CreateStatusView(hwnd, kStatusList, 0, 0, 10, 10, font);
+	if (state != nullptr)
+	{
+		state->sessionPanel = GetDlgItem(hwnd, kStatusList);
+		state->codecGroup = CreateChild(hwnd, L"BUTTON", kCodecGroupText, BS_GROUPBOX, 0, 0, 10, 10, 0, font);
+	}
+	CreateField(hwnd, L"Codec", kCodecCombo, 0, 0, font);
+	CreateField(hwnd, L"AAC bitrate", kBitrateCombo, 1, 0, font);
+	CreateField(hwnd, L"SBC bitpool", kBitpoolCombo, 0, 1, font);
+	CreateField(hwnd, L"SBC blocks", kBlocksCombo, 1, 1, font);
+	CreateField(hwnd, L"Subbands", kSubbandsCombo, 0, 2, font);
+	CreateField(hwnd, L"Allocation", kAllocationCombo, 1, 2, font);
+	if (state != nullptr)
+	{
+		state->codecHint = CreateChild(hwnd, L"STATIC", kCodecHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
+		state->formatGroup = CreateChild(hwnd, L"BUTTON", kFormatGroupText, BS_GROUPBOX, 0, 0, 10, 10, 0,
+										font);
+	}
+	CreateField(hwnd, L"PCM format", kFormatCombo, 0, 0, font);
+	if (state != nullptr)
+	{
+		state->formatHint = CreateChild(hwnd, L"STATIC", kFormatHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
+	}
 
-	CreateChild(hwnd, L"BUTTON", L"Codec", BS_GROUPBOX, 12, 340, 616, 148, 0, font);
-	CreateChild(hwnd, L"STATIC", L"Codec", SS_LEFT, 24, 362, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 358, 190, 160,
-				kCodecCombo, font);
-	CreateChild(hwnd, L"STATIC", L"AAC bitrate", SS_LEFT, 320, 362, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 358, 196, 220,
-				kBitrateCombo, font);
-	CreateChild(hwnd, L"STATIC", L"SBC bitpool", SS_LEFT, 24, 394, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 390, 190, 240,
-				kBitpoolCombo, font);
-	CreateChild(hwnd, L"STATIC", L"SBC blocks", SS_LEFT, 320, 394, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 390, 196, 160,
-				kBlocksCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Subbands", SS_LEFT, 24, 426, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 422, 190, 160,
-				kSubbandsCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Allocation", SS_LEFT, 320, 426, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 422, 196, 160,
-				kAllocationCombo, font);
-	CreateChild(hwnd, L"STATIC", L"The frame shape and bitpool apply to SBC; the bitrate to AAC.",
-				SS_LEFT, 24, 456, 592, 20, 0, font);
+	CreateChild(hwnd, L"BUTTON", kApplyText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kApplyButton, font);
+	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
 
-	CreateChild(hwnd, L"BUTTON", L"Endpoint format", BS_GROUPBOX, 12, 492, 616, 76, 0, font);
-	CreateChild(hwnd, L"STATIC", L"PCM format", SS_LEFT, 24, 514, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 510, 300, 200,
-				kFormatCombo, font);
-	CreateChild(hwnd, L"STATIC",
-			L"Windows plays the first format the endpoint lists and ignores the Sound-settings pick, so a pinned "
-			L"format is offered alone.",
-			SS_LEFT, 24, 538, 592, 20, 0, font);
-
-	CreateChild(hwnd, L"BUTTON", L"Apply", BS_PUSHBUTTON | WS_TABSTOP, 496, 576, 132, 28, kApplyButton, font);
-	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 12, 582, 476, 20, kMessageLabel, font);
-
+	// Worst to best, so the better format is always the lower entry: rate first, then channels.
 	AddComboItem(hwnd, kFormatCombo, L"Automatic (every sink format)", 0);
-	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, stereo", FormatComboValue(44100, 2));
 	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, mono", FormatComboValue(44100, 1));
-	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, stereo", FormatComboValue(48000, 2));
+	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, stereo", FormatComboValue(44100, 2));
 	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, mono", FormatComboValue(48000, 1));
+	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, stereo", FormatComboValue(48000, 2));
 
 	AddComboItem(hwnd, kCodecCombo, L"Automatic (AAC, then SBC)", kCodecAuto);
 	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);
@@ -483,6 +764,7 @@ void CreateControls(HWND hwnd)
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
+	ApplyLayout(hwnd);
 }
 
 // The controls show the stored preference, so a value the driver refused or clamped is
@@ -914,9 +1196,10 @@ int Run(HINSTANCE instance, int showCommand)
 		return 1;
 	}
 
-	RECT rect = {0, 0, 640, 620};
-	const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-	AdjustWindowRectEx(&rect, style, FALSE, 0);
+	// The window is resized to its contents in WM_CREATE; this is only the size it is created
+	// with, before the strings have been measured.
+	RECT rect = {0, 0, 480, 600};
+	AdjustWindowRectEx(&rect, kWindowStyle, FALSE, 0);
 	// The message font is Segoe UI, which is what makes the window look current; the theme
 	// drawing of the list and the group boxes follows the same font size.
 	NONCLIENTMETRICSW metrics = {};
@@ -924,19 +1207,15 @@ int Run(HINSTANCE instance, int showCommand)
 	HFONT font = SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0) != 0
 					 ? CreateFontIndirectW(&metrics.lfMessageFont)
 					 : nullptr;
-	const HWND hwnd = CreateWindowExW(0, className, L"OpenA2dp - A2DP sink settings", style,
-									  CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
-									  rect.bottom - rect.top, nullptr, nullptr, instance, &font);
+	const HWND hwnd = CreateWindowExW(0, className, L"OpenA2dp - A2DP sink settings", kWindowStyle,
+									  CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top,
+									  nullptr, nullptr, instance, &font);
 	if (hwnd == nullptr)
 	{
 		if (font != nullptr)
 		{
 			DeleteObject(font);
 		}
-		return 1;
-	}
-	if (hwnd == nullptr)
-	{
 		return 1;
 	}
 	ShowWindow(hwnd, showCommand);

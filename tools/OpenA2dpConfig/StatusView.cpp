@@ -5,7 +5,7 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"OpenA2dpStatusView";
 constexpr int kRowHeight = 24;
-constexpr int kLabelColumnWidth = 196;
+constexpr int kLabelColumnWidth = 120;
 constexpr int kTextInset = 10;
 // Rows per wheel notch, like a list that scrolls by items.
 constexpr int kWheelRows = 3;
@@ -14,7 +14,9 @@ struct ViewState
 {
 	std::vector<StatusRow> rows;
 	std::wstring emptyText;
-	int scrollTop = 0; // pixels; always a whole row
+	int scrollTop = 0; // pixels; the view scrolls smoothly, so the last row is fully reachable
+	int rowHeight = kRowHeight;
+	int labelWidth = kLabelColumnWidth;
 	HFONT normal = nullptr;
 	HFONT bold = nullptr;
 };
@@ -39,7 +41,7 @@ COLORREF ToneColor(RowTone tone)
 void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
-	RECT strip = {0, y, width, y + kRowHeight};
+	RECT strip = {0, y, width, y + state.rowHeight};
 	if (row.section)
 	{
 		FillRect(dc, &strip, GetSysColorBrush(COLOR_BTNFACE));
@@ -52,8 +54,8 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 		SelectObject(dc, state.normal);
 	}
 
-	RECT label = {kTextInset, y, kTextInset + kLabelColumnWidth, y + kRowHeight};
-	RECT value = {kTextInset + kLabelColumnWidth, y, width - kTextInset, y + kRowHeight};
+	RECT label = {kTextInset, y, kTextInset + state.labelWidth, y + state.rowHeight};
+	RECT value = {kTextInset + state.labelWidth, y, width - kTextInset, y + state.rowHeight};
 	const UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
 	SetBkMode(dc, TRANSPARENT);
 	SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
@@ -81,10 +83,11 @@ void Paint(HWND window, ViewState& state)
 	if (memory != nullptr)
 	{
 		FillRect(memory, &client, GetSysColorBrush(COLOR_WINDOW));
-		// The scroll position is always a whole row, so the first visible row starts at 0.
-		const int first = state.scrollTop / kRowHeight;
-		int y = 0;
-		for (int index = first; index < static_cast<int>(state.rows.size()) && y < height; ++index, y += kRowHeight)
+		// The offset is continuous, so the last row can be scrolled fully into view.
+		const int first = state.scrollTop / state.rowHeight;
+		int y = first * state.rowHeight - state.scrollTop;
+		for (int index = first; index < static_cast<int>(state.rows.size()) && y < height;
+			 ++index, y += state.rowHeight)
 		{
 			PaintRow(memory, state, index, y, width);
 		}
@@ -112,7 +115,7 @@ void UpdateScrollBar(HWND window, const ViewState& state)
 {
 	RECT client = {};
 	GetClientRect(window, &client);
-	const int content = static_cast<int>(state.rows.size()) * kRowHeight;
+	const int content = static_cast<int>(state.rows.size()) * state.rowHeight;
 	SCROLLINFO info = {};
 	info.cbSize = sizeof(info);
 	info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
@@ -127,7 +130,7 @@ void ScrollTo(HWND window, ViewState& state, int scrollTop)
 {
 	RECT client = {};
 	GetClientRect(window, &client);
-	const int content = static_cast<int>(state.rows.size()) * kRowHeight;
+	const int content = static_cast<int>(state.rows.size()) * state.rowHeight;
 	const int maximum = content > client.bottom ? content - client.bottom : 0;
 	if (scrollTop < 0)
 	{
@@ -137,8 +140,6 @@ void ScrollTo(HWND window, ViewState& state, int scrollTop)
 	{
 		scrollTop = maximum;
 	}
-	// Whole rows only, so a row is never cut in half by the wheel.
-	scrollTop -= scrollTop % kRowHeight;
 	if (scrollTop == state.scrollTop)
 	{
 		return;
@@ -146,6 +147,33 @@ void ScrollTo(HWND window, ViewState& state, int scrollTop)
 	state.scrollTop = scrollTop;
 	UpdateScrollBar(window, state);
 	InvalidateRect(window, nullptr, FALSE);
+}
+
+// The label column follows the widest label, so the values start as far left as the text
+// allows instead of at a guessed coordinate.
+void UpdateColumns(HWND window, ViewState& state)
+{
+	int widest = kLabelColumnWidth;
+	const HDC dc = GetDC(window);
+	if (dc != nullptr)
+	{
+		const HGDIOBJ previous = state.normal != nullptr ? SelectObject(dc, state.normal) : nullptr;
+		for (const StatusRow& row : state.rows)
+		{
+			SIZE size = {};
+			if (GetTextExtentPoint32W(dc, row.label.c_str(), static_cast<int>(row.label.size()), &size) != FALSE &&
+				size.cx > widest)
+			{
+				widest = size.cx;
+			}
+		}
+		if (previous != nullptr)
+		{
+			SelectObject(dc, previous);
+		}
+		ReleaseDC(window, dc);
+	}
+	state.labelWidth = widest + kTextInset;
 }
 
 LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -173,7 +201,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 		{
 			const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			const int rows = delta * kWheelRows / WHEEL_DELTA;
-			ScrollTo(window, *state, state->scrollTop - rows * kRowHeight);
+			ScrollTo(window, *state, state->scrollTop - rows * state->rowHeight);
 		}
 		return 0;
 	case WM_VSCROLL:
@@ -186,8 +214,8 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			int position = info.nPos;
 			switch (LOWORD(wParam))
 			{
-			case SB_LINEUP: position -= kRowHeight; break;
-			case SB_LINEDOWN: position += kRowHeight; break;
+			case SB_LINEUP: position -= state->rowHeight; break;
+			case SB_LINEDOWN: position += state->rowHeight; break;
 			case SB_PAGEUP: position -= static_cast<int>(info.nPage); break;
 			case SB_PAGEDOWN: position += static_cast<int>(info.nPage); break;
 			case SB_THUMBTRACK:
@@ -252,6 +280,22 @@ bool CreateStatusView(HWND parent, int id, int x, int y, int width, int height, 
 	auto* state = new ViewState();
 	state->normal = font;
 	state->bold = CreateBoldFont(font);
+	// Rows follow the font, so a larger system font does not squeeze the text.
+	const HDC dc = GetDC(window);
+	if (dc != nullptr)
+	{
+		const HGDIOBJ previous = font != nullptr ? SelectObject(dc, font) : nullptr;
+		TEXTMETRICW metrics = {};
+		if (GetTextMetricsW(dc, &metrics) != FALSE && metrics.tmHeight > 0)
+		{
+			state->rowHeight = metrics.tmHeight + 8;
+		}
+		if (previous != nullptr)
+		{
+			SelectObject(dc, previous);
+		}
+		ReleaseDC(window, dc);
+	}
 	SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
 	UpdateScrollBar(window, *state);
 	return true;
@@ -308,9 +352,17 @@ void UpdateStatusView(HWND parent, int id, const std::vector<StatusRow>& rows, c
 		row.label = emptyText;
 		state->rows.push_back(row);
 	}
+	UpdateColumns(window, *state);
 	UpdateScrollBar(window, *state);
 	ScrollTo(window, *state, state->scrollTop);
 	InvalidateRect(window, nullptr, FALSE);
+}
+
+int StatusViewRowHeight(HWND parent, int id)
+{
+	const HWND window = GetDlgItem(parent, id);
+	const ViewState* state = window != nullptr ? StateOf(window) : nullptr;
+	return state != nullptr ? state->rowHeight : kRowHeight;
 }
 
 } // namespace OpenA2dp::ConfigUi

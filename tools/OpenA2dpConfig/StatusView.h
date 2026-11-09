@@ -44,4 +44,7 @@ void DestroyStatusView(HWND parent, int id);
 // is shown as the only row when `rows` is empty.
 void UpdateStatusView(HWND parent, int id, const std::vector<StatusRow>& rows, const std::wstring& emptyText);
 
+// Height of one row, so the caller can size the panel to a whole number of them.
+int StatusViewRowHeight(HWND parent, int id);
+
 } // namespace OpenA2dp::ConfigUi
