@@ -19,7 +19,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 1;
+constexpr uint32_t kAbiVersion = 2;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -112,6 +112,8 @@ constexpr ULONG kIoctlWaitEvent = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BU
 constexpr ULONG kIoctlGetStatus = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlSetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlGetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr ULONG kIoctlGetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr ULONG kIoctlSetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 struct VersionInfo {
 	uint32_t abiVersion;      // kAbiVersion
@@ -226,6 +228,31 @@ struct Preference {
 	uint32_t sbcAllocation;    // 0 = driver default; kSbcAllocation*
 	uint32_t reserved;
 };
+
+// The PCM format the render endpoint offers Windows. Windows opens the shared-mode stream
+// with the first format the endpoint lists and ignores the Sound-settings pick, so a pinned
+// format is offered alone: that is the only way the format the user wants is the one the
+// engine plays. 0 Hz / 0 channels means every format the sink supports (the default), which
+// also keeps every format available to a WASAPI exclusive-mode player.
+struct EndpointFormat {
+	uint32_t abiVersion;
+	uint32_t sampleRate; // 0 = automatic, 44100 or 48000 otherwise
+	uint32_t channels;   // 0 = automatic, 1 or 2 otherwise
+	uint32_t reserved;
+};
+
+constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
+{
+	if (format.sampleRate == 0 || format.channels == 0)
+	{
+		return format.sampleRate == 0 && format.channels == 0;
+	}
+	const bool rateOk = format.sampleRate == 44100 || format.sampleRate == 48000;
+	const bool channelsOk = format.channels == 1 || format.channels == 2;
+	return rateOk && channelsOk;
+}
+
+static_assert(sizeof(EndpointFormat) == 16, "EndpointFormat layout is part of the driver/CLI ABI");
 
 // A hand-edited or stale store must not force a configuration the driver cannot serve.
 // The driver and the CLI share this, so a rejected preference never leaves an endpoint

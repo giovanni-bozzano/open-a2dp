@@ -34,6 +34,7 @@ Usage:
   OpenA2dpCtl codec [<auto|sbc|aac>] [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--device <mac|index>]
+  OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
 
@@ -50,8 +51,14 @@ Commands:
             default), and the sink's advertised limits still apply.
             Without a codec name the stored selection is kept and only the
             flags given are applied.
-            Choose the PCM rate and channels in Windows Sound settings.
             Codec settings never narrow the supported endpoint format list.
+  format    Show or set the PCM format this sink's endpoint offers Windows.
+            "auto" (the default) offers every format the sink supports. A rate
+            and a channel count pin the endpoint to that one format, which is
+            then the only entry in the Windows format list. Windows plays the
+            first format the endpoint lists and ignores the Sound-settings pick,
+            so pinning is the only way to force one; the sink has to advertise
+            it. Pinning also limits WASAPI exclusive-mode players to it.
   version   Show the driver ABI and version.
 
 Options:
@@ -431,6 +438,30 @@ bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& e
 	return true;
 }
 
+bool ReadEndpointFormat(HANDLE handle, Ioctl::EndpointFormat& format, std::string& error)
+{
+	if (!ReadIoctl(handle, Ioctl::kIoctlGetEndpointFormat, format, error))
+	{
+		return false;
+	}
+	if (format.abiVersion != Ioctl::kAbiVersion)
+	{
+		error = "driver ABI " + std::to_string(format.abiVersion) + " does not match the tool ABI " +
+				std::to_string(Ioctl::kAbiVersion) + "; update both from the same build";
+		return false;
+	}
+	return true;
+}
+
+std::string EndpointFormatText(const Ioctl::EndpointFormat& format)
+{
+	if (format.sampleRate == 0)
+	{
+		return "automatic (every format the sink supports)";
+	}
+	return std::to_string(format.sampleRate) + " Hz " + std::to_string(format.channels) + " ch";
+}
+
 // Prints the report the settings window shows, so a paste from either one is comparable.
 void PrintStatus(const Device& device, HANDLE handle, const Ioctl::Status& status,
 				 const Ioctl::Preference& preference, bool verbose)
@@ -724,6 +755,116 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	return 0;
 }
 
+int CommandFormat(const std::vector<Device>& devices, const std::string& spec, const std::string& rateArg,
+				  const std::string& channelsArg)
+{
+	size_t index = 0;
+	std::string error;
+	if (!FindDevice(devices, spec, index, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 2;
+	}
+	const Device& device = devices[index];
+	const HANDLE handle = OpenDevice(device, error);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	Ioctl::EndpointFormat format = {};
+	if (!ReadEndpointFormat(handle, format, error))
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+	if (rateArg.empty())
+	{
+		std::printf("%s: endpoint format %s.\n", DeviceLabel(device).c_str(),
+					EndpointFormatText(format).c_str());
+		CloseHandle(handle);
+		return 0;
+	}
+
+	Ioctl::EndpointFormat requested = {};
+	requested.abiVersion = Ioctl::kAbiVersion;
+	if (rateArg != "auto")
+	{
+		if (!IsDecimal(rateArg) || !IsDecimal(channelsArg))
+		{
+			CloseHandle(handle);
+			std::fprintf(stderr, "format takes auto, or a rate (44100, 48000) and a channel count (1, 2)\n");
+			return 2;
+		}
+		requested.sampleRate = static_cast<uint32_t>(std::strtoul(rateArg.c_str(), nullptr, 10));
+		requested.channels = static_cast<uint32_t>(std::strtoul(channelsArg.c_str(), nullptr, 10));
+	}
+	if (!Ioctl::ValidEndpointFormat(requested))
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "format takes auto, or a rate (44100, 48000) and a channel count (1, 2)\n");
+		return 2;
+	}
+
+	// The endpoint only offers what the sink advertised in the last discovery, so a format it
+	// cannot carry is named here rather than left as a refused SET.
+	Ioctl::Status status = {};
+	if (!ReadStatus(handle, status, error))
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+	if (requested.sampleRate != 0 && status.sinkRates != 0)
+	{
+		const uint32_t rateBit = requested.sampleRate == 44100 ? 1u : 2u;
+		const uint32_t channelBit = requested.channels == 1 ? 1u : 2u;
+		if ((status.sinkRates & rateBit) == 0 || (status.sinkChannels & channelBit) == 0)
+		{
+			CloseHandle(handle);
+			std::fprintf(stderr,
+						 "the sink does not advertise %u Hz %u ch (it offered %u Hz and %u ch sets); "
+						 "nothing was stored. Use `format auto`.\n",
+						 requested.sampleRate, requested.channels, status.sinkRates, status.sinkChannels);
+			return 1;
+		}
+	}
+
+	DWORD bytes = 0;
+	const bool set = IoctlSync(handle, Ioctl::kIoctlSetEndpointFormat, &requested,
+							  static_cast<DWORD>(sizeof(requested)), nullptr, 0, bytes, error);
+	if (!set && error.empty())
+	{
+		error = Win32Error("SET_ENDPOINT_FORMAT", GetLastError());
+	}
+	Ioctl::EndpointFormat applied = {};
+	const bool read = set && ReadEndpointFormat(handle, applied, error);
+	if (!set || !read)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	std::printf("%s: endpoint format set to %s.\n", DeviceLabel(device).c_str(),
+				EndpointFormatText(applied).c_str());
+	if (applied.sampleRate != 0)
+	{
+		std::printf("note: this is now the only format the endpoint offers, so it is also the only\r\n"
+					"entry in the Windows format list. Windows rebuilds the shared-mode stream to it;\r\n"
+					"a WASAPI exclusive-mode player is limited to it as well.\r\n");
+	}
+	else
+	{
+		std::printf("note: Windows plays the first format the endpoint lists for the shared-mode\r\n"
+					"stream; the Sound-settings pick does not reach the driver.\r\n");
+	}
+	CloseHandle(handle);
+	return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -732,6 +873,8 @@ int main(int argc, char** argv)
 	std::string command = "status";
 	std::string deviceSpec;
 	std::string codecArg;
+	std::string formatRateArg;
+	std::string formatChannelsArg;
 	PreferenceOverrides overrides;
 	bool watch = false;
 	bool verbose = false;
@@ -747,6 +890,16 @@ int main(int argc, char** argv)
 	{
 		codecArg = args[position];
 		++position;
+	}
+	if (command == "format" && position < args.size() && args[position][0] != '-')
+	{
+		formatRateArg = args[position];
+		++position;
+		if (position < args.size() && args[position][0] != '-')
+		{
+			formatChannelsArg = args[position];
+			++position;
+		}
 	}
 
 	for (; position < args.size(); ++position)
@@ -834,8 +987,8 @@ int main(int argc, char** argv)
 		}
 		else if (arg == "--rate" || arg == "--channels")
 		{
-			std::fprintf(stderr, "%s was removed; choose the PCM format in Windows Sound settings. "
-				"All supported endpoint formats remain available.\n", arg.c_str());
+			std::fprintf(stderr, "%s was removed; use `format <rate> <channels>` to pin the endpoint "
+				"format instead.\n", arg.c_str());
 			return 2;
 		}
 		else if (arg == "--watch")
@@ -867,7 +1020,8 @@ int main(int argc, char** argv)
 		std::printf("%s", kUsage);
 		return 0;
 	}
-	if (command != "list" && command != "status" && command != "codec" && command != "version")
+	if (command != "list" && command != "status" && command != "codec" && command != "version" &&
+		command != "format")
 	{
 		std::fprintf(stderr, "unknown command '%s'\n\n%s", command.c_str(), kUsage);
 		return 2;
@@ -902,6 +1056,10 @@ int main(int argc, char** argv)
 	if (command == "codec")
 	{
 		return CommandCodec(devices, deviceSpec, codecArg, overrides);
+	}
+	if (command == "format")
+	{
+		return CommandFormat(devices, deviceSpec, formatRateArg, formatChannelsArg);
 	}
 	return CommandStatus(devices, deviceSpec, watch, interval, verbose);
 }

@@ -31,33 +31,36 @@ instead of needing it restarted. The driver keeps one `ACXDATAFORMAT` object per
 by both lists, so a change is an add/remove of objects it already owns and both modes always
 list the same formats with the same default. Unchanged lists cause no notification or
 repeated log.
-The first available format in this order is only the starting default: 44100 stereo,
-44100 mono, 48000 stereo, 48000 mono. A still-listed default survives discovery, and both
-the proposed format Windows sends and the format of a stream the engine opens are adopted
-as the default of both mode lists. An active stream is never relabelled with the list
-default.
+The list order is 44100 stereo, 44100 mono, 48000 stereo, 48000 mono unless a format is
+pinned (below); the first listed entry is also the assigned default of both mode lists.
 
-The assigned default does not reach the engine: hardware showed the stored selection listed
-fourth while Windows opened the first listed format for the shared-mode stream, and moving
-only the default changed nothing. The format of the last stream that actually ran therefore
-leads both lists - `RebuildListing` removes and re-adds the objects so it is the first entry -
-and it is kept as `EndpointSampleRate`/`EndpointChannels` under the sink's configuration key,
-so a new device instance lists it first before Windows opens anything. The stored value
-mirrors what played; it is not a driver preference and never narrows the list.
+Windows ignores the format picked in Sound settings for this endpoint: the decision happens
+when the format list changes, so Windows plays the first format the endpoint lists and the
+latter selection is never consulted. Hardware shows it from both sides - the request arrives
+as a stream at the picked format that is built and then discarded, and the graph that runs is
+at the first listed format. `Alternative A2DP Driver` documents the same platform behaviour
+for Windows 11's Unified Audio Endpoint and recommends offering a single format.
 
-That value is committed when a stream *runs*, not when it is created. Windows creates one
-stream per format it enumerates before it opens the one it plays (four RAW and four DEFAULT
-probes per link-up), and every endpoint format change invalidates the negotiated codec
-configuration, so committing the probes closed the session once per probe and the shared-mode
-stream always came back at the first listed format. A probe never runs, so it now changes
-nothing.
+An endpoint format is therefore selected in the driver's own settings (`SET_ENDPOINT_FORMAT`,
+stored per sink as `SelectedSampleRate`/`SelectedChannels`) and offered as the only entry of
+both mode lists, so the shared-mode mix cannot land on anything else. `0`/`0` is automatic and
+lists every format the sink supports, in the order above, which also keeps every format
+available to a WASAPI exclusive-mode player; pinning one format limits those players to it.
+A selection the sink does not advertise is refused by the IOCTL and, if a hand-edited store
+produces one, `AudioApplyEndpointFormats` logs it and offers every supported format instead.
 
-The `PROPOSEDATAFORMAT` SET cannot decide this: Windows sweeps every rate and channel count
+Nothing the graph does may change that list. Windows creates one stream per format it
+enumerates before it opens the one it plays (four RAW and four DEFAULT probes per link-up),
+and every endpoint format change invalidates the negotiated codec configuration, so an
+endpoint format taken from a created stream closed the session once per probe. The format of
+a stream only reaches `PinSampleRate` when the stream runs, which feeds the encoder and the
+position math; it never moves the list.
+
+The `PROPOSEDATAFORMAT` SET cannot decide either: Windows sweeps every rate and channel count
 it knows through it while building and validating the graph (8000 Hz to 192000 Hz, 1 to 8
 channels, one value per listed format and many that are not listed), so a proposal is only
 logged. Adopting one moves the default data format for a few milliseconds until the next
-proposal replaces it, and each move makes audiodg rebuild the graph - the rebuild is what
-ended on the first listed format.
+proposal replaces it, and each move makes audiodg rebuild the graph.
 
 Windows does not ask this pin for `KSPROPERTY_PIN_PROPOSEDATAFORMAT2`; a device-start log
 shows only the enumeration queries, then `MODEDATAFORMATS` as a size probe. The legacy
@@ -73,8 +76,8 @@ and triggers AVDTP renegotiation when it differs. Missing/invalid formats are re
 reported as a fabricated 44100 stereo fallback.
 
 Logs distinguish `endpoint formats` (availability, 16-bit and provisional/discovered source),
-`advertised default` (initial suggestion when the lists change), `endpoint default follows
-the stream format` or `... the proposed format` (which took over the default), `pin property`
+`advertised default` (initial suggestion when the lists change, pinned or sink-selected),
+`endpoint default follows the stream format` (which took over the list default), `pin property`
 (the format questions Windows asks, once each), the stream processing mode, `stream format`
 (Windows' raw request), and `endpoint format ... (actual stream)` (encoder input). The media/AVDTP logs report the negotiated codec format, not the
 Windows mix format. Previously

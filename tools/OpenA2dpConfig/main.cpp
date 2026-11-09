@@ -35,6 +35,8 @@ enum ControlId : int {
 	kDetailsCheck,
 	kStatusBox,
 	kCodecCombo,
+	kFormatRateCombo,
+	kFormatChannelsCombo,
 	kBitrateCombo,
 	kBitpoolEdit,
 	kBlocksCombo,
@@ -63,6 +65,7 @@ struct SinkState
 	std::string reference;
 	Ioctl::Status status = {};
 	Ioctl::Preference preference = {};
+	Ioctl::EndpointFormat endpointFormat = {};
 	Ioctl::VersionInfo version = {};
 	std::wstring message; // the outcome of the last action, shown under the controls
 	std::wstring shownText; // what the status box holds, so a refresh only redraws real changes
@@ -280,11 +283,28 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"STATIC", L"The frame shape and bitpool apply to SBC; the bitrate to AAC.",
 				SS_LEFT, 24, 396, 592, 20, 0, font);
 
-	CreateChild(hwnd, L"STATIC", L"Choose the PCM format in Windows Sound settings; all supported formats remain available.",
-				SS_LEFT, 24, 454, 592, 40, 0, font);
+	CreateChild(hwnd, L"BUTTON", L"Endpoint format", BS_GROUPBOX, 12, 432, 616, 76, 0, font);
+	CreateChild(hwnd, L"STATIC", L"PCM format", SS_LEFT, 24, 454, 84, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 450, 190, 160,
+				kFormatRateCombo, font);
+	CreateChild(hwnd, L"STATIC", L"Channels", SS_LEFT, 320, 454, 92, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 450, 196, 160,
+				kFormatChannelsCombo, font);
+	CreateChild(hwnd, L"STATIC",
+			L"Windows plays the first format the endpoint lists and ignores the Sound-settings pick, so a pinned "
+			L"format is offered alone.",
+			SS_LEFT, 24, 478, 592, 20, 0, font);
 
 	CreateChild(hwnd, L"BUTTON", L"Apply", BS_PUSHBUTTON | WS_TABSTOP, 496, 516, 132, 28, kApplyButton, font);
 	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 12, 522, 476, 20, kMessageLabel, font);
+
+	AddComboItem(hwnd, kFormatRateCombo, L"Automatic (every supported format)", 0);
+	AddComboItem(hwnd, kFormatRateCombo, L"44100 Hz", 44100);
+	AddComboItem(hwnd, kFormatRateCombo, L"48000 Hz", 48000);
+
+	AddComboItem(hwnd, kFormatChannelsCombo, L"Automatic", 0);
+	AddComboItem(hwnd, kFormatChannelsCombo, L"Mono (1 ch)", 1);
+	AddComboItem(hwnd, kFormatChannelsCombo, L"Stereo (2 ch)", 2);
 
 	AddComboItem(hwnd, kCodecCombo, L"Automatic (AAC, then SBC)", kCodecAuto);
 	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);
@@ -312,7 +332,8 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kAllocationCombo, L"Loudness", Ioctl::kSbcAllocationLoudness);
 	AddComboItem(hwnd, kAllocationCombo, L"SNR", Ioctl::kSbcAllocationSnr);
 
-	for (const int id : {kCodecCombo, kBitrateCombo, kBlocksCombo, kSubbandsCombo, kAllocationCombo})
+	for (const int id : {kCodecCombo, kFormatRateCombo, kFormatChannelsCombo, kBitrateCombo, kBlocksCombo,
+						 kSubbandsCombo, kAllocationCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -338,6 +359,8 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
 	const std::wstring bitpool = preference.sbcBitpool != 0 ? Format(L"%u", preference.sbcBitpool) : L"";
 	SetWindowTextW(GetDlgItem(hwnd, kBitpoolEdit), bitpool.c_str());
+	SelectComboValue(hwnd, kFormatRateCombo, state->endpointFormat.sampleRate);
+	SelectComboValue(hwnd, kFormatChannelsCombo, state->endpointFormat.channels);
 }
 
 void CloseControl(SinkState& state)
@@ -382,7 +405,8 @@ void OpenSelected(HWND hwnd)
 	state->control = control;
 
 	if (!ReadVersion(control, state->version, error) || !ReadStatus(control, state->status, error) ||
-		!ReadPreference(control, state->preference, error))
+		!ReadPreference(control, state->preference, error) ||
+		!ReadEndpointFormat(control, state->endpointFormat, error))
 	{
 		CloseControl(*state);
 		state->message = Widen(error);
@@ -609,8 +633,23 @@ void ApplySettings(HWND hwnd)
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
 
+	// The endpoint format is its own setting: a rate without a channel count is not a format.
+	Ioctl::EndpointFormat endpointFormat = {};
+	endpointFormat.sampleRate = ComboValue(hwnd, kFormatRateCombo);
+	endpointFormat.channels = ComboValue(hwnd, kFormatChannelsCombo);
+	if (endpointFormat.sampleRate == 0)
+	{
+		endpointFormat.channels = 0;
+	}
+	if (!Ioctl::ValidEndpointFormat(endpointFormat))
+	{
+		SetMessage(hwnd, L"Choose a channel count with the pinned sample rate.");
+		return;
+	}
+
 	std::string failure;
-	if (!WritePreference(state->control, preference, failure))
+	if (!WriteEndpointFormat(state->control, endpointFormat, failure) ||
+		!WritePreference(state->control, preference, failure))
 	{
 		SetMessage(hwnd, Widen(failure));
 		return;
@@ -620,8 +659,13 @@ void ApplySettings(HWND hwnd)
 	if (ReadPreference(state->control, stored, failure))
 	{
 		state->preference = stored;
-		LoadPreferenceIntoControls(hwnd);
 	}
+	Ioctl::EndpointFormat storedFormat = {};
+	if (ReadEndpointFormat(state->control, storedFormat, failure))
+	{
+		state->endpointFormat = storedFormat;
+	}
+	LoadPreferenceIntoControls(hwnd);
 	RefreshStatus(hwnd);
 	const bool streaming = state->status.mediaState == Ioctl::MediaState::Streaming;
 	SetMessage(hwnd, streaming ? L"Stored. The active stream renegotiates to apply it."

@@ -20,8 +20,11 @@ const wchar_t kSbcBitpoolValueName[] = L"CodecPreferenceSbcBitpool";
 const wchar_t kSbcBlocksValueName[] = L"CodecPreferenceSbcBlocks";
 const wchar_t kSbcSubbandsValueName[] = L"CodecPreferenceSbcSubbands";
 const wchar_t kSbcAllocationValueName[] = L"CodecPreferenceSbcAllocation";
-const wchar_t kEndpointRateValueName[] = L"EndpointSampleRate";
-const wchar_t kEndpointChannelsValueName[] = L"EndpointChannels";
+// The endpoint format the user selected; 0/0 (or no value) means automatic. The names differ
+// from the values earlier builds wrote from the observed stream, so a stale observation is
+// never mistaken for a selection.
+const wchar_t kEndpointRateValueName[] = L"SelectedSampleRate";
+const wchar_t kEndpointChannelsValueName[] = L"SelectedChannels";
 
 const char* PreferenceName(const Ioctl::Preference& preference)
 {
@@ -236,10 +239,14 @@ void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx)
 				if (ReadDword(sink, kEndpointRateValueName, sampleRate) &&
 					ReadDword(sink, kEndpointChannelsValueName, channels))
 				{
-					if (KnownEndpointFormat(sampleRate, channels))
+					if (sampleRate == 0 && channels == 0)
 					{
-						ctx->StoredSampleRate = sampleRate;
-						ctx->StoredChannels = static_cast<USHORT>(channels);
+						OA2DP_INFO(ctx, "Config", "endpoint format automatic for this sink");
+					}
+					else if (KnownEndpointFormat(sampleRate, channels))
+					{
+						ctx->SelectedSampleRate = sampleRate;
+						ctx->SelectedChannels = static_cast<USHORT>(channels);
 						OA2DP_INFO(ctx, "Config",
 							"endpoint format %u Hz %u ch restored from the registry", sampleRate, channels);
 					}
@@ -257,14 +264,15 @@ void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx)
 	}
 }
 
-void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
+void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx)
 {
-	if (sampleRate == 0 || (ctx->StoredSampleRate == sampleRate && ctx->StoredChannels == channels) ||
-		KeGetCurrentIrql() != PASSIVE_LEVEL)
+	if (KeGetCurrentIrql() != PASSIVE_LEVEL)
 	{
-		// The registry needs PASSIVE_LEVEL: a proposal that arrives higher is simply not kept.
+		// The registry needs PASSIVE_LEVEL; a selection set higher is only kept in memory.
 		return;
 	}
+	const ULONG sampleRate = ctx->SelectedSampleRate;
+	const USHORT channels = ctx->SelectedChannels;
 
 	WDFKEY parameters = nullptr;
 	if (!OpenParametersKey(KEY_READ | KEY_WRITE | KEY_CREATE_SUB_KEY, &parameters))
@@ -282,10 +290,15 @@ void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT
 			WriteDword(ctx, sink, kEndpointRateValueName, sampleRate);
 			WriteDword(ctx, sink, kEndpointChannelsValueName, channels);
 			WdfRegistryClose(sink);
-			ctx->StoredSampleRate = sampleRate;
-			ctx->StoredChannels = channels;
-			OA2DP_INFO(ctx, "Config", "endpoint format %u Hz %u ch stored for this sink", sampleRate,
-				channels);
+			if (sampleRate != 0)
+			{
+				OA2DP_INFO(ctx, "Config", "endpoint format %u Hz %u ch stored for this sink", sampleRate,
+					channels);
+			}
+			else
+			{
+				OA2DP_INFO(ctx, "Config", "endpoint format automatic stored for this sink");
+			}
 		}
 		WdfRegistryClose(devices);
 	}

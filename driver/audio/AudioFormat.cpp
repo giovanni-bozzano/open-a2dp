@@ -448,7 +448,7 @@ NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 // outside the subsystem namespace like AudioInitialize.
 using namespace OpenA2dpDriver::Audio;
 
-// Only driver and sink capabilities determine this list; preferences never narrow it.
+// The list is the sink's formats, narrowed to the selected one when the user pinned it.
 NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 {
 	const ACXPIN pin = ctx->StreamingPin;
@@ -462,28 +462,38 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	NTSTATUS status = STATUS_SUCCESS;
 	WdfWaitLockAcquire(ctx->FormatLock, nullptr);
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
-	const ULONG desired = DesiredFormats(sinkFormats);
+	ULONG desired = DesiredFormats(sinkFormats);
 	if (desired == 0)
 	{
 		WdfWaitLockRelease(ctx->FormatLock);
 		OA2DP_ERROR(ctx, "Audio", "sink SBC formats 0x%02X have no driver-supported PCM format", sinkFormats);
 		return STATUS_NOT_SUPPORTED;
 	}
-	// The selection leads both lists: Windows opens the shared-mode stream with the first
-	// listed format, so the order is what carries the Sound-settings format to the engine.
-	// The stored selection comes first, the live stream format is only a fallback.
-	ULONG startIndex = ctx->StoredSampleRate != 0
-		? RenderFormatIndex(ctx->StoredSampleRate, ctx->StoredChannels) : AudioRenderFormatCount;
+	// Windows opens the shared-mode stream with the first listed format and ignores the
+	// Sound-settings pick, so a pinned format is offered alone: listing it first is enough
+	// for the engine to use it but leaves the other formats selectable, which is how the pick
+	// ends up ignored. With no selection every sink-supported format stays listed.
 	KIRQL irql;
-	if (startIndex >= AudioRenderFormatCount)
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const ULONG selectedRate = ctx->SelectedSampleRate;
+	const USHORT selectedChannels = ctx->SelectedChannels;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	ULONG startIndex = FirstListed(desired);
+	if (selectedRate != 0)
 	{
-		KeAcquireSpinLock(&ctx->AudioLock, &irql);
-		startIndex = RenderFormatIndex(ctx->PinSampleRate, ctx->PinChannels);
-		KeReleaseSpinLock(&ctx->AudioLock, irql);
-	}
-	if (startIndex >= AudioRenderFormatCount || (desired & (1u << startIndex)) == 0)
-	{
-		startIndex = FirstListed(desired);
+		const ULONG index = RenderFormatIndex(selectedRate, selectedChannels);
+		if (index < AudioRenderFormatCount && (desired & (1u << index)) != 0)
+		{
+			desired = 1u << index;
+			startIndex = index;
+		}
+		else
+		{
+			OA2DP_WARN(ctx, "Audio",
+				"the selected endpoint format %u Hz %u ch is not one the sink supports; offering "
+				"every supported format instead",
+				selectedRate, static_cast<unsigned>(selectedChannels));
+		}
 	}
 
 	const ULONG listedBefore = ctx->FormatsListed;
@@ -552,9 +562,17 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		sinkFormats == 0 ? "provisional; sink not discovered" : "sink SBC capabilities");
 	if (NT_SUCCESS(defaultStatus))
 	{
-		OA2DP_INFO(ctx, "Audio", "advertised default %u Hz %u ch; Windows selects the stream format",
+		OA2DP_INFO(ctx, "Audio", "advertised default %u Hz %u ch%s",
 			AudioRenderRates[defaultIndex / AudioRenderChannelCount],
-			static_cast<unsigned>(AudioRenderChannels[defaultIndex % AudioRenderChannelCount]));
+			static_cast<unsigned>(AudioRenderChannels[defaultIndex % AudioRenderChannelCount]),
+			selectedRate != 0 ? "; pinned to the selected endpoint format" : "; Windows selects the stream format");
 	}
 	return NT_SUCCESS(status) ? defaultStatus : status;
+}
+
+bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
+{
+	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	const ULONG index = RenderFormatIndex(sampleRate, channels);
+	return index < AudioRenderFormatCount && (DesiredFormats(sinkFormats) & (1u << index)) != 0;
 }

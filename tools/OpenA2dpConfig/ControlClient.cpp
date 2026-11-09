@@ -263,4 +263,27 @@ bool WritePreference(HANDLE handle, const Ioctl::Preference& preference, std::st
 					 static_cast<DWORD>(sizeof(request)), nullptr, 0, bytes, error);
 }
 
+bool ReadEndpointFormat(HANDLE handle, Ioctl::EndpointFormat& format, std::string& error)
+{
+	if (!ReadIoctl(handle, OpenA2dp::Ioctl::kIoctlGetEndpointFormat, format, error))
+	{
+		return false;
+	}
+	if (format.abiVersion != OpenA2dp::Ioctl::kAbiVersion)
+	{
+		error = AbiMismatch(format.abiVersion);
+		return false;
+	}
+	return true;
+}
+
+bool WriteEndpointFormat(HANDLE handle, const Ioctl::EndpointFormat& format, std::string& error)
+{
+	Ioctl::EndpointFormat request = format;
+	request.abiVersion = OpenA2dp::Ioctl::kAbiVersion;
+	DWORD bytes = 0;
+	return CallIoctl(handle, OpenA2dp::Ioctl::kIoctlSetEndpointFormat, &request,
+					 static_cast<DWORD>(sizeof(request)), nullptr, 0, bytes, error);
+}
+
 } // namespace OpenA2dp::ConfigUi

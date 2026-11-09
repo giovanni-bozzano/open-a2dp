@@ -27,5 +27,7 @@ bool ReadVersion(HANDLE handle, Ioctl::VersionInfo& version, std::string& error)
 bool ReadStatus(HANDLE handle, Ioctl::Status& status, std::string& error);
 bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& error);
 bool WritePreference(HANDLE handle, const Ioctl::Preference& preference, std::string& error);
+bool ReadEndpointFormat(HANDLE handle, Ioctl::EndpointFormat& format, std::string& error);
+bool WriteEndpointFormat(HANDLE handle, const Ioctl::EndpointFormat& format, std::string& error);
 
 } // namespace OpenA2dp::ConfigUi

@@ -333,10 +333,12 @@ struct DEVICE_CONTEXT
 	ULONG PinSampleRate;
 	USHORT PinChannels;
 	USHORT PinBytesPerFrame;
-	// The PCM format Windows last proposed for the pin, restored from the sink's config key
-	// so a new device instance lists it first; 0 means nothing is stored yet.
-	ULONG StoredSampleRate;
-	USHORT StoredChannels;
+	// PCM format this endpoint offers Windows, set from SET_ENDPOINT_FORMAT and stored per
+	// sink. 0 means automatic: every format the sink supports is listed. A pinned format is
+	// listed alone, because Windows ignores the Sound-settings pick and plays the first
+	// listed format (AudioApplyEndpointFormats).
+	ULONG SelectedSampleRate;
+	USHORT SelectedChannels;
 	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
 	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
@@ -548,9 +550,14 @@ void BuildRenderFormats();
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx);
 
-// Rebuilds the streaming pin's format list from discovered sink capabilities in place.
+// Rebuilds the streaming pin's format list from discovered sink capabilities in place, and
+// from the selected endpoint format when one is set.
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx);
+
+// True when the sink's advertised SBC capabilities carry this PCM format. A selection the
+// sink cannot play would leave the endpoint without a stream, so it is refused.
+bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);
 
 // Reads up to frames of stereo PCM rendered by Windows; pads the rest with
 // silence. Returns the number of frames that came from the endpoint.
@@ -581,11 +588,10 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx);
 
-// Restores the PCM format Windows last proposed for this sink.
+// Restores the endpoint format selected for this sink; 0 Hz means automatic.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx);
 
-// Stores the PCM format Windows proposed for this sink, so the next device instance lists
-// it first instead of starting from the table order.
+// Stores the endpoint format selected for this sink.
 _IRQL_requires_(PASSIVE_LEVEL)
-void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);
+void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx);

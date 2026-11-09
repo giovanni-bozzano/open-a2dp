@@ -117,18 +117,11 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 
 	WdfTimerStart(ctx->AudioTimer, 0);
 	OA2DP_INFO(ctx, "Audio", "stream run");
-	// This stream now carries audio, so it is the format Windows plays: commit it, keep it for
-	// the next device instance and lead the format lists with it, so a session renegotiation
-	// rebuilds the Windows stream at the same rate instead of at the first listed format.
+	// This stream carries audio, so its format is the one the encoder and the position math
+	// follow. The offered format list is not touched: it belongs to the endpoint setting
+	// (AudioApplyEndpointFormats), not to whatever Windows opened.
 	const STREAM_CONTEXT* streamContext = GetStreamContext(stream);
 	AudioSetPinFormat(ctx, streamContext->SampleRate, streamContext->Channels);
-	ConfigSaveEndpointFormat(ctx, streamContext->SampleRate, streamContext->Channels);
-	const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
-	if (!NT_SUCCESS(formatStatus))
-	{
-		OA2DP_WARN(ctx, "Audio", "moving the stream format to the front of the format list failed 0x%08X",
-			formatStatus);
-	}
 	SignalingOnAudioRun(ctx);
 	return STATUS_SUCCESS;
 }

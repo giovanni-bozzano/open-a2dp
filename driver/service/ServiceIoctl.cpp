@@ -354,6 +354,90 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		return;
 	}
 
+	case Ioctl::kIoctlGetEndpointFormat:
+	{
+		Ioctl::EndpointFormat* out = nullptr;
+		NTSTATUS status = WdfRequestRetrieveOutputBuffer(
+			request, sizeof(Ioctl::EndpointFormat), reinterpret_cast<PVOID*>(&out), nullptr);
+		if (!NT_SUCCESS(status))
+		{
+			Complete(request, status);
+			return;
+		}
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		out->sampleRate = ctx->SelectedSampleRate;
+		out->channels = ctx->SelectedChannels;
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		out->abiVersion = Ioctl::kAbiVersion;
+		out->reserved = 0;
+		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::EndpointFormat));
+		return;
+	}
+
+	case Ioctl::kIoctlSetEndpointFormat:
+	{
+		Ioctl::EndpointFormat* in = nullptr;
+		NTSTATUS status = WdfRequestRetrieveInputBuffer(
+			request, sizeof(Ioctl::EndpointFormat), reinterpret_cast<PVOID*>(&in), nullptr);
+		if (!NT_SUCCESS(status))
+		{
+			Complete(request, status);
+			return;
+		}
+		if (in->abiVersion != Ioctl::kAbiVersion)
+		{
+			Complete(request, STATUS_REVISION_MISMATCH);
+			return;
+		}
+		if (!Ioctl::ValidEndpointFormat(*in))
+		{
+			Complete(request, STATUS_INVALID_PARAMETER);
+			return;
+		}
+		// A format the sink does not advertise would leave the endpoint with nothing to open,
+		// so it is refused instead of stored. Before the first discovery nothing is known yet.
+		const bool sinkKnown =
+			InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0) != 0;
+		if (in->sampleRate != 0 && sinkKnown &&
+			!AudioSinkSupportsEndpointFormat(ctx, in->sampleRate, static_cast<USHORT>(in->channels)))
+		{
+			OA2DP_WARN(ctx, "Service",
+				"the sink does not advertise %u Hz %u ch, so that endpoint format is refused",
+				in->sampleRate, in->channels);
+			Complete(request, STATUS_NOT_SUPPORTED);
+			return;
+		}
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		const bool changed = ctx->SelectedSampleRate != in->sampleRate ||
+							 ctx->SelectedChannels != in->channels;
+			ctx->SelectedSampleRate = in->sampleRate;
+			ctx->SelectedChannels = static_cast<USHORT>(in->channels);
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		if (changed)
+		{
+			if (in->sampleRate != 0)
+			{
+				OA2DP_INFO(ctx, "Service", "endpoint format set to %u Hz %u ch", in->sampleRate,
+					in->channels);
+			}
+			else
+			{
+				OA2DP_INFO(ctx, "Service", "endpoint format set to automatic");
+			}
+			ConfigSaveEndpointFormat(ctx);
+			// A changed list makes Windows rebuild the shared-mode stream at the new format.
+			const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+			if (!NT_SUCCESS(formatStatus))
+			{
+				OA2DP_WARN(ctx, "Service", "applying the endpoint format failed 0x%08X", formatStatus);
+			}
+		}
+		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
+		return;
+	}
+
 	default:
 		Complete(request, STATUS_INVALID_DEVICE_REQUEST);
 		return;
