@@ -45,10 +45,13 @@ mode list, as Microsoft's SDCA ACX sample does.
 `KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is deliberately not supported on the streaming pin:
 [Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2),
 and ACX would otherwise answer it with the list default for either mode. The refusal applies
-to the whole circuit, regardless of the request's target classification. Logs record these
-queries, legacy `PROPOSEDATAFORMAT` requests (still ACX-managed), and the stream processing
-mode, which should now be `default` for shared-mode playback. The normal format list and initial-default queries remain
-ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
+to the whole circuit, regardless of the request's target classification. Windows tests the
+Sound-settings format with a `KSPROPERTY_PIN_PROPOSEDATAFORMAT` SET before opening the stream
+and falls back to another format when it fails. The driver answers WAVEFORMATEX SETs on the
+streaming pin itself, using the same 16-bit PCM check as stream creation, and logs each
+proposal with its decision. Other `PROPOSEDATAFORMAT` requests stay ACX-managed and are
+logged, as is the stream processing mode, which should be `default` for shared-mode playback.
+The normal format list and initial-default queries remain ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
 and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not

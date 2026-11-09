@@ -69,6 +69,58 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 		SignalingOnPreferenceChanged(ctx);
 	}
 }
+// Checks a KS format against the 16-bit PCM formats the endpoint lists for this sink.
+// `what` names the request in the log so proposals and stream creation can be told apart.
+NTSTATUS CheckPcmFormat(_In_ DEVICE_CONTEXT* ctx, _In_reads_bytes_(size) const KSDATAFORMAT* data, _In_ ULONG size,
+	_In_z_ const char* what)
+{
+	const auto* wave = reinterpret_cast<const KSDATAFORMAT_WAVEFORMATEX*>(data);
+	constexpr ULONG minimum = FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx) + sizeof(WAVEFORMATEX);
+	if (data == nullptr || size < minimum || data->FormatSize < minimum || data->FormatSize > size ||
+		!IsEqualGUID(data->Specifier, KSDATAFORMAT_SPECIFIER_WAVEFORMATEX))
+	{
+		OA2DP_WARN(ctx, "Audio", "%s format missing or not WAVEFORMATEX (%u B); refusing it", what,
+			data != nullptr && size >= sizeof(KSDATAFORMAT) ? data->FormatSize : size);
+		return STATUS_NO_MATCH;
+	}
+	const WAVEFORMATEX& pcm = wave->WaveFormatEx;
+	const bool extensible = pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+		pcm.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
+		data->FormatSize >= sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEXTENSIBLE);
+	const auto& extended = *reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(&pcm);
+	OA2DP_INFO(ctx, "Audio", "%s format %u B, tag %u, %u Hz %u ch %u bit, mask 0x%X", what, data->FormatSize,
+		static_cast<unsigned>(pcm.wFormatTag), pcm.nSamplesPerSec, static_cast<unsigned>(pcm.nChannels),
+		static_cast<unsigned>(pcm.wBitsPerSample), extensible ? extended.dwChannelMask : 0u);
+
+	bool pcm16 = IsEqualGUID(data->MajorFormat, KSDATAFORMAT_TYPE_AUDIO) &&
+		IsEqualGUID(data->SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
+		pcm.wBitsPerSample == 16 && pcm.nBlockAlign == pcm.nChannels * sizeof(INT16) &&
+		pcm.nAvgBytesPerSec == pcm.nSamplesPerSec * pcm.nBlockAlign;
+	if (pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+	{
+		pcm16 = pcm16 && extensible && IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
+			extended.Samples.wValidBitsPerSample == 16 &&
+			(extended.dwChannelMask == 0 || extended.dwChannelMask ==
+				static_cast<ULONG>(pcm.nChannels == 1 ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO));
+	}
+	else
+	{
+		pcm16 = pcm16 && pcm.wFormatTag == WAVE_FORMAT_PCM;
+	}
+	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	for (ULONG i = 0; pcm16 && i < AudioRenderFormatCount; ++i)
+	{
+		if (pcm.nSamplesPerSec == AudioRenderRates[i / AudioRenderChannelCount] &&
+			pcm.nChannels == AudioRenderChannels[i % AudioRenderChannelCount] &&
+			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
+				static_cast<uint8_t>(pcm.nChannels))))
+		{
+			return STATUS_SUCCESS;
+		}
+	}
+	OA2DP_WARN(ctx, "Audio", "%s format is not in the supported endpoint list; refusing it", what);
+	return STATUS_NO_MATCH;
+}
 } // namespace
 
 void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFREQUEST request)
@@ -88,12 +140,26 @@ void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WD
 		WdfRequestComplete(request, STATUS_NOT_SUPPORTED);
 		return;
 	}
+	if (parameters.Type == AcxRequestTypeProperty && IsEqualGUID(property.Set, KSPROPSETID_Pin) &&
+		property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT && property.Verb == AcxPropertyVerbSet &&
+		property.ItemType == AcxItemTypePin && property.ItemId == StreamingPinId &&
+		property.Value != nullptr && property.ValueCb >= sizeof(KSDATAFORMAT) &&
+		IsEqualGUID(static_cast<const KSDATAFORMAT*>(property.Value)->Specifier, KSDATAFORMAT_SPECIFIER_WAVEFORMATEX))
+	{
+		// Windows tests the Sound-settings format with this SET before it opens the stream,
+		// and opens another format when it fails. Answer it from the same check stream
+		// creation uses, so a format the endpoint lists is never refused here.
+		const NTSTATUS status = CheckPcmFormat(ctx, static_cast<const KSDATAFORMAT*>(property.Value),
+			property.ValueCb, "proposed");
+		WdfRequestComplete(request, status);
+		return;
+	}
 	if (parameters.Type == AcxRequestTypeProperty &&
 		IsEqualGUID(property.Set, KSPROPSETID_Pin) && property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT)
 	{
-		OA2DP_INFO(ctx, "Audio", "PROPOSEDATAFORMAT verb %u, target %u/%u, control %u B, value %u B: ACX handles it",
+		OA2DP_INFO(ctx, "Audio", "PROPOSEDATAFORMAT verb %u, target %u/%u, value %u B: ACX handles it",
 			static_cast<unsigned>(property.Verb), static_cast<unsigned>(property.ItemType), property.ItemId,
-			property.ControlCb, property.ValueCb);
+			property.ValueCb);
 	}
 	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
 	if (!NT_SUCCESS(status))
@@ -108,60 +174,9 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	{
 		return STATUS_INVALID_PARAMETER;
 	}
-	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
-	if (wave == nullptr ||
-		wave->DataFormat.FormatSize < FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx) + sizeof(WAVEFORMATEX) ||
-		!IsEqualGUID(wave->DataFormat.Specifier, KSDATAFORMAT_SPECIFIER_WAVEFORMATEX))
-	{
-		OA2DP_WARN(ctx, "Audio", "stream format missing or not WAVEFORMATEX; refusing it");
-		return STATUS_NOT_SUPPORTED;
-	}
-	OA2DP_INFO(ctx, "Audio", "stream format %u B, WAVEFORMATEX, tag %u, cbSize %u, %u Hz %u ch %u bit",
-		wave->DataFormat.FormatSize, static_cast<unsigned>(wave->WaveFormatEx.wFormatTag),
-		static_cast<unsigned>(wave->WaveFormatEx.cbSize), wave->WaveFormatEx.nSamplesPerSec,
-		static_cast<unsigned>(wave->WaveFormatEx.nChannels),
-		static_cast<unsigned>(wave->WaveFormatEx.wBitsPerSample));
-	NTSTATUS status = STATUS_NOT_SUPPORTED;
-	const WAVEFORMATEX& pcm = wave->WaveFormatEx;
-	bool pcm16 = IsEqualGUID(wave->DataFormat.MajorFormat, KSDATAFORMAT_TYPE_AUDIO) &&
-		IsEqualGUID(wave->DataFormat.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
-		pcm.wBitsPerSample == 16 && pcm.nBlockAlign == pcm.nChannels * sizeof(INT16) &&
-		pcm.nAvgBytesPerSec == pcm.nSamplesPerSec * pcm.nBlockAlign;
-	if (pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
-	{
-		pcm16 = pcm16 && pcm.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
-			wave->DataFormat.FormatSize >= sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEXTENSIBLE);
-		if (pcm16)
-		{
-			const auto& extended = *reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(&pcm);
-			pcm16 = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
-				extended.Samples.wValidBitsPerSample == 16 &&
-				(extended.dwChannelMask == 0 || extended.dwChannelMask ==
-					static_cast<ULONG>(pcm.nChannels == 1 ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO));
-		}
-	}
-	else
-	{
-		pcm16 = pcm16 && pcm.wFormatTag == WAVE_FORMAT_PCM;
-	}
-	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
-	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
-	{
-		if (pcm16 &&
-			pcm.nSamplesPerSec == AudioRenderRates[i / AudioRenderChannelCount] &&
-			pcm.nChannels == AudioRenderChannels[i % AudioRenderChannelCount] &&
-			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
-				static_cast<uint8_t>(pcm.nChannels))))
-		{
-			status = STATUS_SUCCESS;
-			break;
-		}
-	}
-	if (!NT_SUCCESS(status))
-	{
-		OA2DP_WARN(ctx, "Audio", "stream format is not in the supported endpoint list; refusing it");
-	}
-	return status;
+	const auto* data = static_cast<const KSDATAFORMAT*>(AcxDataFormatGetKsDataFormat(format));
+	const NTSTATUS status = CheckPcmFormat(ctx, data, data != nullptr ? data->FormatSize : 0, "stream");
+	return status == STATUS_NO_MATCH ? STATUS_NOT_SUPPORTED : status;
 }
 
 void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
