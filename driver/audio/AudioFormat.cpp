@@ -280,30 +280,13 @@ void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFR
 			LogPropertyRequest(ctx, property.Id, static_cast<ULONG>(property.Verb), property.ControlCb,
 				property.ValueCb, property.Value);
 		}
-		if (property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT && property.Verb == AcxPropertyVerbSet)
-		{
-			// Windows proposes the pin format here when the endpoint comes up and never asks for
-			// the preferred-mode-format property, so this is the Sound-settings selection reaching
-			// the driver. Adopting it keeps the engine's next stream and the codec on it.
-			PVOID buffer = nullptr;
-			size_t bytes = 0;
-			if (!NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, 0, &buffer, &bytes)))
-			{
-				buffer = property.Value;
-				bytes = property.ValueCb;
-			}
-			// Windows sweeps every rate it knows through this property while it validates the
-			// endpoint, so only the four formats this driver lists count as a proposal; anything
-			// else is ignored and never touches the default or the encoder.
-			if (const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes)); wave != nullptr)
-			{
-				const ULONG index = RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels);
-				if (index < AudioRenderFormatCount)
-				{
-					AdoptFormatIndex(ctx, index, "the proposed format");
-				}
-			}
-		}
+		// KSPROPERTY_PIN_PROPOSEDATAFORMAT is only logged, never adopted. Windows sweeps every
+		// rate and channel count it knows through this SET while it builds and validates the
+		// endpoint's graph (hundreds of values per graph, including one per listed format), so
+		// an adopted proposal is replaced a few milliseconds later by the next one. Moving the
+		// default data format on each of them made audiodg rebuild the graph again, and the build
+		// ended on the first listed format. The format Windows actually plays reaches the driver
+		// through the stream that runs (AudioSetPinFormat).
 	}
 	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
 	if (!NT_SUCCESS(status))
