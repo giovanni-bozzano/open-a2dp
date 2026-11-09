@@ -305,7 +305,8 @@ it), reattach.
    one that is playing is the one selected. The status list shows the same fields as
    `OpenA2dpCtl status` under its Session, Sink, Endpoint, Service and Driver sections, and
    the controls show the stored codec preference and endpoint format. A sink that starts or
-   stops streaming is relabelled within a second.
+   stops streaming is relabelled within a second, including one that is not the selected
+   sink and with no Refresh press.
 2. Play, then choose `SBC only` and press Apply: the window reports `Stored. The active
    stream renegotiates to apply it.` and the status list follows the renegotiation within a
    few seconds, with no sink reconnect.

@@ -106,9 +106,19 @@ constexpr int kCodecAuto = 0;
 constexpr int kCodecSbcChoice = 1;
 constexpr int kCodecAacChoice = 2;
 
+// What a sink is doing as far as the window can tell. The driver keeps a sink's control
+// device only while the link is up, so every listed sink is connected; a running stream is
+// what makes it playing.
+enum class DeviceState {
+	Connected,
+	Playing,
+};
+
 struct SinkState
 {
 	std::vector<Device> devices;
+	// One entry per device, so the list is only relabelled when the state really changed.
+	std::vector<DeviceState> deviceStates;
 	size_t selected = 0;
 	HANDLE control = INVALID_HANDLE_VALUE;
 	bool open = false;
@@ -130,16 +140,10 @@ struct SinkState
 	HWND formatHint = nullptr;
 };
 
-// What a sink is doing as far as the window can tell. The driver keeps a sink's control
-// device only while the link is up, so every listed sink is connected; a running stream is
-// what makes it playing.
-enum class DeviceState {
-	Connected,
-	Playing,
-};
-
-// Relabels one sink in the list; defined with the rest of the sink list code.
+// Relabels a sink in the list and re-reads every sink's state; defined with the sink list
+// code below, which the status refresh calls into.
 void UpdateDeviceItemLabel(HWND hwnd, size_t device, DeviceState state);
+void RefreshDeviceLabels(HWND hwnd);
 
 std::wstring Widen(const std::string& text)
 {
@@ -920,30 +924,61 @@ void RefreshStatus(HWND hwnd)
 		RefreshStatusView(hwnd);
 		return;
 	}
-	const bool wasPlaying = state->status.mediaState == Ioctl::MediaState::Streaming;
 	state->status = status;
-	const bool playing = status.mediaState == Ioctl::MediaState::Streaming;
-	if (wasPlaying != playing)
-	{
-		// The sink that starts or stops streaming is the one the list should show as playing.
-		UpdateDeviceItemLabel(hwnd, state->selected, playing ? DeviceState::Playing : DeviceState::Connected);
-	}
 	RefreshStatusView(hwnd);
 }
 
-DeviceState ReadDeviceState(const Device& device)
+// Reads one sink's state. False when the control device cannot be read right now, which is
+// not the same as "connected": the caller keeps what it had instead of guessing.
+bool TryReadDeviceState(const Device& device, DeviceState& deviceState)
 {
 	std::string error;
 	const HANDLE control = OpenControl(device, error);
 	if (control == INVALID_HANDLE_VALUE)
 	{
-		return DeviceState::Connected;
+		return false;
 	}
 	Ioctl::Status status = {};
 	const bool read = ReadStatus(control, status, error);
 	CloseHandle(control);
-	return read && status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
-																  : DeviceState::Connected;
+	if (!read)
+	{
+		return false;
+	}
+	deviceState = status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
+																		  : DeviceState::Connected;
+	return true;
+}
+
+// Refreshes what the sink list says about every sink, so a stream that starts on a sink other
+// than the selected one appears without pressing Refresh. The selected sink is not opened
+// again: its status comes from the read this refresh already did.
+void RefreshDeviceLabels(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr || state->deviceStates.size() != state->devices.size())
+	{
+		return;
+	}
+	for (size_t device = 0; device < state->devices.size(); ++device)
+	{
+		DeviceState current = state->deviceStates[device];
+		const bool selected = state->open && device == state->selected;
+		if (selected)
+		{
+			current = state->status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
+																					  : DeviceState::Connected;
+		}
+		else if (!TryReadDeviceState(state->devices[device], current))
+		{
+			continue;
+		}
+		if (current != state->deviceStates[device])
+		{
+			state->deviceStates[device] = current;
+			UpdateDeviceItemLabel(hwnd, device, current);
+		}
+	}
 }
 
 std::wstring DeviceLabel(const std::string& reference, DeviceState state)
@@ -1026,9 +1061,12 @@ void ReloadDevices(HWND hwnd)
 	// the one the window opens, and only then the first of the list.
 	size_t selected = state->devices.size();
 	size_t playing = state->devices.size();
+	state->deviceStates.assign(state->devices.size(), DeviceState::Connected);
 	for (size_t i = 0; i < state->devices.size(); ++i)
 	{
-		const DeviceState deviceState = ReadDeviceState(state->devices[i]);
+		DeviceState deviceState = DeviceState::Connected;
+		(void)TryReadDeviceState(state->devices[i], deviceState);
+		state->deviceStates[i] = deviceState;
 		const std::wstring label = DeviceLabel(state->devices[i].reference, deviceState);
 		const LRESULT index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
 		if (index != CB_ERR)
@@ -1225,6 +1263,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		if (wParam == kStatusTimerId)
 		{
 			RefreshStatus(hwnd);
+			// Another sink may have started or stopped streaming, which no device notification
+			// reports, so the list is checked on the same tick as the status.
+			RefreshDeviceLabels(hwnd);
 			return 0;
 		}
 		break;
