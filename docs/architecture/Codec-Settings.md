@@ -203,9 +203,13 @@ the shared-mode default, which this endpoint ignores.
   unknown falls back to close-and-rediscover.
 - Endpoint format change (`format`): the offered list is rebuilt in place, so Windows
   re-queries the endpoint and rebuilds the graph at the new (single) format. A stream
-  configured for another PCM format is closed and negotiated again (RECONFIGURE cannot
-  change the sampling frequency or channel count); a stream already matching it is left
-  alone. Codec/parameter settings do not change the available PCM formats.
+  configured for another PCM format is closed, its SEP is configured again with the
+  configuration rebuilt for the new format, and the stream reopens (RECONFIGURE cannot
+  change the sampling frequency or channel count). The sink SEP and its capabilities are
+  remembered across that CLOSE, so there is no discovery and no sink reconnect; only a SEP
+  that is no longer known, or a configuration the sink refuses, falls back to a rediscovery.
+  A stream already matching the new format is left alone. Codec/parameter settings do not
+  change the available PCM formats.
 - A stream Windows opens: its format reaches `PinSampleRate` and the encoder when the stream
   runs. It never changes the offered list - Windows creates one stream per format it
   enumerates before it plays one, and those probes must not redefine the endpoint.

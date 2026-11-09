@@ -255,7 +255,9 @@ it), reattach.
 2. While streaming, `OpenA2dpCtl format 48000 2`.
 - Expect `endpoint format set to 48000 Hz 2 ch`, one `endpoint formats 48000 Hz 2 ch`
   line, then the stream runs at `endpoint format 48000 Hz 2 ch (actual stream)` and stays
-  audible at 48 kHz; no `closing to renegotiate` burst, no reconnect per probe.
+  audible at 48 kHz. If the stream was configured for the other format, one
+  `closing to reconfigure it` and one `configuring the same SEP ... without rediscovering`
+  carry it over: no discovery, no sink reconnect.
 3. *Advanced* now offers that one format only. Choose `16 bit, 44100 Hz` there and play:
    the stream keeps running at 48 kHz.
 4. Reconnect the sink: `Config: endpoint format 48000 Hz 2 ch restored from the registry`
@@ -305,18 +307,21 @@ it), reattach.
 2. Play, then choose `SBC only` and press Apply: the window reports `Stored. The active
    stream renegotiates to apply it.` and the status list follows the renegotiation within a
    few seconds, with no sink reconnect.
-3. Set `SBC bitpool` to 35 and apply: the same in-place path, and both the status list and
-   `status` report the resulting SBC bitrate.
-4. Type 1 or 300 in the bitpool box: the window refuses the value with the 2..250 hint and
-   stores nothing.
+3. Choose `SBC bitpool` 35 and apply: the same in-place path, and both the status list and
+   `status` report the resulting SBC bitrate. A stored bitpool the list does not offer is
+   shown as its own entry instead of jumping to `Automatic`.
+4. Choose another endpoint format while streaming and apply: the stream closes and comes
+   back at the new format without a sink reconnect - the log shows `closing to reconfigure
+   it` and `configuring the same SEP ... without rediscovering`, never `rediscovering`.
 5. Choose `AAC only` on an SBC-only sink (S): the window reports that the sink cannot serve
    it and the stored preference stays as it was.
 6. Connect a second sink while the window is open: both are listed within a second without
    pressing Refresh, and each loads its own preference. Unplug the selected sink: the window
    reports it as gone instead of retrying forever.
-7. Store endpoint format `44100 Hz` and `Mono (1 ch)`, apply, then check Sound settings:
-   the endpoint offers only that format. `Automatic` in both fields restores every served
-   format, and so does `OpenA2dpCtl reset`.
+7. Choose `44100 Hz, mono` in `PCM format`, apply, then check Sound settings: the endpoint
+   offers only that format. `Automatic (every sink format)` restores every served format,
+   and so does `OpenA2dpCtl reset`. The status list has no selectable rows and no row
+   highlights under the cursor.
 8. Tick **Details**, then press **Copy** and paste into an editor: the text matches
    `OpenA2dpCtl status --verbose` for the same sink, one field per line, every value with
    its decimal and hex form. Use this dump for any failure found below it.
