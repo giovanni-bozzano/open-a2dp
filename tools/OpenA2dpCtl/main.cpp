@@ -683,9 +683,6 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		preference.sbcAllocation = overrides.allocation;
 	}
-	preference.aacSampleRate = 0;
-	preference.endpointRate = 0;
-	preference.endpointChannels = 0;
 
 	DWORD bytes = 0;
 	const bool set = IoctlSync(handle, Ioctl::kIoctlSetPreference, &preference, static_cast<DWORD>(sizeof(preference)),

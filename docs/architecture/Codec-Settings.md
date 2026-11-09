@@ -65,10 +65,11 @@ One preference per sink, kept in the registry and restored when the device start
 - `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
 
 All values are `REG_DWORD`, `0` means "driver default", and `OpenA2dpCtl codec` writes them
-through `SET_PREFERENCE` (`kAbiVersion` 9). Deleting the sink subkey returns it to auto.
-The driver reads it in `OnDeviceAdd`, before the endpoint exists. ABI 9 retires the format
-preference fields without changing struct sizes: they are ignored on input and zero on
-output. Rebuild the tools and AAC service with the driver; older ABI clients are refused.
+through `SET_PREFERENCE` (`kAbiVersion` 1). Deleting the sink subkey returns it to auto.
+The driver reads it in `OnDeviceAdd`, before the endpoint exists. The development ABI
+baseline removes the obsolete format preference and fallback fields: `Preference` is
+36 bytes and `Status` is 104 bytes. Rebuild the tools and AAC service with the driver;
+earlier development layouts are incompatible, even if they also reported ABI 1.
 `status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows
 mix-format query. `codec aac` is refused on a sink that does not advertise AAC.
 
@@ -82,7 +83,7 @@ mix-format query. `codec aac` is refused on a sink that does not advertise AAC.
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to the MTU ceiling |
 
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
-`CodecPreferenceEndpointChannels` are retired and no longer read or written.
+`CodecPreferenceEndpointChannels` are obsolete and no longer read or written.
 
 The Media Foundation encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps
 are rejected). A2DP sends one access unit per media packet, so the bitrate is also capped

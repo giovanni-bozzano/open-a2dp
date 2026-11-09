@@ -134,19 +134,6 @@ TEST(Ioctl_PreferenceValidation)
 	CHECK(!Ioctl::ValidPreference(preference)); // unknown flag
 	preference.flags = 0;
 
-	preference.endpointRate = 44100;
-	preference.endpointChannels = 1;
-	CHECK(Ioctl::ValidPreference(preference));
-	preference.endpointRate = 96000;
-	CHECK(Ioctl::ValidPreference(preference)); // retired format fields cannot restrict PCM
-	preference.endpointRate = 48000;
-	preference.endpointChannels = 3;
-	CHECK(Ioctl::ValidPreference(preference));
-	preference.endpointChannels = 2;
-	CHECK(Ioctl::ValidPreference(preference));
-	preference.endpointRate = 0;
-	preference.endpointChannels = 0;
-
 	preference.sbcBitpool = 1;
 	CHECK(!Ioctl::ValidPreference(preference));
 	preference.sbcBitpool = Ioctl::kSbcMaxBitpool;
@@ -159,7 +146,6 @@ TEST(Ioctl_PreferenceValidation)
 	preference.sbcAllocation = Ioctl::kSbcAllocationSnr;
 	CHECK(Ioctl::ValidPreference(preference));
 
-	CHECK(sizeof(Ioctl::Preference) == 48); // the CLI and the driver share this layout
 }
 
 TEST(RingBuffer_WrapAround)

@@ -268,8 +268,9 @@ it), reattach.
    unchanged and contains every driver-supported format the sink advertises over SBC.
    The config UI has no rate/channel filter; CLI `--rate`/`--channels` explain their removal.
 7. With old global/per-device `CodecPreferenceEndpointRate`/`EndpointChannels` values
-   already present, load ABI 9: `GET_PREFERENCE` returns both fields zero and Windows still
-   offers all sink-supported driver formats. Even invalid old format values must not
+   already present, load the current ABI 1 development build: `GET_PREFERENCE` has no
+   rate/channel fields and Windows still offers all sink-supported driver formats.
+   Even invalid old format values must not
    discard valid codec parameters. On a stereo-only/44.1-only sink only those supported
    choices appear after discovery; the initial four-format log is labelled provisional.
 8. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not

@@ -259,7 +259,6 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
 		out->sinkChannels = SbcConfig::AdvertisedChannels(sinkFormats);
 		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
-		out->pinNotServed = 0; // retired ABI field
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Status));
 		return;
 	}
@@ -328,9 +327,6 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 								ctx->Preference.aacBitrate != in->aacBitrate;
 			changed = selectionChanged || parametersChanged;
 			ctx->Preference = *in;
-			ctx->Preference.aacSampleRate = 0;
-			ctx->Preference.endpointRate = 0;
-			ctx->Preference.endpointChannels = 0;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 		}
 		if (changed)

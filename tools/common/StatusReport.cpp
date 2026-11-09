@@ -167,18 +167,14 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.sinkRates", status.sinkRates);
 	AppendField(text, "status.sinkChannels", status.sinkChannels);
 	AppendField(text, "status.sinkCodecs", status.sinkCodecs);
-	AppendField(text, "status.pinNotServed", status.pinNotServed);
 	AppendField(text, "preference.abiVersion", preference.abiVersion);
 	AppendField(text, "preference.flags", preference.flags);
 	AppendField(text, "preference.codec", preference.codec);
 	AppendField(text, "preference.aacBitrate", preference.aacBitrate);
-	AppendField(text, "preference.aacSampleRate", preference.aacSampleRate);
 	AppendField(text, "preference.sbcBitpool", preference.sbcBitpool);
 	AppendField(text, "preference.sbcBlocks", preference.sbcBlocks);
 	AppendField(text, "preference.sbcSubbands", preference.sbcSubbands);
 	AppendField(text, "preference.sbcAllocation", preference.sbcAllocation);
-	AppendField(text, "preference.endpointRate", preference.endpointRate);
-	AppendField(text, "preference.endpointChannels", preference.endpointChannels);
 	AppendField(text, "preference.reserved", preference.reserved);
 	if (version != nullptr)
 	{

@@ -608,9 +608,6 @@ void ApplySettings(HWND hwnd)
 	preference.sbcBlocks = ComboValue(hwnd, kBlocksCombo);
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
-	preference.aacSampleRate = 0;
-	preference.endpointRate = 0;
-	preference.endpointChannels = 0;
 
 	std::string failure;
 	if (!WritePreference(state->control, preference, failure))

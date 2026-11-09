@@ -17,17 +17,9 @@
 
 namespace OpenA2dp::Ioctl {
 
-// 2: Status carries the negotiated codec and the current preference.
-// 3: Preference carries an SBC bitpool, and GET_PREFERENCE returns it.
-// 4: Preference carries the SBC block length, subbands and allocation.
-// 5: Status carries the media MTU and the AAC bitrate it allows.
-// 6: Preference carries the endpoint sample rate and channel mode; Status carries the
-//    formats the sink advertises.
-// 7: Status carries the codecs the sink advertises.
-// 8: Status carries whether the endpoint lists the sink's formats instead of a stored pin
-//    the sink does not serve.
-// 9: Format preferences are retired; Windows chooses from all supported endpoint formats.
-constexpr uint32_t kAbiVersion = 9;
+// Development baseline; driver, service and tools must come from the same build.
+// No compatibility with earlier development layouts is provided.
+constexpr uint32_t kAbiVersion = 1;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -221,8 +213,6 @@ struct Status {
 	// kSinkCodec* bits for the codecs the sink advertised in the last discovery, 0 until
 	// one ran. SBC is mandatory, so it is only ever clear before the first discovery.
 	uint32_t sinkCodecs;
-	// Retired in ABI 9; always zero.
-	uint32_t pinNotServed;
 };
 
 struct Preference {
@@ -230,13 +220,10 @@ struct Preference {
 	uint32_t flags;            // kPreference*
 	uint32_t codec;            // kCodec*
 	uint32_t aacBitrate;       // 0 = driver default (highest supported <= sink max)
-	uint32_t aacSampleRate;    // retired: ignored on input, zero on output
 	uint32_t sbcBitpool;       // 0 = driver default; clamped to the sink's range
 	uint32_t sbcBlocks;        // 0 = driver default; 4, 8, 12 or 16 blocks per frame
 	uint32_t sbcSubbands;      // 0 = driver default; 4 or 8 subbands
 	uint32_t sbcAllocation;    // 0 = driver default; kSbcAllocation*
-	uint32_t endpointRate;     // retired: ignored on input, zero on output
-	uint32_t endpointChannels; // retired: ignored on input, zero on output
 	uint32_t reserved;
 };
 
@@ -265,11 +252,11 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	return preference.codec == kCodecSbc || preference.codec == kCodecAac;
 }
 
-static_assert(sizeof(Preference) == 48, "Preference layout is part of the driver/CLI ABI");
+static_assert(sizeof(Preference) == 36, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 108, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 104, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

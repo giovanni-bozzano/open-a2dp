@@ -52,7 +52,6 @@ Ioctl::Preference StreamingPreference()
 	preference.flags = Ioctl::kPreferenceForceCodec;
 	preference.codec = Ioctl::kCodecAac;
 	preference.aacBitrate = 256000;
-	preference.endpointRate = 48000;
 	return preference;
 }
 
@@ -98,14 +97,13 @@ TEST(StatusReport_FormatsTheSession)
 	CHECK(Contains(report, "packets 12"));
 	CHECK(Contains(report, "ABI " + std::to_string(Ioctl::kAbiVersion) + ", version 1.2.3"));
 	CHECK(Contains(report, "not reported yet") == false);
-	// Retired format preferences are not presented as active restrictions.
 	CHECK(Contains(report, "fallback") == false);
 	CHECK(Contains(report, "-- raw fields --") == false);
 }
 
 TEST(StatusReport_ExplainsTheUnknowns)
 {
-	// Before the first discovery; the retired fallback field must not mislead users.
+	// Before the first discovery.
 	Ioctl::Status status = StreamingStatus();
 	status.mediaState = Ioctl::MediaState::Idle;
 	status.codec = 0;
@@ -114,7 +112,6 @@ TEST(StatusReport_ExplainsTheUnknowns)
 	status.sinkRates = 0;
 	status.sinkChannels = 0;
 	status.sinkCodecs = 0;
-	status.pinNotServed = 1;
 
 	const std::string report = Report(false, status, StreamingPreference());
 	CHECK(Contains(report, "codec           none"));
@@ -129,16 +126,14 @@ TEST(StatusReport_VerboseListsEveryField)
 {
 	Ioctl::Status status = StreamingStatus();
 	status.lastError = 0xC000009A;
-	status.pinNotServed = 1;
 	const std::string report = Report(true, status, StreamingPreference());
 	CHECK(Contains(report, "-- raw fields --"));
 	// Counters and masks that the formatted lines hide, plus the reserved field that shows
 	// whether a caller wrote the whole structure.
 	for (const char* const field : {"status.avdtpState", "status.objectType", "status.pcmBufferedBytes",
 									"status.frameCapacity", "status.underruns", "status.negotiatedCodec",
-									"status.preferenceFlags", "status.sinkCodecs", "status.pinNotServed",
-									"preference.aacSampleRate", "preference.sbcBlocks",
-									"preference.endpointChannels", "preference.reserved",
+									"status.preferenceFlags", "status.sinkCodecs", "preference.sbcBlocks",
+									"preference.reserved",
 									"version.maxFramePayload"})
 	{
 		CHECK(Contains(report, field));
@@ -146,21 +141,6 @@ TEST(StatusReport_VerboseListsEveryField)
 
 	CHECK(Contains(report, "0xC000009A"));
 	CHECK(Contains(report, "last error      0xC000009A"));
-}
-
-TEST(StatusReport_IgnoresLegacyFormatFilters)
-{
-	Ioctl::Preference preference = StreamingPreference();
-	preference.endpointChannels = 1;
-	preference.aacSampleRate = 44100;
-	const std::string report = Report(false, StreamingStatus(), preference);
-	CHECK(Contains(report, "Windows-selected; all supported PCM formats"));
-	CHECK(!Contains(report, "48000 Hz, mono"));
-	CHECK(!Contains(report, "AAC rate"));
-	preference.endpointRate = 0;
-	preference.endpointChannels = 0;
-	preference.aacSampleRate = 0;
-	CHECK(report == Report(false, StreamingStatus(), preference));
 }
 
 TEST(StatusReport_NeedsAStatus)
