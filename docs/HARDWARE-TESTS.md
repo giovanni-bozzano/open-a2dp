@@ -253,11 +253,11 @@ it), reattach.
    Pick another one there and play: the stream still runs at the first listed format
    (`endpoint format ... (actual stream)`), because the picker does not reach the driver.
 2. While streaming, `OpenA2dpCtl format 48000 2`.
-- Expect `endpoint format set to 48000 Hz 2 ch`, one `endpoint formats 48000 Hz 2 ch`
-  line, then the stream runs at `endpoint format 48000 Hz 2 ch (actual stream)` and stays
-  audible at 48 kHz. If the stream was configured for the other format, one
-  `closing to reconfigure it` and one `configuring the same SEP ... without rediscovering`
-  carry it over: no discovery, no sink reconnect.
+- Expect `endpoint format set to 48000 Hz 2 ch`, `endpoint formats 48000 Hz 2 ch`,
+  `jack unplugged for 80 ms so Windows rebuilds the endpoint`, then within a second
+  `status` reporting `codec SBC, 48000 Hz, 2 ch`. No `rediscovering`, no sink reconnect;
+  the sink's own display follows to 48 kHz. Audio pauses for the length of the flap and
+  resumes when the player reopens its stream.
 3. *Advanced* now offers that one format only. Choose `16 bit, 44100 Hz` there and play:
    the stream keeps running at 48 kHz.
 4. Reconnect the sink: `Config: endpoint format 48000 Hz 2 ch restored from the registry`
@@ -310,9 +310,11 @@ it), reattach.
 3. Choose `SBC bitpool` 35 and apply: the same in-place path, and both the status list and
    `status` report the resulting SBC bitrate. A stored bitpool the list does not offer is
    shown as its own entry instead of jumping to `Automatic`.
-4. Choose another endpoint format while streaming and apply: the stream closes and comes
-   back at the new format without a sink reconnect - the log shows `closing to reconfigure
-   it` and `configuring the same SEP ... without rediscovering`, never `rediscovering`.
+4. Choose another `PCM format` while streaming and apply: the endpoint is rebuilt (one
+   `jack unplugged for 80 ms so Windows rebuilds the endpoint`) and the stream comes back
+   at the new format without a sink reconnect - never `rediscovering`. The same on a
+   format the stream already runs at. On a 1024x768 screen the whole window fits: nothing
+   is off-screen and the session panel scrolls to its last row.
 5. Choose `AAC only` on an SBC-only sink (S): the window reports that the sink cannot serve
    it and the stored preference stays as it was.
 6. Connect a second sink while the window is open: both are listed within a second without

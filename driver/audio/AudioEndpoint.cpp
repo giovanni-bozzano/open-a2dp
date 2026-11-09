@@ -10,6 +10,45 @@ void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
 	}
 }
 
+void AudioRestartRenderStream(_In_ DEVICE_CONTEXT* ctx)
+{
+	if (ctx->SinkJack == nullptr || ctx->JackFlapTimer == nullptr || ctx->JackFlapWorkItem == nullptr ||
+		ctx->JackFlap)
+	{
+		return;
+	}
+	// Presence is read from JackFlap, so this notification goes out as unplugged and the
+	// one-shot timer plugs it back in once Windows has closed the stream.
+	ctx->JackFlap = TRUE;
+	WdfTimerStart(ctx->JackFlapTimer, WDF_REL_TIMEOUT_IN_MS(AudioJackFlapMs));
+	OA2DP_INFO(ctx, "Audio", "jack unplugged for %u ms so Windows rebuilds the endpoint", AudioJackFlapMs);
+	AcxJackChangeStateNotification(ctx->SinkJack);
+}
+
+namespace OpenA2dpDriver::Audio
+{
+// Timers run at DISPATCH_LEVEL, while reporting the jack and rebuilding the format list are
+// passive-level operations, so the timer only hands over to the work item.
+void OnJackFlapTimer(_In_ WDFTIMER timer)
+{
+	WdfWorkItemEnqueue(GetDeviceContext(WdfTimerGetParentObject(timer))->JackFlapWorkItem);
+}
+
+void OnJackFlapWorkItem(_In_ WDFWORKITEM workItem)
+{
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	ctx->JackFlap = FALSE;
+	if (ctx->SinkJack != nullptr)
+	{
+		AcxJackChangeStateNotification(ctx->SinkJack);
+	}
+	// Windows closed the stream it had at the old format, so the pin takes the new default
+	// now and the stream is renegotiated even when no application reopens audio at once
+	// (AudioApplyEndpointFormats commits the pin and asks for the renegotiation).
+	(void)AudioApplyEndpointFormats(ctx);
+}
+} // namespace OpenA2dpDriver::Audio
+
 NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 {
 	KeInitializeSpinLock(&ctx->AudioLock);
@@ -26,6 +65,22 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	WDF_TIMER_CONFIG timerConfig;
 	WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, OnAudioTimer, AudioPeriodMs);
 	NTSTATUS status = WdfTimerCreate(&timerConfig, &attrs, &ctx->AudioTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	// One-shot: ends the unplug window that makes Windows rebuild the endpoint after an
+	// endpoint format change (AudioRestartRenderStream).
+	WDF_TIMER_CONFIG flapConfig;
+	WDF_TIMER_CONFIG_INIT(&flapConfig, OnJackFlapTimer);
+	status = WdfTimerCreate(&flapConfig, &attrs, &ctx->JackFlapTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	WDF_WORKITEM_CONFIG flapWorkConfig;
+	WDF_WORKITEM_CONFIG_INIT(&flapWorkConfig, OnJackFlapWorkItem);
+	status = WdfWorkItemCreate(&flapWorkConfig, &attrs, &ctx->JackFlapWorkItem);
 	if (!NT_SUCCESS(status))
 	{
 		return status;

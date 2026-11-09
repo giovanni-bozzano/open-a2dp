@@ -8,6 +8,9 @@ using namespace OpenA2dp;
 namespace OpenA2dpDriver::Audio
 {
 constexpr ULONG AudioPeriodMs = 10;
+// How long the jack reports unplugged while Windows is made to rebuild the endpoint after a
+// format change; long enough for the audio engine to close the stream it was using.
+constexpr ULONG AudioJackFlapMs = 80;
 constexpr ULONG AudioMaxPacketCount = 2;
 constexpr ULONG StreamingPinId = 0;
 constexpr ULONG BridgePinId = 1;
@@ -52,6 +55,8 @@ EVT_ACX_STREAM_SET_RENDER_PACKET OnSetRenderPacket;
 EVT_ACX_STREAM_GET_CURRENT_PACKET OnGetCurrentPacket;
 EVT_ACX_STREAM_GET_PRESENTATION_POSITION OnGetPresentationPosition;
 EVT_WDF_TIMER OnAudioTimer;
+EVT_WDF_TIMER OnJackFlapTimer;
+EVT_WDF_WORKITEM OnJackFlapWorkItem;
 EVT_WDF_OBJECT_CONTEXT_DESTROY OnStreamDestroy;
 
 ULONGLONG QpcNow(ULONGLONG* frequency);
@@ -72,6 +77,10 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket);
 NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG positionInBlocks, _Out_ PULONGLONG qpcPosition);
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected);
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
+// Unplugs the jack for AudioJackFlapTicks so Windows closes the render stream and rebuilds
+// the endpoint, which is the only way it re-reads the offered formats; the audio timer plugs
+// it back in. No-op without a jack.
+void AudioRestartRenderStream(_In_ DEVICE_CONTEXT* ctx);
 // Creates the ACX format objects for RenderFormats, parented to the streaming pin, so
 // they can be listed and unlisted as the sink capabilities change.
 NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);

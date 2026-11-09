@@ -429,11 +429,21 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				OA2DP_INFO(ctx, "Service", "endpoint format set to automatic");
 			}
 			ConfigSaveEndpointFormat(ctx);
-			// A changed list makes Windows rebuild the shared-mode stream at the new format.
+			// A changed list makes Windows drop its render stream at the old format; it does not
+			// always build a new one, and while none runs the pin format moves without a stream
+			// report. The work item compares the pin with the negotiated configuration either way
+			// and renegotiates the stream that is still playing at the old one.
 			const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
 			if (!NT_SUCCESS(formatStatus))
 			{
 				OA2DP_WARN(ctx, "Service", "applying the endpoint format failed 0x%08X", formatStatus);
+			}
+			if (ctx->AudioStream != nullptr)
+			{
+				// A running stream keeps the format it was opened with, and Windows re-reads the
+				// offered formats only when it rebuilds the endpoint; unplugging the jack briefly
+				// makes it close the stream and open the new format.
+				AudioRestartRenderStream(ctx);
 			}
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);

@@ -346,6 +346,13 @@ struct DEVICE_CONTEXT
 	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
 	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
+	// Windows only re-reads an endpoint's formats when it rebuilds the endpoint, so a format
+	// change while a stream runs unplugs the jack for AudioJackFlapMs and plugs it back in
+	// (AudioRestartRenderStream). JackFlap is set for that window, JackFlapTimer ends it and
+	// JackFlapWorkItem does the passive-level work that ending it needs.
+	BOOLEAN JackFlap;
+	WDFTIMER JackFlapTimer;
+	WDFWORKITEM JackFlapWorkItem;
 	// The streaming pin and the render format objects listed on it. A changed endpoint
 	// format is applied by adding and removing those objects in place
 	// (AudioApplyEndpointFormats); FormatLock serializes the rebuilds and FormatsListed
@@ -540,6 +547,10 @@ void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx);
 // audio/
 // Reports the sink link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.
 void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx);
+
+// Rebuilds the Windows endpoint by unplugging its jack briefly, which is the only way
+// Windows re-reads the formats the endpoint offers. Safe at PASSIVE_LEVEL.
+void AudioRestartRenderStream(_In_ DEVICE_CONTEXT* ctx);
 
 // Fills the render format table once, from DriverEntry, so endpoints added concurrently
 // never rewrite format state another endpoint is listing.

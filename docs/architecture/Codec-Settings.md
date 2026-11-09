@@ -201,15 +201,17 @@ the shared-mode default, which this endpoint ignores.
   configuration from the sink's advertised capabilities and sends RECONFIGURE, then START.
   A refused suspend, a rejected command, or a sink-configured stream whose capabilities are
   unknown falls back to close-and-rediscover.
-- Endpoint format change (`format`): the offered list is rebuilt in place, so Windows
-  re-queries the endpoint and rebuilds the graph at the new (single) format. A stream
-  configured for another PCM format is closed, its SEP is configured again with the
-  configuration rebuilt for the new format, and the stream reopens (RECONFIGURE cannot
-  change the sampling frequency or channel count). The sink SEP and its capabilities are
-  remembered across that CLOSE, so there is no discovery and no sink reconnect; only a SEP
-  that is no longer known, or a configuration the sink refuses, falls back to a rediscovery.
-  A stream already matching the new format is left alone. Codec/parameter settings do not
-  change the available PCM formats.
+- Endpoint format change (`format`): the offered list is rebuilt in place and the jack is
+  reported unplugged for `AudioJackFlapMs` and plugged back in, because Windows only
+  re-reads an endpoint's formats when it rebuilds the endpoint - neither the new list nor
+  `AcxPinNotifyDataFormatChange` moves a running stream. The audio engine closes the stream
+  it had at the old format, Windows re-creates the endpoint at the new (single) format, and
+  with no stream running the pin takes that format and the session renegotiates the A2DP
+  stream to it (RECONFIGURE cannot change the sampling frequency or channel count). The
+  sink SEP and its capabilities are remembered, so there is no discovery and no sink
+  reconnect; only a SEP that is no longer known, or a configuration the sink refuses, falls
+  back to a rediscovery. Audio stops for the length of the flap, and a player resumes only
+  when it reopens its stream. Codec/parameter settings do not change the available formats.
 - A stream Windows opens: its format reaches `PinSampleRate` and the encoder when the stream
   runs. It never changes the offered list - Windows creates one stream per format it
   enumerates before it plays one, and those probes must not redefine the endpoint.

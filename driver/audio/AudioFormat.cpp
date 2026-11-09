@@ -8,7 +8,10 @@ namespace OpenA2dpDriver::Audio
 {
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected)
 {
-	*isConnected = GetSinkJackContext(jack)->Device->SignalingState == ChannelOpen ? TRUE : FALSE;
+	const DEVICE_CONTEXT* ctx = GetSinkJackContext(jack)->Device;
+	// A format change unplugs the jack briefly (AudioRestartRenderStream) even though the link
+	// is up: Windows only re-reads the endpoint's formats when the endpoint is rebuilt.
+	*isConnected = ctx->SignalingState == ChannelOpen && !ctx->JackFlap ? TRUE : FALSE;
 	return STATUS_SUCCESS;
 }
 
@@ -185,9 +188,12 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 		pcm16 = pcm16 && pcm.wFormatTag == WAVE_FORMAT_PCM;
 	}
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	const ULONG listed = ctx->FormatsListed;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (pcm16 &&
+		// Listed, not merely supported: a pinned endpoint format is offered alone, and a stream
+		// at any other format would move the pin away from the setting Windows kept using.
+		if (pcm16 && (listed & (1u << i)) != 0 &&
 			pcm.nSamplesPerSec == AudioRenderRates[i / AudioRenderChannelCount] &&
 			pcm.nChannels == AudioRenderChannels[i % AudioRenderChannelCount] &&
 			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
@@ -199,7 +205,7 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	}
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_WARN(ctx, "Audio", "stream format is not in the supported endpoint list; refusing it");
+		OA2DP_WARN(ctx, "Audio", "stream format is not one the endpoint lists; refusing it");
 	}
 	return status;
 }
@@ -229,6 +235,28 @@ ULONG FirstListed(_In_ ULONG listed)
 		++index;
 	}
 	return index < AudioRenderFormatCount ? index : 0;
+}
+
+// Commits the format a stream would run at now to PinSampleRate/PinChannels while no stream
+// is open, and reports whether it moved. A running stream sets the pin itself when it starts
+// (AudioSetPinFormat), so this only fills the gap between one stream and the next - which is
+// where a format change leaves the endpoint.
+bool CommitPinDefault(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
+{
+	const ULONG sampleRate = AudioRenderRates[index / AudioRenderChannelCount];
+	const USHORT channels = AudioRenderChannels[index % AudioRenderChannelCount];
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const bool changed = ctx->AudioStream == nullptr &&
+		(ctx->PinSampleRate != sampleRate || ctx->PinChannels != channels);
+	if (changed)
+	{
+		ctx->PinSampleRate = sampleRate;
+		ctx->PinChannels = channels;
+		ctx->PinBytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
+	}
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return changed;
 }
 
 ULONG DesiredFormats(_In_ uint8_t sinkFormats)
@@ -346,7 +374,14 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	const bool firstBuild = listedBefore == 0;
 	if (listedBefore == desired && ctx->FirstListedIndex == startIndex)
 	{
+		// The list already says this; the pin still follows it while no stream runs, so the
+		// stream Windows opens next takes the format this endpoint now offers.
+		const bool pinChanged = CommitPinDefault(ctx, startIndex);
 		WdfWaitLockRelease(ctx->FormatLock);
+		if (pinChanged)
+		{
+			SignalingOnPreferenceChanged(ctx);
+		}
 		return STATUS_SUCCESS;
 	}
 	status = RebuildListing(ctx, desired, startIndex);
@@ -366,18 +401,28 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	{
 		defaultStatus = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[defaultIndex]);
 	}
-	if (NT_SUCCESS(defaultStatus))
-	{
-		KeAcquireSpinLock(&ctx->AudioLock, &irql);
-		if (ctx->AudioStream == nullptr)
-		{
-			ctx->PinSampleRate = AudioRenderRates[defaultIndex / AudioRenderChannelCount];
-			ctx->PinChannels = AudioRenderChannels[defaultIndex % AudioRenderChannelCount];
-			ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
-		}
-		KeReleaseSpinLock(&ctx->AudioLock, irql);
-	}
+	const bool pinChanged = NT_SUCCESS(defaultStatus) && CommitPinDefault(ctx, defaultIndex);
 	WdfWaitLockRelease(ctx->FormatLock);
+	// The first build runs before SignalingInitialize created the work item, and there is
+	// nothing to renegotiate before a client exists.
+	if (pinChanged && !firstBuild)
+	{
+		SignalingOnPreferenceChanged(ctx);
+	}
+	// Editing the lists entry by entry does not raise the pin's format-change event, and
+	// without it Windows keeps a running stream at the format it was opened with. The event
+	// makes the audio engine re-query the endpoint and rebuild the shared-mode stream at the
+	// default this list now leads with. The first build happens while the circuit is still
+	// being created, when there is no client to notify, and completing it from there would
+	// re-enter ACX.
+	if (!firstBuild)
+	{
+		const NTSTATUS notifyStatus = AcxPinNotifyDataFormatChange(pin);
+		if (!NT_SUCCESS(notifyStatus))
+		{
+			OA2DP_WARN(ctx, "Audio", "the endpoint format change notification failed 0x%08X", notifyStatus);
+		}
+	}
 	if (!NT_SUCCESS(defaultStatus))
 	{
 		if (firstBuild)

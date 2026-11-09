@@ -101,6 +101,10 @@ void OnDisconnectWorkItem(_In_ WDFWORKITEM workItem)
 void OnDeviceCleanup(_In_ WDFOBJECT object)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(object);
+	if (ctx->JackFlapTimer != nullptr)
+	{
+		WdfTimerStop(ctx->JackFlapTimer, TRUE);
+	}
 	ServiceCleanup(ctx);
 	if (ctx->ProfileValid)
 	{
