@@ -119,6 +119,9 @@ struct SinkState
 	std::vector<Device> devices;
 	// One entry per device, so the list is only relabelled when the state really changed.
 	std::vector<DeviceState> deviceStates;
+	// The name each sink reported, read with the state above. It cannot change while the
+	// device exists, so it is cached with the list.
+	std::vector<std::wstring> deviceNames;
 	size_t selected = 0;
 	HANDLE control = INVALID_HANDLE_VALUE;
 	bool open = false;
@@ -661,6 +664,14 @@ void ApplyLayout(HWND hwnd)
 	AdjustWindowRectEx(&rect, kWindowStyle, FALSE, 0);
 	const int windowWidth = rect.right - rect.left;
 	const int windowHeight = rect.bottom - rect.top;
+	// A second pass over the same strings - the list refilling after a sink connects, say -
+	// leaves the window where the user has it instead of re-centering it.
+	RECT placed = {};
+	GetWindowRect(hwnd, &placed);
+	if (placed.right - placed.left == windowWidth && placed.bottom - placed.top == windowHeight)
+	{
+		return;
+	}
 	SetWindowPos(hwnd, nullptr, 0, 0, windowWidth, windowHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 	// The size is known only now, so the window is centered here rather than left where the
 	// default placement put it - which can hang off the bottom of a short screen.
@@ -928,9 +939,10 @@ void RefreshStatus(HWND hwnd)
 	RefreshStatusView(hwnd);
 }
 
-// Reads one sink's state. False when the control device cannot be read right now, which is
-// not the same as "connected": the caller keeps what it had instead of guessing.
-bool TryReadDeviceState(const Device& device, DeviceState& deviceState)
+// Reads one sink's state, and its name when the sink reported one. False when the control
+// device cannot be read right now, which is not the same as "connected": the caller keeps
+// what it had instead of guessing.
+bool TryReadDeviceState(const Device& device, DeviceState& deviceState, std::wstring* name = nullptr)
 {
 	std::string error;
 	const HANDLE control = OpenControl(device, error);
@@ -944,6 +956,10 @@ bool TryReadDeviceState(const Device& device, DeviceState& deviceState)
 	if (!read)
 	{
 		return false;
+	}
+	if (name != nullptr)
+	{
+		*name = status.sinkName[0] != L'\0' ? std::wstring(status.sinkName) : std::wstring();
 	}
 	deviceState = status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
 																		  : DeviceState::Connected;
@@ -981,10 +997,12 @@ void RefreshDeviceLabels(HWND hwnd)
 	}
 }
 
-std::wstring DeviceLabel(const std::string& reference, DeviceState state)
+// "<name> (<address>) - <state>", or just the address when the sink reported no name.
+std::wstring DeviceLabel(const std::string& reference, DeviceState state, const std::wstring& name)
 {
-	const wchar_t* const text = state == DeviceState::Playing ? L" (playing)" : L" (connected)";
-	return Widen(FormatAddress(reference)) + text;
+	const std::wstring address = Widen(FormatAddress(reference));
+	const wchar_t* const text = state == DeviceState::Playing ? L" - playing" : L" - connected";
+	return name.empty() ? address + text : name + L" (" + address + L")" + text;
 }
 
 // Relabels one sink in place, so the list shows the state of the one just opened or one whose
@@ -1005,7 +1023,9 @@ void UpdateDeviceItemLabel(HWND hwnd, size_t device, DeviceState state)
 			continue;
 		}
 		const LRESULT selected = SendMessageW(combo, CB_GETCURSEL, 0, 0);
-		const std::wstring label = DeviceLabel(sink->devices[device].reference, state);
+		const std::wstring name = device < sink->deviceNames.size() ? sink->deviceNames[device]
+																			  : std::wstring();
+		const std::wstring label = DeviceLabel(sink->devices[device].reference, state, name);
 		SendMessageW(combo, CB_DELETESTRING, static_cast<WPARAM>(index), 0);
 		const LRESULT added = SendMessageW(combo, CB_INSERTSTRING, static_cast<WPARAM>(index),
 										 reinterpret_cast<LPARAM>(label.c_str()));
@@ -1062,12 +1082,14 @@ void ReloadDevices(HWND hwnd)
 	size_t selected = state->devices.size();
 	size_t playing = state->devices.size();
 	state->deviceStates.assign(state->devices.size(), DeviceState::Connected);
+	state->deviceNames.assign(state->devices.size(), std::wstring());
 	for (size_t i = 0; i < state->devices.size(); ++i)
 	{
 		DeviceState deviceState = DeviceState::Connected;
-		(void)TryReadDeviceState(state->devices[i], deviceState);
+		(void)TryReadDeviceState(state->devices[i], deviceState, &state->deviceNames[i]);
 		state->deviceStates[i] = deviceState;
-		const std::wstring label = DeviceLabel(state->devices[i].reference, deviceState);
+		const std::wstring label =
+			DeviceLabel(state->devices[i].reference, deviceState, state->deviceNames[i]);
 		const LRESULT index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
 		if (index != CB_ERR)
 		{
@@ -1088,6 +1110,9 @@ void ReloadDevices(HWND hwnd)
 	}
 	state->selected = selected;
 	SelectDeviceItem(hwnd, state->selected);
+	// The labels carry the sink names, which are only known now, so the window is measured
+	// again: the picker is as wide as the longest "name (address)" the list holds.
+	ApplyLayout(hwnd);
 	// Another sink arriving or leaving does not change the open one: keep its control device
 	// and the settings the user may have changed but not applied yet.
 	if (!previous.empty() && state->selected < state->devices.size() &&

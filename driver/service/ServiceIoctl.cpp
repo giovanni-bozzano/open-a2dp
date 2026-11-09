@@ -261,6 +261,12 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
 		out->endpointRate = ctx->SelectedSampleRate;
 		out->endpointChannels = ctx->SelectedChannels;
+		// The name the sink reported: captured once while the device was added, before this
+		// control device existed, so it needs no lock and cannot change under the copy.
+		for (uint32_t i = 0; i + 1 < Ioctl::kSinkNameChars && ctx->RemoteName[i] != L'\0'; ++i)
+		{
+			out->sinkName[i] = ctx->RemoteName[i];
+		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, sizeof(Ioctl::Status));
 		return;
 	}

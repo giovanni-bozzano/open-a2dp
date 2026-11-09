@@ -178,6 +178,10 @@ struct WaitEventOut {
 	uint32_t reserved[2];
 };
 
+// Length of Status.sinkName, UTF-16 including the terminator. The driver captured the name
+// from the sink once, the same one the endpoint is named after; a longer name is cut to fit.
+constexpr uint32_t kSinkNameChars = 64;
+
 struct Status {
 	uint32_t abiVersion;
 	uint32_t avdtpState; // Avdtp::SessionState
@@ -220,6 +224,9 @@ struct Status {
 	// without a second IOCTL.
 	uint32_t endpointRate;
 	uint32_t endpointChannels;
+	// The sink's Bluetooth name, so a tool can show the sink as "name (address)" without
+	// asking the Bluetooth stack; empty until the sink reported one.
+	wchar_t sinkName[kSinkNameChars];
 };
 
 struct Preference {
@@ -288,7 +295,7 @@ static_assert(sizeof(Preference) == 36, "Preference layout is part of the driver
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 112, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 240, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

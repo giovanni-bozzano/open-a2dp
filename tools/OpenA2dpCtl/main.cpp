@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <cwchar>
 #include <io.h>
 #include <string>
@@ -539,18 +540,29 @@ int CommandList(const std::vector<Device>& devices)
 		return 1;
 	}
 
-	std::printf("%-3s %-17s %-18s %s\n", "#", "address", "AVDTP", "codec");
-	for (size_t i = 0; i < devices.size(); ++i)
+	// One row per sink: "<name> (<address>)" like the configuration tool, then the link
+	// state and the codec, so a name reads the same in both places.
+	std::vector<std::string> sinks;
+	std::vector<std::string> states;
+	std::vector<std::string> codecs;
+	size_t sinkWidth = std::strlen("sink");
+	size_t stateWidth = std::strlen("AVDTP");
+	for (const Device& device : devices)
 	{
+		std::string sink = FormatAddress(device.reference);
 		std::string state = "unavailable";
 		std::string codec = "-";
 		std::string error;
-		const HANDLE handle = OpenDevice(devices[i], error);
+		const HANDLE handle = OpenDevice(device, error);
 		if (handle != INVALID_HANDLE_VALUE)
 		{
 			Ioctl::Status status = {};
 			if (ReadStatus(handle, status, error))
 			{
+				if (status.sinkName[0] != L'\0')
+				{
+					sink = Narrow(status.sinkName) + " (" + sink + ")";
+				}
 				state = AvdtpStateName(status.avdtpState);
 				if (status.mediaState == Ioctl::MediaState::Streaming && status.codec == 0)
 				{
@@ -571,8 +583,19 @@ int CommandList(const std::vector<Device>& devices)
 			}
 			CloseHandle(handle);
 		}
-		std::printf("%-3u %-17s %-18s %s\n", static_cast<unsigned>(i + 1),
-					FormatAddress(devices[i].reference).c_str(), state.c_str(), codec.c_str());
+		sinkWidth = (std::max)(sinkWidth, sink.size());
+		stateWidth = (std::max)(stateWidth, state.size());
+		sinks.push_back(std::move(sink));
+		states.push_back(std::move(state));
+		codecs.push_back(std::move(codec));
+	}
+
+	std::printf("%-3s %-*s %-*s %s\n", "#", static_cast<int>(sinkWidth), "sink", static_cast<int>(stateWidth),
+				"AVDTP", "codec");
+	for (size_t i = 0; i < sinks.size(); ++i)
+	{
+		std::printf("%-3u %-*s %-*s %s\n", static_cast<unsigned>(i + 1), static_cast<int>(sinkWidth),
+					sinks[i].c_str(), static_cast<int>(stateWidth), states[i].c_str(), codecs[i].c_str());
 	}
 	std::printf("\n* negotiated but not streaming\n");
 	return 0;
