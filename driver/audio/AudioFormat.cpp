@@ -145,62 +145,7 @@ NTSTATUS RebuildListing(_In_ DEVICE_CONTEXT* ctx, ULONG desired, ULONG startInde
 	return status;
 }
 
-// Makes the format object the default of both mode lists. The engine builds its next stream
-// from that default and ACX answers its own format queries from it. List order, not this
-// default, decides the Windows stream (see AudioApplyEndpointFormats).
-void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* source)
-{
-	const ACXDATAFORMATLIST list =
-		ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
-	const ACXDATAFORMATLIST defaultList = ctx->DefaultModeFormats;
-	if (index >= AudioRenderFormatCount || list == nullptr || defaultList == nullptr ||
-		ctx->FormatLock == nullptr)
-	{
-		return;
-	}
-
-	WdfWaitLockAcquire(ctx->FormatLock, nullptr);
-	NTSTATUS status = STATUS_SUCCESS;
-	if ((ctx->FormatsListed & (1u << index)) == 0)
-	{
-		status = STATUS_NOT_FOUND;
-	}
-	else
-	{
-		ACXDATAFORMAT current = nullptr;
-		if (!NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &current)) || current == nullptr ||
-			!AcxDataFormatIsEqual(current, ctx->FormatObjects[index]))
-		{
-			status = AcxDataFormatListAssignDefaultDataFormat(list, ctx->FormatObjects[index]);
-			if (NT_SUCCESS(status))
-			{
-				status = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[index]);
-			}
-		}
-	}
-	WdfWaitLockRelease(ctx->FormatLock);
-	if (!NT_SUCCESS(status))
-	{
-		OA2DP_WARN(ctx, "Audio", "adopting %s as the endpoint default failed 0x%08X", source, status);
-	}
-}
-
 } // namespace
-
-// KSPROPERTY_PIN_PROPOSEDATAFORMAT is never adopted: Windows sweeps every rate and channel
-// count it knows through this SET while it builds and validates the endpoint's graph
-// (hundreds of values per graph, including one per listed format), so an adopted proposal is
-// replaced a few milliseconds later by the next one and each move makes audiodg rebuild the
-// graph. The format Windows plays reaches the driver through the stream that runs
-// (AudioSetPinFormat); the offered list belongs to the endpoint format setting.
-void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT, _In_ WDFREQUEST request)
-{
-	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
-	if (!NT_SUCCESS(status))
-	{
-		WdfRequestComplete(request, status);
-	}
-}
 
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
@@ -268,7 +213,6 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channe
 {
 	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch (actual stream)", sampleRate,
 		static_cast<unsigned>(channels));
-	AdoptFormatIndex(ctx, RenderFormatIndex(sampleRate, channels), "the stream format");
 	RecordEndpointFormat(ctx, sampleRate, channels);
 }
 

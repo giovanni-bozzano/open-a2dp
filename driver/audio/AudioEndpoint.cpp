@@ -57,17 +57,6 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	}
 	if (NT_SUCCESS(status))
 	{
-		// Every property request, so the log shows which format questions Windows asks;
-		// the callback answers the preferred mode format and dispatches the rest to ACX.
-		status = AcxCircuitInitAssignAcxRequestPreprocessCallback(circuitInit, OnPropertyRequest,
-			ctx, AcxRequestTypeProperty, nullptr, AcxItemIdNone);
-		if (!NT_SUCCESS(status))
-		{
-			OA2DP_ERROR(ctx, "Audio", "registering the property preprocess callback failed 0x%08X", status);
-		}
-	}
-	if (NT_SUCCESS(status))
-	{
 		// Clears circuitInit on success.
 		WDF_OBJECT_ATTRIBUTES circuitAttrs;
 		WDF_OBJECT_ATTRIBUTES_INIT(&circuitAttrs);
