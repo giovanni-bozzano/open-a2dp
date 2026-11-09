@@ -135,6 +135,7 @@ public:
 		selectedRemoteIeLength_ = 0;
 		lastReconfigureAccepted_ = false;
 		acceptor_ = false;
+		explicitConfiguration_ = false;
 		discoveryFailure_ = DiscoveryFailure::None;
 		hasDiscoveryError_ = false;
 		discoveryError_ = 0;
@@ -187,15 +188,50 @@ public:
 		return sent;
 	}
 
+	// True when this side closed the stream and kept its sink SEP and capabilities, so a new
+	// configuration can be sent without discovering again.
+	bool CanReconfigure() const noexcept
+	{
+		return state_ == SessionState::Idle && remoteSeid_ != 0 && localSeid_ != 0 &&
+			   selectedRemoteIeLength_ != 0;
+	}
+
+	// SET_CONFIGURATION for the SEP the closed stream used, carrying a new configuration IE.
+	// AVDTP forbids changing the sampling frequency or the channel count with RECONFIGURE, so
+	// a format change is CLOSE followed by this: no discovery, no new SEP, the same sink
+	// connection. A refused configuration leaves the session Failed for the owner to
+	// rediscover; the candidate list of the old discovery is not tried, because those
+	// configurations do not carry the format that asked for the change.
+	size_t Configure(const uint8_t* ie, size_t ieLength, uint8_t* out, size_t cap) noexcept
+	{
+		if (!CanReconfigure() || pending_ || ie == nullptr || ieLength == 0 || ieLength > kMaxCodecIe) {
+			return 0;
+		}
+		selectedIeLength_ = ieLength;
+		for (size_t i = 0; i < ieLength; ++i) {
+			selectedIe_[i] = ie[i];
+		}
+		explicitConfiguration_ = true;
+		state_ = SessionState::Configuring;
+		const size_t sent = SendSelectedConfiguration(out, cap);
+		if (sent == 0) {
+			explicitConfiguration_ = false;
+			state_ = SessionState::Idle;
+		}
+		return sent;
+	}
+
 	// Rebuilds the configuration IE for the selected sink SEP from the capabilities
 	// that SEP advertised and the selector's current input, without changing the
 	// session. This is what a RECONFIGURE should carry after a parameter change: the
-	// same negotiation as discovery, applied to the SEP already in use. False when the
-	// stream was configured by the sink (acceptor role), where only the sink's own
-	// configuration IE is known, or when nothing usable can be built.
+	// same negotiation as discovery, applied to the SEP already in use - and what a
+	// CLOSE for a format change reconfigures the stream with. False when the stream was
+	// configured by the sink (acceptor role), where only the sink's own configuration IE
+	// is known, or when nothing usable can be built.
 	bool RefreshConfiguration(uint8_t* ie, size_t& ieLength) noexcept
 	{
-		if (state_ != SessionState::Open || pending_ || selector_ == nullptr || selectedRemoteIeLength_ == 0) {
+		if ((state_ != SessionState::Open && !CanReconfigure()) || pending_ || selector_ == nullptr ||
+			selectedRemoteIeLength_ == 0) {
 			return false;
 		}
 		uint8_t config[kMaxCodecIe];
@@ -374,6 +410,26 @@ private:
 		return SendConfiguration(out, cap);
 	}
 
+	// The SET_CONFIGURATION both the discovery path and a re-configuration after CLOSE send:
+	// the selected SEP pair, the selected codec and its configuration IE.
+	size_t SendSelectedConfiguration(uint8_t* out, size_t cap) noexcept
+	{
+		uint8_t payload[8 + kMaxCodecIe];
+		size_t n = 0;
+		payload[n++] = static_cast<uint8_t>(remoteSeid_ << 2);
+		payload[n++] = static_cast<uint8_t>(localSeid_ << 2);
+		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaTransport);
+		payload[n++] = 0;
+		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaCodec);
+		payload[n++] = static_cast<uint8_t>(2 + selectedIeLength_);
+		payload[n++] = static_cast<uint8_t>(static_cast<uint8_t>(MediaType::Audio) << 4);
+		payload[n++] = static_cast<uint8_t>(selectedCodec_);
+		for (size_t i = 0; i < selectedIeLength_; ++i) {
+			payload[n++] = selectedIe_[i];
+		}
+		return Command(Signal::SetConfiguration, payload, n, out, cap);
+	}
+
 	// Configures the current candidate and remembers it as the selected stream.
 	size_t SendConfiguration(uint8_t* out, size_t cap) noexcept
 	{
@@ -389,21 +445,7 @@ private:
 		for (size_t i = 0; i < c.remoteIeLength; ++i) {
 			selectedRemoteIe_[i] = c.remoteIe[i];
 		}
-
-		uint8_t payload[8 + kMaxCodecIe];
-		size_t n = 0;
-		payload[n++] = static_cast<uint8_t>(remoteSeid_ << 2);
-		payload[n++] = static_cast<uint8_t>(localSeid_ << 2);
-		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaTransport);
-		payload[n++] = 0;
-		payload[n++] = static_cast<uint8_t>(ServiceCategory::MediaCodec);
-		payload[n++] = static_cast<uint8_t>(2 + selectedIeLength_);
-		payload[n++] = static_cast<uint8_t>(static_cast<uint8_t>(MediaType::Audio) << 4);
-		payload[n++] = static_cast<uint8_t>(selectedCodec_);
-		for (size_t i = 0; i < selectedIeLength_; ++i) {
-			payload[n++] = selectedIe_[i];
-		}
-		return Command(Signal::SetConfiguration, payload, n, out, cap);
+		return SendSelectedConfiguration(out, cap);
 	}
 
 	size_t OnResponse(Signal signal, bool accepted, const uint8_t* p, size_t len, uint8_t* out, size_t cap) noexcept
@@ -451,7 +493,14 @@ private:
 				break;
 			}
 			if (accepted) {
+				explicitConfiguration_ = false;
 				return SeidCommand(SessionState::Configuring, SessionState::Opening, Signal::Open, out, cap);
+			}
+			if (explicitConfiguration_) {
+				// The sink refused the configuration built for the closed stream. There is no
+				// candidate list to fall back to; the owner has to rediscover.
+				explicitConfiguration_ = false;
+				break;
 			}
 			// The sink refused this codec; try the next-best candidate (AAC -> SBC).
 			if (candidateIndex_ + 1 < candidateCount_) {
@@ -497,10 +546,16 @@ private:
 		case Signal::Close:
 		case Signal::Abort:
 			if (state_ == SessionState::Closing || state_ == SessionState::Aborting) {
+				// Our own CLOSE keeps the sink SEP and its capabilities, so a format change can
+				// configure the same SEP again (Configure). Anything else forgets them.
+				const bool initiatorClose = state_ == SessionState::Closing;
 				state_ = SessionState::Idle;
-				remoteSeid_ = 0;
-				localSeid_ = 0;
 				acceptor_ = false;
+				if (!initiatorClose) {
+					remoteSeid_ = 0;
+					localSeid_ = 0;
+					selectedRemoteIeLength_ = 0;
+				}
 				return 0;
 			}
 			break;
@@ -637,6 +692,7 @@ private:
 			state_ = SessionState::Idle;
 			remoteSeid_ = 0;
 			localSeid_ = 0;
+			selectedRemoteIeLength_ = 0;
 			acceptor_ = false;
 			pending_ = false;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
@@ -645,6 +701,7 @@ private:
 			state_ = SessionState::Idle;
 			remoteSeid_ = 0;
 			localSeid_ = 0;
+			selectedRemoteIeLength_ = 0;
 			acceptor_ = false;
 			pending_ = false;
 			return Reply(h, MessageType::ResponseAccept, nullptr, 0, out, cap);
@@ -815,6 +872,9 @@ private:
 	uint8_t selectedRemoteIe_[kMaxCodecIe] = {};
 	size_t selectedRemoteIeLength_ = 0;
 	bool acceptor_ = false;
+	// The pending SET_CONFIGURATION carries a configuration the owner supplied for a stream
+	// it closed (Configure), not a candidate from discovery.
+	bool explicitConfiguration_ = false;
 };
 
 } // namespace OpenA2dp::Avdtp

@@ -225,6 +225,10 @@ struct DEVICE_CONTEXT
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;
 	ULONG CodecSwitchReconnects;
+	// The CLOSE in flight belongs to an endpoint format change: AVDTP cannot change the
+	// sampling frequency or the channel count with RECONFIGURE, so the stream is closed and
+	// configured again on the same sink SEP instead of being rediscovered.
+	BOOLEAN FormatSwitchPending;
 	// Bumped by SET_PREFERENCE whenever a stored parameter changes. The work item
 	// compares it with the value the running stream was negotiated with, so a bitpool
 	// or bitrate change renegotiates the codec without one being forced.

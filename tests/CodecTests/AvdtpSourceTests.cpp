@@ -436,8 +436,86 @@ TEST(AvdtpSource_StartSuspendClose)
 	CHECK(Header(cmd).signal == Signal::Close);
 	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
 	CHECK(s.State() == SessionState::Idle);
-	CHECK_EQ(s.RemoteSeid(), uint8_t{0});
-	CHECK_EQ(s.LocalSeid(), uint8_t{0});
+	// Our own CLOSE keeps the SEP and its capabilities, which is what lets a format change
+	// reconfigure the stream without discovering again.
+	CHECK_EQ(s.RemoteSeid(), uint8_t{5});
+	CHECK_EQ(s.LocalSeid(), uint8_t{kLocalAacSeid});
+	CHECK(s.CanReconfigure());
+}
+
+TEST(AvdtpSource_ConfiguresTheClosedSepWithoutDiscovery)
+{
+	BitpoolState state{0x35};
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), BitpoolSelector, &state);
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+	uint8_t ie[kMaxCodecIe];
+	size_t ieLength = 0;
+
+	CHECK(s.Configure(kSbcConfig, sizeof(kSbcConfig), cmd, sizeof(cmd)) == 0); // nothing configured
+	CHECK(!s.CanReconfigure());
+
+	DriveToConfiguration(s, false, cmd, rsp, payload);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	REQUIRE(s.State() == SessionState::Open);
+	REQUIRE(s.Start(cmd, sizeof(cmd)) == 3);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	REQUIRE(s.State() == SessionState::Streaming);
+
+	// A format change closes the stream, then configures the same sink SEP with the IE the
+	// selector builds for the new format: no DISCOVER, no GET_CAPABILITIES.
+	REQUIRE(s.Close(cmd, sizeof(cmd)) == 3);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	REQUIRE(s.State() == SessionState::Idle);
+	REQUIRE(s.CanReconfigure());
+	state.bitpool = 0x20;
+	REQUIRE(s.RefreshConfiguration(ie, ieLength));
+	CHECK_EQ(ie[3], uint8_t{0x20});
+
+	size_t n = s.Configure(ie, ieLength, cmd, sizeof(cmd));
+	REQUIRE(n == 2 + 8 + ieLength);
+	CHECK(Header(cmd).signal == Signal::SetConfiguration);
+	// The same SEP pair the closed stream used: this sink's SBC SEP is 3, ours is 1.
+	CHECK_EQ(cmd[2], uint8_t{3 << 2});
+	CHECK_EQ(cmd[3], uint8_t{kLocalSeid << 2});
+	CHECK_EQ(cmd[9], uint8_t{static_cast<uint8_t>(CodecType::Sbc)});
+	CHECK_EQ(cmd[13], uint8_t{0x20}); // the new bitpool, at IE offset 3
+	CHECK(s.State() == SessionState::Configuring);
+
+	n = s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	REQUIRE(n == 3);
+	CHECK(Header(cmd).signal == Signal::Open);
+	CHECK_EQ(cmd[2], uint8_t{3 << 2});
+	n = s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	CHECK_EQ(n, size_t{0});
+	CHECK(s.State() == SessionState::Open);
+	CHECK_EQ(s.SelectedIe()[3], uint8_t{0x20});
+}
+
+TEST(AvdtpSource_RefusedReconfigurationFailsTheSession)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+	uint8_t ie[kMaxCodecIe];
+	size_t ieLength = 0;
+
+	DriveToConfiguration(s, false, cmd, rsp, payload);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	REQUIRE(s.State() == SessionState::Open);
+	REQUIRE(s.Close(cmd, sizeof(cmd)) == 3);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, sizeof(cmd));
+	REQUIRE(s.RefreshConfiguration(ie, ieLength));
+	REQUIRE(s.Configure(ie, ieLength, cmd, sizeof(cmd)) != 0);
+
+	// The configuration built for the closed stream has no candidate to fall back to, so a
+	// refusal fails the session and the owner rediscovers instead of sending another one.
+	CHECK_EQ(s.OnPacket(rsp, RejectResponse(cmd, rsp), cmd, sizeof(cmd)), size_t{0});
+	CHECK(s.State() == SessionState::Failed);
 }
 
 TEST(AvdtpSource_IgnoresMismatchedLabel)

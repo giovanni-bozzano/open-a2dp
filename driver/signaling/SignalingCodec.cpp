@@ -305,6 +305,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	ctx->MediaOpenRetry = FALSE;
 	ctx->CodecSwitchWanted = FALSE;
 	ctx->CodecSwitchClosing = FALSE;
+	ctx->FormatSwitchPending = FALSE;
 	ctx->ReconfigurePhase = ReconfigureNone;
 	// The link that reported the MTU is gone, so the next negotiation caps against the
 	// default again until the new channel reports its own.

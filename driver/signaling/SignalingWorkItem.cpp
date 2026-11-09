@@ -153,6 +153,63 @@ static void BeginCodecSwitchClose(DEVICE_CONTEXT* ctx)
 	}
 }
 
+// Sends the CLOSE half of a format change. AVDTP cannot change the sampling frequency or
+// the channel count with RECONFIGURE, so the stream has to be closed; unlike a codec switch
+// the sink SEP and its capabilities stay known, so FormatSwitchPending re-configures that
+// SEP instead of rediscovering the sink.
+static void BeginFormatSwitch(DEVICE_CONTEXT* ctx)
+{
+	ctx->ReconfigurePhase = ReconfigureNone;
+	InterlockedExchange(&ctx->MtuRenegotiate, 0);
+	if (ctx->Session.State() == Avdtp::SessionState::Streaming)
+	{
+		// The endpoint already runs at the new format, so nothing more may be sent at the
+		// old one while the CLOSE is in flight.
+		MediaStop(ctx);
+	}
+	ctx->FormatSwitchPending = TRUE;
+	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
+	if (ctx->CodecSwitchClosing)
+	{
+		// A sink that answers this CLOSE by dropping the signaling channel is reconnected,
+		// so the new configuration still reaches it.
+		ctx->CodecSwitchRecover = TRUE;
+		ctx->CodecSwitchReconnects = 0;
+	}
+	else
+	{
+		ctx->FormatSwitchPending = FALSE;
+		ctx->CodecSwitchWanted = TRUE; // no CLOSE was possible; retry on the next event
+	}
+}
+
+// Configures the SEP of the stream that was just closed for the format the endpoint runs at.
+// False when the SEP is no longer known or the request could not be sent, which leaves the
+// caller to rediscover; a refused configuration fails the session, and the retry flag makes
+// the next event rediscover as well.
+static bool ReconfigureClosedStream(DEVICE_CONTEXT* ctx)
+{
+	ctx->FormatSwitchPending = FALSE;
+	uint8_t ie[Avdtp::kMaxCodecIe];
+	size_t ieLength = 0;
+	if (!ctx->Session.RefreshConfiguration(ie, ieLength))
+	{
+		return false;
+	}
+	const size_t length = ctx->Session.Configure(ie, ieLength, ctx->WriteBuffer, sizeof(ctx->WriteBuffer));
+	if (length == 0)
+	{
+		return false;
+	}
+	OA2DP_INFO(ctx, "Signaling",
+		"stream closed; configuring the same SEP for %u Hz %u ch without rediscovering",
+		ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels));
+	ctx->CodecSwitchWanted = TRUE;
+	Transmit(ctx, length);
+	return true;
+}
+
 // Sends RECONFIGURE from the Open state with the configuration the current parameters
 // select. The sink's advertised capabilities for the SEP in use are re-run through the
 // selector, so the request is clamped to the same range discovery would use.
@@ -279,6 +336,14 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		ctx->CodecSwitchWanted = FALSE;
 		if (state == Avdtp::SessionState::Idle && !ctx->MediaOpenRetry)
 		{
+			if (ctx->FormatSwitchPending)
+			{
+				if (ReconfigureClosedStream(ctx))
+				{
+					return;
+				}
+				OA2DP_WARN(ctx, "Signaling", "the closed stream cannot be configured again; rediscovering");
+			}
 			Avdtp::CodecType desired;
 			if (DesiredCodec(ctx, desired))
 			{
@@ -298,7 +363,16 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		return; // not settled yet; the next transition re-runs this
 	}
+	const bool retry = ctx->CodecSwitchWanted != FALSE;
 	ctx->CodecSwitchWanted = FALSE;
+	if (state == Avdtp::SessionState::Failed && retry)
+	{
+		// A configuration the sink refused (or a CLOSE that never landed) leaves the stream
+		// unusable; a discovery rebuilds it from the sink's own capabilities.
+		OA2DP_INFO(ctx, "Signaling", "the sink refused the new configuration; rediscovering");
+		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		return;
+	}
 	if (state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed)
 	{
 		return; // the next discovery already sees the current preference
@@ -341,13 +415,14 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	if (formatDiffers)
 	{
 		// RECONFIGURE cannot change the sampling frequency or the channel count of a
-		// configured stream, so it is closed and negotiated again at the new format.
-		ctx->AppliedPreferenceParameters = parameters; // the rediscovery renegotiates from it
+		// configured stream, so it is closed and configured again at the new format - on the
+		// same sink SEP, with no discovery and no new connection.
+		ctx->AppliedPreferenceParameters = parameters; // the reconfiguration negotiates from it
 		OA2DP_INFO(ctx, "Signaling",
 			"the endpoint now runs at %u Hz %u ch while the stream is configured for another format; closing to "
-			"renegotiate",
+			"reconfigure it",
 			ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels));
-		BeginCodecSwitchClose(ctx);
+		BeginFormatSwitch(ctx);
 		return;
 	}
 	if (mtuDiffers)
