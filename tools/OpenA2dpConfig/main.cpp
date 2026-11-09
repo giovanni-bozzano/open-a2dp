@@ -1328,11 +1328,11 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 	SetTextColor(dc, disabled ? colors.muted : colors.text);
 	const UINT format = (checkbox ? DT_LEFT : DT_CENTER) | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
 	DrawTextW(dc, text, -1, &textRect, format);
-	if ((item.itemState & ODS_FOCUS) != 0)
+	if (!checkbox && (item.itemState & ODS_FOCUS) != 0)
 	{
-		// A check box is focused around the whole control, so the frame never sits on a glyph;
-		// a button's frame is the caption it is drawn around.
-		RECT focus = checkbox ? box : textRect;
+		// A button's frame is the caption it is drawn around. The check box draws none: a frame
+		// around the whole control reads as a second border next to the tick box.
+		RECT focus = textRect;
 		InflateRect(&focus, -1, -1);
 		DrawFocusRect(dc, &focus);
 	}
