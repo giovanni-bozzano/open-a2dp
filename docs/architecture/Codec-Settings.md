@@ -49,9 +49,7 @@ to the whole circuit, regardless of the request's target classification. Windows
 Sound-settings format with a `KSPROPERTY_PIN_PROPOSEDATAFORMAT` SET before opening the stream
 and falls back to another format when it fails. The driver answers WAVEFORMATEX SETs on the
 streaming pin itself, using the same 16-bit PCM check as stream creation, and logs each
-proposal with its decision. Hardware showed Windows proposing the selected format, getting
-success, then still opening the RAW-mode stream with the list default; an accepted proposal
-therefore also becomes the RAW and DEFAULT list default. Other `PROPOSEDATAFORMAT` requests stay ACX-managed and are
+proposal with its decision. Other `PROPOSEDATAFORMAT` requests stay ACX-managed and are
 logged, as is the stream processing mode, which should be `default` for shared-mode playback.
 The normal format list and initial-default queries remain ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
