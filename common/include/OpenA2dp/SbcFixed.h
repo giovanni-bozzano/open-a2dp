@@ -7,13 +7,17 @@
 #include <OpenA2dp/SbcAllocation.h>
 #include <OpenA2dp/SbcConfig.h>
 #include <OpenA2dp/SbcFixedTables.h>
+#include <OpenA2dp/SbcFrame.h>
 #include <OpenA2dp/Types.h>
 
 namespace OpenA2dp::SbcFixed {
 
-constexpr uint8_t kSyncWord = 0x9C;
-constexpr size_t kMaxFramesPerPacket = 15;
-constexpr size_t kMaxFrameBytes = 4 + (4 * 8 * 2) / 8 + (8 + 16 * 250 + 7) / 8;
+// The frame format is shared with the codec library (SbcFrame.h).
+using SbcFrame::Crc8;
+using SbcFrame::kMaxFrameBytes;
+using SbcFrame::kMaxFramesPerPacket;
+using SbcFrame::kSyncWord;
+using SbcFrame::MediaPayloadHeader;
 
 enum class ChannelMode : uint8_t { Mono = 0, DualChannel = 1, Stereo = 2, JointStereo = 3 };
 enum class Allocation : uint8_t { Loudness = 0, Snr = 1 };
@@ -60,51 +64,16 @@ inline bool ParseIe(const uint8_t* ie, size_t len, Params& out) noexcept
 	return true;
 }
 
-inline size_t FrameLength(const Params& p) noexcept
-{
-	const size_t nch = p.Channels();
-	const size_t length = 4 + (4 * p.subbands * nch) / 8;
-	size_t audioBits = 0;
-	switch (p.channelMode) {
-	case ChannelMode::Mono:
-	case ChannelMode::DualChannel:
-		audioBits = static_cast<size_t>(p.blocks) * nch * p.bitpool;
-		break;
-	case ChannelMode::Stereo:
-		audioBits = static_cast<size_t>(p.blocks) * p.bitpool;
-		break;
-	case ChannelMode::JointStereo:
-		audioBits = p.subbands + static_cast<size_t>(p.blocks) * p.bitpool;
-		break;
-	}
-	return length + (audioBits + 7) / 8;
-}
+inline size_t FrameLength(const Params& p) noexcept { return SbcFrame::FrameLength(p.ToConfiguration()); }
 
 // Bits per second of the configured stream, for the status report.
-inline uint32_t Bitrate(const Params& p) noexcept
-{
-	return static_cast<uint32_t>(
-		(8ull * FrameLength(p) * p.sampleRate) / (static_cast<uint64_t>(p.subbands) * p.blocks));
-}
+inline uint32_t Bitrate(const Params& p) noexcept { return SbcFrame::Bitrate(p.ToConfiguration()); }
 
-inline uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept
-{
-	uint8_t crc = 0x0F;
-	for (size_t i = 0; i < bitLength; ++i) {
-		const unsigned bit = (data[i >> 3] >> (7 - (i & 7))) & 1u;
-		const unsigned feedback = ((crc >> 7) & 1u) ^ bit;
-		crc = static_cast<uint8_t>(crc << 1);
-		if (feedback) {
-			crc ^= 0x1D;
-		}
-	}
-	return crc;
-}// The allocation solver is shared with the codec library (SbcAllocation.h).
+// The allocation solver is shared with the codec library (SbcAllocation.h).
 inline void CalculateBits(const Params& p, const uint8_t sf[2][8], int bits[2][8]) noexcept
 {
 	SbcAllocation::CalculateBits(p.ToConfiguration(), sf, bits);
 }
-
 
 // Subband samples are kept in Q12 relative to 16-bit PCM units (|x| < 2^16 fits in int32).
 constexpr int kFracBits = 12;
@@ -301,17 +270,10 @@ private:
 	int32_t history_[2][80] = {};
 };
 
-// Builds the SBC media payload header (A2DP 4.3.4): F=S=L=0, frame count.
-inline uint8_t MediaPayloadHeader(size_t frameCount) noexcept { return static_cast<uint8_t>(frameCount & 0x0F); }
-
 // How many frames fit in a media payload of `payloadCapacity` bytes (after RTP).
 inline size_t FramesPerPacket(const Params& p, size_t payloadCapacity) noexcept
 {
-	if (payloadCapacity <= 1) {
-		return 0;
-	}
-	const size_t n = (payloadCapacity - 1) / FrameLength(p);
-	return n < kMaxFramesPerPacket ? n : kMaxFramesPerPacket;
+	return SbcFrame::FramesPerPacket(p.ToConfiguration(), payloadCapacity);
 }
 
 // Interleaved sine generator using a 256-entry table and a 32-bit phase accumulator.

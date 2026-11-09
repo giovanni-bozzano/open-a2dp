@@ -22,6 +22,7 @@
 	<ClInclude Include="..\common\include\OpenA2dp\SbcAllocation.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcConfig.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixed.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\SbcFrame.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixedTables.h" />
   </ItemGroup>
   <ItemGroup>

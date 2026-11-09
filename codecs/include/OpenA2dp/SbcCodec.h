@@ -2,6 +2,7 @@
 
 #include <OpenA2dp/IA2dpCodec.h>
 #include <OpenA2dp/SbcConfig.h>
+#include <OpenA2dp/SbcFrame.h>
 
 namespace OpenA2dp {
 
@@ -35,8 +36,10 @@ using SbcConfig::kAllBlocks;
 using SbcConfig::kAllSubbands;
 using SbcConfig::kAllAllocations;
 
-constexpr uint8_t kSyncWord = 0x9C;
-constexpr size_t kMaxFramesPerPacket = 15;
+// The frame format is shared with the kernel encoder (SbcFrame.h).
+using SbcFrame::Crc8;
+using SbcFrame::kMaxFramesPerPacket;
+using SbcFrame::kSyncWord;
 
 enum class ChannelMode : uint8_t { Mono = 0, DualChannel = 1, Stereo = 2, JointStereo = 3 };
 enum class Allocation : uint8_t { Loudness = 0, Snr = 1 };
@@ -70,9 +73,6 @@ uint32_t Bitrate(const FrameParams& p) noexcept;
 
 // Parses a fully configured IE (exactly one bit per field). Uses the max bitpool.
 bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept;
-
-// CRC-8 (x^8+x^4+x^3+x^2+1, init 0x0F) over `bitLength` bits, MSB first.
-uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept;
 
 // Bit allocation (A2DP spec 12.6.3). scaleFactors/bits are [channel][subband].
 void CalculateBits(const FrameParams& p, const uint8_t scaleFactors[2][8], int bits[2][8]) noexcept;

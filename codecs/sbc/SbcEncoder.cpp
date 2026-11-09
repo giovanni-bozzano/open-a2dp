@@ -227,10 +227,7 @@ HRESULT SbcEncoder::Encode(const int16_t* pcm, uint8_t* out, size_t capacity, si
 
 size_t SbcEncoder::FramesPerPacket(size_t payloadCapacity) const noexcept
 {
-	if (payloadCapacity <= 1) {
-		return 0;
-	}
-	return std::min<size_t>((payloadCapacity - 1) / FrameLength(params_), kMaxFramesPerPacket);
+	return SbcFrame::FramesPerPacket(params_.ToConfiguration(), payloadCapacity);
 }
 
 size_t SbcEncoder::BuildMediaPayload(const uint8_t* frames, const size_t* frameSizes, size_t frameCount,
@@ -247,7 +244,7 @@ size_t SbcEncoder::BuildMediaPayload(const uint8_t* frames, const size_t* frameS
 		return 0;
 	}
 	// Media payload header: F=0, S=0, L=0, RFA=0, number of frames.
-	out[0] = static_cast<uint8_t>(frameCount & 0x0F);
+	out[0] = SbcFrame::MediaPayloadHeader(frameCount);
 	memcpy(out + 1, frames, total - 1);
 	return total;
 }

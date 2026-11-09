@@ -1,6 +1,7 @@
 #include <OpenA2dp/SbcCodec.h>
 #include <OpenA2dp/SbcAllocation.h>
 #include <OpenA2dp/SbcConfig.h>
+#include <OpenA2dp/SbcFrame.h>
 
 namespace OpenA2dp {
 
@@ -11,44 +12,11 @@ int SampleRateIndex(uint32_t sampleRate) noexcept
 	return SbcConfig::SampleRateIndex(sampleRate);
 }
 
-size_t FrameLength(const FrameParams& p) noexcept
-{
-	const size_t nch = p.Channels();
-	size_t length = 4 + (4 * p.subbands * nch) / 8;
-	size_t audioBits = 0;
-	switch (p.channelMode) {
-	case ChannelMode::Mono:
-	case ChannelMode::DualChannel:
-		audioBits = static_cast<size_t>(p.blocks) * nch * p.bitpool;
-		break;
-	case ChannelMode::Stereo:
-		audioBits = static_cast<size_t>(p.blocks) * p.bitpool;
-		break;
-	case ChannelMode::JointStereo:
-		audioBits = p.subbands + static_cast<size_t>(p.blocks) * p.bitpool;
-		break;
-	}
-	return length + (audioBits + 7) / 8;
-}
+size_t FrameLength(const FrameParams& p) noexcept { return SbcFrame::FrameLength(p.ToConfiguration()); }
 
-uint32_t Bitrate(const FrameParams& p) noexcept
-{
-	return static_cast<uint32_t>((8ull * FrameLength(p) * p.sampleRate) / (static_cast<uint64_t>(p.subbands) * p.blocks));
-}
+uint32_t Bitrate(const FrameParams& p) noexcept { return SbcFrame::Bitrate(p.ToConfiguration()); }
 
-uint8_t Crc8(const uint8_t* data, size_t bitLength) noexcept
-{
-	uint8_t crc = 0x0F;
-	for (size_t i = 0; i < bitLength; ++i) {
-		const unsigned bit = (data[i >> 3] >> (7 - (i & 7))) & 1u;
-		const unsigned feedback = ((crc >> 7) & 1u) ^ bit;
-		crc = static_cast<uint8_t>(crc << 1);
-		if (feedback) {
-			crc ^= 0x1D;
-		}
-	}
-	return crc;
-}// The allocation solver is shared with the kernel encoder (SbcAllocation.h).
+// The allocation solver is shared with the kernel encoder (SbcAllocation.h).
 void CalculateBits(const FrameParams& p, const uint8_t scaleFactors[2][8], int bits[2][8]) noexcept
 {
 	SbcAllocation::CalculateBits(p.ToConfiguration(), scaleFactors, bits);
