@@ -72,8 +72,12 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 // Checks a KS format against the 16-bit PCM formats the endpoint lists for this sink.
 // `what` names the request in the log so proposals and stream creation can be told apart.
 NTSTATUS CheckPcmFormat(_In_ DEVICE_CONTEXT* ctx, _In_reads_bytes_(size) const KSDATAFORMAT* data, _In_ ULONG size,
-	_In_z_ const char* what)
+	_In_z_ const char* what, _Out_opt_ ULONG* formatIndex = nullptr)
 {
+	if (formatIndex != nullptr)
+	{
+		*formatIndex = AudioRenderFormatCount;
+	}
 	const auto* wave = reinterpret_cast<const KSDATAFORMAT_WAVEFORMATEX*>(data);
 	constexpr ULONG minimum = FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx) + sizeof(WAVEFORMATEX);
 	if (data == nullptr || size < minimum || data->FormatSize < minimum || data->FormatSize > size ||
@@ -115,11 +119,60 @@ NTSTATUS CheckPcmFormat(_In_ DEVICE_CONTEXT* ctx, _In_reads_bytes_(size) const K
 			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
 				static_cast<uint8_t>(pcm.nChannels))))
 		{
+			if (formatIndex != nullptr)
+			{
+				*formatIndex = i;
+			}
 			return STATUS_SUCCESS;
 		}
 	}
 	OA2DP_WARN(ctx, "Audio", "%s format is not in the supported endpoint list; refusing it", what);
 	return STATUS_NO_MATCH;
+}
+
+// Makes a listed format the RAW and DEFAULT list default, which is what the next stream opens with.
+void AdoptDefaultFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
+{
+	const ACXPIN pin = ctx->StreamingPin;
+	const ACXDATAFORMATLIST list = pin != nullptr ? AcxPinGetRawDataFormatList(pin) : nullptr;
+	const ACXDATAFORMATLIST defaultList = ctx->DefaultModeFormats;
+	if (index >= AudioRenderFormatCount || list == nullptr || defaultList == nullptr || ctx->FormatLock == nullptr ||
+		KeGetCurrentIrql() != PASSIVE_LEVEL)
+	{
+		return;
+	}
+	const ACXDATAFORMAT format = ctx->FormatObjects[index];
+	WdfWaitLockAcquire(ctx->FormatLock, nullptr);
+	ACXDATAFORMAT current = nullptr;
+	NTSTATUS status = STATUS_SUCCESS;
+	if ((ctx->FormatsListed & (1u << index)) == 0)
+	{
+		status = STATUS_NOT_FOUND;
+	}
+	else if (!NT_SUCCESS(AcxDataFormatListRetrieveDefaultDataFormat(list, &current)) || current == nullptr ||
+		!AcxDataFormatIsEqual(current, format))
+	{
+		status = AcxDataFormatListAssignDefaultDataFormat(list, format);
+		if (NT_SUCCESS(status))
+		{
+			status = AcxDataFormatListAssignDefaultDataFormat(defaultList, format);
+			if (!NT_SUCCESS(status) && current != nullptr)
+			{
+				(void)AcxDataFormatListAssignDefaultDataFormat(list, current);
+			}
+		}
+		if (NT_SUCCESS(status))
+		{
+			OA2DP_INFO(ctx, "Audio", "endpoint default format now %u Hz %u ch (accepted proposal)",
+				AudioRenderRates[index / AudioRenderChannelCount],
+				static_cast<unsigned>(AudioRenderChannels[index % AudioRenderChannelCount]));
+		}
+	}
+	WdfWaitLockRelease(ctx->FormatLock);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_WARN(ctx, "Audio", "adopting render format %u as the default failed 0x%08X", index, status);
+	}
 }
 } // namespace
 
@@ -152,8 +205,15 @@ void OnProposeModeFormat(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WD
 		// creation uses, so a format the endpoint lists is never refused here. Bare
 		// KSDATAFORMAT probes (no WAVEFORMATEX body) stay with ACX: refusing them removes
 		// the endpoint.
+		ULONG formatIndex;
 		const NTSTATUS status = CheckPcmFormat(ctx, static_cast<const KSDATAFORMAT*>(property.Value),
-			property.ValueCb, "proposed");
+			property.ValueCb, "proposed", &formatIndex);
+		if (NT_SUCCESS(status))
+		{
+			// Windows then opens the RAW-mode stream with the list default rather than the
+			// proposal, so the accepted proposal becomes the default for both modes.
+			AdoptDefaultFormat(ctx, formatIndex);
+		}
 		WdfRequestComplete(request, status);
 		return;
 	}
