@@ -149,44 +149,81 @@ ULONG StreamFormatIndex(_In_ DEVICE_CONTEXT* ctx)
 	}
 	return AudioRenderFormatCount;
 }
+// True the first time a given pin property id is seen; the KSPROPERTY_PIN_* ids are all
+// below 32.
+bool PinPropertyFirstSeen(_In_ DEVICE_CONTEXT* ctx, ULONG id)
+{
+	if (id >= 32)
+	{
+		return false;
+	}
+	const LONG bit = static_cast<LONG>(1UL << id);
+	return (InterlockedOr(&ctx->PinPropsLogged, bit) & bit) == 0;
+}
+
+// Logs a property request once, naming the format it carries when the value holds a
+// WAVEFORMATEX (the data intersection candidate does; a packet-size query does not). The
+// checks reject the output buffer of a plain GET, which is uninitialized.
+void LogPropertyRequest(_In_ DEVICE_CONTEXT* ctx, ULONG id, ULONG verb, ULONG controlCb, ULONG valueCb,
+	const void* value)
+{
+	const ULONG waveFormatOffset = FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx);
+	constexpr USHORT TagPcm = 1;
+	constexpr USHORT TagExtensible = 0xFFFE;
+	if (value != nullptr && valueCb >= waveFormatOffset + sizeof(WAVEFORMATEX))
+	{
+		const auto* format = static_cast<const KSDATAFORMAT*>(value);
+		const auto* wave = reinterpret_cast<const WAVEFORMATEX*>(static_cast<const UCHAR*>(value) + waveFormatOffset);
+		if (format->FormatSize <= valueCb &&
+			(wave->wFormatTag == TagPcm || wave->wFormatTag == TagExtensible) &&
+			wave->nSamplesPerSec >= 8000 && wave->nSamplesPerSec <= 192000 &&
+			wave->nChannels >= 1 && wave->nChannels <= 8)
+		{
+			OA2DP_INFO(ctx, "Audio", "pin property %u verb %u input %u B output %u B carries %u Hz %u ch %u bit",
+				id, verb, controlCb, valueCb, wave->nSamplesPerSec,
+				static_cast<unsigned>(wave->nChannels), static_cast<unsigned>(wave->wBitsPerSample));
+			return;
+		}
+	}
+	OA2DP_INFO(ctx, "Audio", "pin property %u verb %u input %u B output %u B", id, verb, controlCb, valueCb);
+}
 } // namespace
 
-void OnPinFormatRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFREQUEST request)
+void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFREQUEST request)
 {
 	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
 	ACX_REQUEST_PARAMETERS parameters;
 	ACX_REQUEST_PARAMETERS_INIT(&parameters);
 	AcxRequestGetParameters(request, &parameters);
 	const auto& property = parameters.Parameters.Property;
-	if (parameters.Type == AcxRequestTypeProperty && IsEqualGUID(property.Set, KSPROPSETID_Pin) &&
-		property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT2 && property.Verb == KSPROPERTY_TYPE_GET)
+	if (parameters.Type == AcxRequestTypeProperty && IsEqualGUID(property.Set, KSPROPSETID_Pin))
 	{
-		// ACX answers this from the default it captured when the pin was created, and Windows
-		// then uses that format for every stream in the mode, ahead of the Sound-settings
-		// selection. Answering with the format the engine opened last keeps the selection.
-		const ULONG index = StreamFormatIndex(ctx);
-		const auto* ks = index < AudioRenderFormatCount
-			? static_cast<const KSDATAFORMAT*>(AcxDataFormatGetKsDataFormat(ctx->FormatObjects[index])) : nullptr;
-		NTSTATUS status = STATUS_NOT_SUPPORTED;
-		if (ks != nullptr && property.Value != nullptr && property.ValueCb >= ks->FormatSize)
+		if (PinPropertyFirstSeen(ctx, property.Id))
 		{
-			RtlCopyMemory(property.Value, ks, ks->FormatSize);
-			status = STATUS_SUCCESS;
+			LogPropertyRequest(ctx, property.Id, static_cast<ULONG>(property.Verb), property.ControlCb,
+				property.ValueCb, property.Value);
 		}
-		else if (ks != nullptr)
+		if (property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT2 && property.Verb == AcxPropertyVerbGet)
 		{
-			status = STATUS_BUFFER_TOO_SMALL;
+			// ACX answers this from the default it captured when the pin was created, and Windows
+			// then uses that format for every stream in the mode, ahead of the Sound-settings
+			// selection. Answering with the format the engine opened last keeps the selection.
+			const ULONG index = StreamFormatIndex(ctx);
+			const auto* ks = index < AudioRenderFormatCount
+				? static_cast<const KSDATAFORMAT*>(AcxDataFormatGetKsDataFormat(ctx->FormatObjects[index])) : nullptr;
+			NTSTATUS status = STATUS_NOT_SUPPORTED;
+			if (ks != nullptr && property.Value != nullptr && property.ValueCb >= ks->FormatSize)
+			{
+				RtlCopyMemory(property.Value, ks, ks->FormatSize);
+				status = STATUS_SUCCESS;
+			}
+			else if (ks != nullptr)
+			{
+				status = STATUS_BUFFER_TOO_SMALL;
+			}
+			WdfRequestComplete(request, status);
+			return;
 		}
-		if (index < AudioRenderFormatCount && InterlockedExchange(&ctx->ProposedFormatLogged, 1) == 0)
-		{
-			// One line per device start, not one per query.
-			OA2DP_INFO(ctx, "Audio", "preferred mode format answered with %u Hz %u ch (value %u B, status 0x%08X)",
-				AudioRenderRates[index / AudioRenderChannelCount],
-				static_cast<unsigned>(AudioRenderChannels[index % AudioRenderChannelCount]),
-				property.ValueCb, status);
-		}
-		WdfRequestComplete(request, status);
-		return;
 	}
 	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
 	if (!NT_SUCCESS(status))

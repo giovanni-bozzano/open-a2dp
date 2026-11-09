@@ -344,9 +344,10 @@ struct DEVICE_CONTEXT
 	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
 	WDFWAITLOCK FormatLock;
 	ULONG FormatsListed;
-	// Set when the preferred-mode-format query has been answered once, so that evidence is
-	// logged per device start instead of once per request.
-	volatile LONG ProposedFormatLogged;
+	// One bit per KSPROPSETID_Pin property id (all are below 32) already logged from the
+	// request preprocess callback, so the log shows the format negotiation once per device
+	// start instead of once per request.
+	volatile LONG PinPropsLogged;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
