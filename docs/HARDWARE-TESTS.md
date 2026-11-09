@@ -332,6 +332,22 @@ it), reattach.
    `OpenA2dpCtl status --verbose` for the same sink, one field per line, every value with
    its decimal and hex form. Use this dump for any failure found below it.
 
+### Release gate
+
+The two checks the codec configuration work handed to system testing. Both need a real
+player and a real sink; the scripted helpers in `.local/` cannot stand in for either.
+
+**T25 Player resumes after the endpoint flap (S/A)** — while a media player streams, change
+`PCM format`.
+- Expect: `jack unplugged for 80 ms so Windows rebuilds the endpoint`, the stream comes back
+  at the new format, the sink's display follows it and the player keeps playing. The 80 ms
+  gap is all it hears; no reconnect, no `rediscovering`.
+
+**T26 Pinned format survives a reconnect (S/A)** — pin a format, power the sink off and on.
+- Expect: `Config: endpoint format <rate> Hz <ch> ch restored from the registry` and
+  `endpoint formats ...` appear before Windows opens anything, and the stream runs at the
+  pinned format with no Apply and no format change from the window.
+
 ### Soak
 
 **T20 Long run** — stream (A if available, else S) for 8 hours with Verifier on.
