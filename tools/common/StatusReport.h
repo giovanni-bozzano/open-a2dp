@@ -29,6 +29,12 @@ std::string CodecListText(uint32_t codecs);
 // "1.2.3" from VersionInfo::driverVersion.
 std::string DriverVersionText(uint32_t driverVersion);
 
+// Splits one report line into its padded label column and the value, so a surface that
+// renders rows instead of text (the settings window) reads the same report the CLI prints.
+// `labelWidth` is the padding the report uses: 16 for the formatted lines, 28 for the raw
+// field dump. Returns false for a blank line.
+bool SplitReportLine(const std::string& line, size_t labelWidth, std::string& label, std::string& value);
+
 struct StatusReportInput
 {
 	const Ioctl::Status* status = nullptr;

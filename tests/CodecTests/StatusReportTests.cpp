@@ -163,6 +163,28 @@ TEST(StatusReport_NeedsAStatus)
 	CHECK(report.empty() == false);
 }
 
+TEST(StatusReport_SplitsIntoColumns)
+{
+	// The settings window renders the report as rows, so the column split has to work for a
+	// label that fills most of its column (one space left) as well as for a short one.
+	std::string label;
+	std::string value;
+	CHECK(SplitReportLine("  AVDTP           Streaming", 16, label, value));
+	CHECK(label == "AVDTP");
+	CHECK(value == "Streaming");
+	CHECK(SplitReportLine("  endpoint format automatic (every sink format)", 16, label, value));
+	CHECK(label == "endpoint format");
+	CHECK(value == "automatic (every sink format)");
+	// Raw fields are padded to 28 and separated by one more space.
+	CHECK(SplitReportLine("  status.abiVersion" + std::string(11, ' ') + " 1 (0x1)", 28, label, value));
+	CHECK(label == "status.abiVersion");
+	CHECK(value == "1 (0x1)");
+	CHECK(SplitReportLine("  driver", 16, label, value));
+	CHECK(label == "driver");
+	CHECK(value.empty());
+	CHECK(SplitReportLine("   ", 16, label, value) == false);
+}
+
 TEST(StatusReport_Names)
 {
 	CHECK(std::string(CodecName(Ioctl::kCodecSbc)) == "SBC");

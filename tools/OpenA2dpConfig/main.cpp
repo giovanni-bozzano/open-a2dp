@@ -7,12 +7,18 @@
 // never has to wait or guess.
 
 #include "ControlClient.h"
+#include "StatusView.h"
 
 #include "common/StatusReport.h"
 
 #include <OpenA2dp/Ioctl.h>
 
 #include <windows.h>
+
+#include <commctrl.h>
+
+// The list view needs the version 6 common controls, or it draws with the classic theme.
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include <cfgmgr32.h>
 
@@ -33,7 +39,7 @@ enum ControlId : int {
 	kRefreshButton,
 	kCopyButton,
 	kDetailsCheck,
-	kStatusBox,
+	kStatusList,
 	kCodecCombo,
 	kFormatRateCombo,
 	kFormatChannelsCombo,
@@ -68,8 +74,8 @@ struct SinkState
 	Ioctl::EndpointFormat endpointFormat = {};
 	Ioctl::VersionInfo version = {};
 	std::wstring message; // the outcome of the last action, shown under the controls
-	std::wstring shownText; // what the status box holds, so a refresh only redraws real changes
-	bool details = false;   // show every field, including the ones the report formats hiding
+	HFONT font = nullptr;  // the window's font, owned by the window
+	bool details = false;  // show every field, including the ones the formatted lines hide
 	HCMNOTIFICATION notify = nullptr; // control-device arrival/removal
 };
 
@@ -161,22 +167,128 @@ void SetMessage(HWND hwnd, const std::wstring& message)
 	SetWindowTextW(GetDlgItem(hwnd, kMessageLabel), message.c_str());
 }
 
-void SetStatusText(HWND hwnd)
+// Which section of the list a report line belongs to, or null for the raw field dump, whose
+// section the report marks itself.
+const wchar_t* SectionForLabel(const std::string& label)
 {
-	SinkState* state = StateOf(hwnd);
+	if (label == "AVDTP" || label == "media" || label == "codec" || label == "media MTU")
+	{
+		return L"Session";
+	}
+	if (label == "sink formats")
+	{
+		return L"Sink";
+	}
+	if (label == "endpoint format" || label == "preference" || label == "SBC bitpool" ||
+		label == "AAC bitrate" || label == "SBC frame")
+	{
+		return L"Endpoint";
+	}
+	if (label == "encoder" || label == "rings" || label == "counters" || label == "last error")
+	{
+		return L"Service";
+	}
+	return label == "driver" ? L"Driver" : nullptr;
+}
+
+// A value that reports a failure is coloured, so a glance is enough; the label keeps the
+// report's casing for the acronyms and gets a leading capital for the rest.
+RowTone ToneForLabel(const std::string& label, const std::string& value)
+{
+	if (label == "last error")
+	{
+		return value == "none" ? RowTone::Normal : RowTone::Error;
+	}
+	if (label == "driver" && value.find("does not match") != std::string::npos)
+	{
+		return RowTone::Error;
+	}
+	if (label == "media" || label == "AVDTP")
+	{
+		if (value == "Failed")
+		{
+			return RowTone::Error;
+		}
+		if (value == "Streaming")
+		{
+			return RowTone::Good;
+		}
+		if (value == "Suspended")
+		{
+			return RowTone::Warning;
+		}
+	}
+	return label == "encoder" && value == "not registered" ? RowTone::Warning : RowTone::Normal;
+}
+
+std::wstring RowLabel(const std::string& label)
+{
+	if (label.empty() || label[0] < 'a' || label[0] > 'z')
+	{
+		return Widen(label);
+	}
+	std::string capital = label;
+	capital[0] = static_cast<char>(capital[0] - 'a' + 'A');
+	return Widen(capital);
+}
+
+std::vector<StatusRow> BuildStatusRows(const SinkState& state)
+{
+	std::vector<StatusRow> rows;
+	if (!state.open)
+	{
+		return rows;
+	}
+	Tools::StatusReportInput input;
+	input.status = &state.status;
+	input.preference = &state.preference;
+	input.version = &state.version;
+	input.verbose = state.details;
+	const std::string report = Tools::BuildStatusReport(input);
+
+	std::wstring section;
+	bool rawFields = false;
+	size_t begin = 0;
+	while (begin < report.size())
+	{
+		const size_t end = report.find('\n', begin);
+		const std::string line = report.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+		begin = end == std::string::npos ? report.size() : end + 1;
+		if (line.find("-- raw fields --") != std::string::npos)
+		{
+			rawFields = true;
+			rows.push_back({true, L"Raw fields", std::wstring(), RowTone::Normal});
+			continue;
+		}
+		std::string label;
+		std::string value;
+		if (!Tools::SplitReportLine(line, rawFields ? 28 : 16, label, value))
+		{
+			continue;
+		}
+		if (!rawFields)
+		{
+			const wchar_t* const next = SectionForLabel(label);
+			if (next != nullptr && section != next)
+			{
+				section = next;
+				rows.push_back({true, next, std::wstring(), RowTone::Normal});
+			}
+		}
+		rows.push_back({false, RowLabel(label), Widen(value), ToneForLabel(label, value)});
+	}
+	return rows;
+}
+
+void RefreshStatusView(HWND hwnd)
+{
+	const SinkState* state = StateOf(hwnd);
 	if (state == nullptr)
 	{
 		return;
 	}
-	std::wstring text = ReportText(*state);
-	// Re-writing the same text every timer tick would reset the scroll position and the
-	// selection while the user reads it.
-	if (text == state->shownText)
-	{
-		return;
-	}
-	state->shownText = std::move(text);
-	SetWindowTextW(GetDlgItem(hwnd, kStatusBox), state->shownText.c_str());
+	const std::wstring empty = state->message.empty() ? L"No OpenA2dp device is available." : state->message;
+	UpdateStatusView(hwnd, kStatusList, BuildStatusRows(*state), empty);
 }
 
 HWND CreateChild(HWND parent, const wchar_t* className, const wchar_t* text, DWORD style, int x, int y,
@@ -245,7 +357,10 @@ void SelectComboValue(HWND hwnd, int id, uint32_t value)
 // Creates every control once; the layout is fixed, so the window is not resizable.
 void CreateControls(HWND hwnd)
 {
-	const HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+	const SinkState* state = StateOf(hwnd);
+	const HFONT font = state != nullptr && state->font != nullptr
+					   ? state->font
+					   : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 	CreateChild(hwnd, L"STATIC", L"Sink", SS_LEFT, 12, 16, 96, 20, 0, font);
 	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 12, 260, 220,
 				kSinkCombo, font);
@@ -256,47 +371,45 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"BUTTON", L"Details", BS_AUTOCHECKBOX | WS_TABSTOP, 548, 15, 80, 22, kDetailsCheck,
 				font);
 
-	CreateChild(hwnd, L"BUTTON", L"Status", BS_GROUPBOX, 12, 48, 616, 224, 0, font);
-	CreateChild(hwnd, L"EDIT", L"",
-				WS_BORDER | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 24, 68, 592,
-				192, kStatusBox, font);
+	CreateChild(hwnd, L"BUTTON", L"Status", BS_GROUPBOX, 12, 48, 616, 284, 0, font);
+	CreateStatusView(hwnd, kStatusList, 24, 68, 592, 252, font);
 
-	CreateChild(hwnd, L"BUTTON", L"Codec", BS_GROUPBOX, 12, 280, 616, 148, 0, font);
-	CreateChild(hwnd, L"STATIC", L"Codec", SS_LEFT, 24, 302, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 298, 190, 160,
+	CreateChild(hwnd, L"BUTTON", L"Codec", BS_GROUPBOX, 12, 340, 616, 148, 0, font);
+	CreateChild(hwnd, L"STATIC", L"Codec", SS_LEFT, 24, 362, 84, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 358, 190, 160,
 				kCodecCombo, font);
-	CreateChild(hwnd, L"STATIC", L"AAC bitrate", SS_LEFT, 320, 302, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 298, 196, 220,
+	CreateChild(hwnd, L"STATIC", L"AAC bitrate", SS_LEFT, 320, 362, 92, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 358, 196, 220,
 				kBitrateCombo, font);
-	CreateChild(hwnd, L"STATIC", L"SBC bitpool", SS_LEFT, 24, 334, 84, 20, 0, font);
-	CreateChild(hwnd, L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_RIGHT, 112, 332, 80, 22,
+	CreateChild(hwnd, L"STATIC", L"SBC bitpool", SS_LEFT, 24, 394, 84, 20, 0, font);
+	CreateChild(hwnd, L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_RIGHT, 112, 392, 80, 22,
 				kBitpoolEdit, font);
-	CreateChild(hwnd, L"STATIC", L"SBC blocks", SS_LEFT, 320, 334, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 330, 196, 160,
+	CreateChild(hwnd, L"STATIC", L"SBC blocks", SS_LEFT, 320, 394, 92, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 390, 196, 160,
 				kBlocksCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Subbands", SS_LEFT, 24, 366, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 362, 190, 160,
+	CreateChild(hwnd, L"STATIC", L"Subbands", SS_LEFT, 24, 426, 84, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 422, 190, 160,
 				kSubbandsCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Allocation", SS_LEFT, 320, 366, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 362, 196, 160,
+	CreateChild(hwnd, L"STATIC", L"Allocation", SS_LEFT, 320, 426, 92, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 422, 196, 160,
 				kAllocationCombo, font);
 	CreateChild(hwnd, L"STATIC", L"The frame shape and bitpool apply to SBC; the bitrate to AAC.",
-				SS_LEFT, 24, 396, 592, 20, 0, font);
+				SS_LEFT, 24, 456, 592, 20, 0, font);
 
-	CreateChild(hwnd, L"BUTTON", L"Endpoint format", BS_GROUPBOX, 12, 432, 616, 76, 0, font);
-	CreateChild(hwnd, L"STATIC", L"PCM format", SS_LEFT, 24, 454, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 450, 190, 160,
+	CreateChild(hwnd, L"BUTTON", L"Endpoint format", BS_GROUPBOX, 12, 492, 616, 76, 0, font);
+	CreateChild(hwnd, L"STATIC", L"PCM format", SS_LEFT, 24, 514, 84, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 510, 190, 160,
 				kFormatRateCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Channels", SS_LEFT, 320, 454, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 450, 196, 160,
+	CreateChild(hwnd, L"STATIC", L"Channels", SS_LEFT, 320, 514, 92, 20, 0, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 510, 196, 160,
 				kFormatChannelsCombo, font);
 	CreateChild(hwnd, L"STATIC",
 			L"Windows plays the first format the endpoint lists and ignores the Sound-settings pick, so a pinned "
 			L"format is offered alone.",
-			SS_LEFT, 24, 478, 592, 20, 0, font);
+			SS_LEFT, 24, 538, 592, 20, 0, font);
 
-	CreateChild(hwnd, L"BUTTON", L"Apply", BS_PUSHBUTTON | WS_TABSTOP, 496, 516, 132, 28, kApplyButton, font);
-	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 12, 522, 476, 20, kMessageLabel, font);
+	CreateChild(hwnd, L"BUTTON", L"Apply", BS_PUSHBUTTON | WS_TABSTOP, 496, 576, 132, 28, kApplyButton, font);
+	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 12, 582, 476, 20, kMessageLabel, font);
 
 	AddComboItem(hwnd, kFormatRateCombo, L"Automatic (every supported format)", 0);
 	AddComboItem(hwnd, kFormatRateCombo, L"44100 Hz", 44100);
@@ -387,7 +500,7 @@ void OpenSelected(HWND hwnd)
 	{
 		state->message = L"No sink found: connect a paired A2DP sink, then press Refresh.";
 		SetMessage(hwnd, state->message);
-		SetStatusText(hwnd);
+		RefreshStatusView(hwnd);
 		return;
 	}
 
@@ -399,7 +512,7 @@ void OpenSelected(HWND hwnd)
 	{
 		state->message = Widen(error);
 		SetMessage(hwnd, state->message);
-		SetStatusText(hwnd);
+		RefreshStatusView(hwnd);
 		return;
 	}
 	state->control = control;
@@ -411,7 +524,7 @@ void OpenSelected(HWND hwnd)
 		CloseControl(*state);
 		state->message = Widen(error);
 		SetMessage(hwnd, state->message);
-		SetStatusText(hwnd);
+		RefreshStatusView(hwnd);
 		return;
 	}
 
@@ -419,7 +532,7 @@ void OpenSelected(HWND hwnd)
 	EnableWindow(GetDlgItem(hwnd, kApplyButton), TRUE);
 	LoadPreferenceIntoControls(hwnd);
 	SetMessage(hwnd, L"Loaded " + Widen(FormatAddress(device.reference)) + L".");
-	SetStatusText(hwnd);
+	RefreshStatusView(hwnd);
 }
 
 // Puts the report on the clipboard: the same text the box shows, which is the text the CLI
@@ -431,7 +544,7 @@ void CopyReport(HWND hwnd)
 	{
 		return;
 	}
-	const std::wstring text = state->shownText.empty() ? ReportText(*state) : state->shownText;
+	const std::wstring text = ReportText(*state);
 	if (text.empty())
 	{
 		SetMessage(hwnd, L"There is no report to copy yet.");
@@ -477,11 +590,11 @@ void RefreshStatus(HWND hwnd)
 		EnableWindow(GetDlgItem(hwnd, kApplyButton), FALSE);
 		state->message = Widen(error);
 		SetMessage(hwnd, state->message);
-		SetStatusText(hwnd);
+		RefreshStatusView(hwnd);
 		return;
 	}
 	state->status = status;
-	SetStatusText(hwnd);
+	RefreshStatusView(hwnd);
 }
 
 // Points the sink list at a device index, which the items carry as their item data.
@@ -672,14 +785,9 @@ void ApplySettings(HWND hwnd)
 							   : L"Stored. The setting applies at the next negotiation.");
 }
 
-LRESULT OnColorStatic(HWND hwnd, WPARAM wParam, LPARAM lParam)
+LRESULT OnColorStatic(WPARAM wParam, LPARAM lParam)
 {
-	const HWND child = reinterpret_cast<HWND>(lParam);
-	if (child == GetDlgItem(hwnd, kStatusBox))
-	{
-		SetBkColor(reinterpret_cast<HDC>(wParam), GetSysColor(COLOR_WINDOW));
-		return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
-	}
+	UNREFERENCED_PARAMETER(lParam);
 	SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
 	return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
 }
@@ -691,6 +799,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_CREATE:
 	{
 		SinkState* state = new SinkState();
+		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+		state->font = create != nullptr && create->lpCreateParams != nullptr
+						  ? *static_cast<const HFONT*>(create->lpCreateParams)
+						  : nullptr;
 		SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
 		CreateControls(hwnd);
 		state->notify = RegisterInterfaceNotifications(hwnd);
@@ -740,9 +852,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 			{
 				const LRESULT checked = SendMessageW(GetDlgItem(hwnd, kDetailsCheck), BM_GETCHECK, 0, 0);
 				state->details = checked == BST_CHECKED;
-				// Re-render even if the text happens to match what the box already holds.
-				state->shownText.clear();
-				SetStatusText(hwnd);
+				RefreshStatusView(hwnd);
 			}
 			return 0;
 		}
@@ -759,7 +869,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		ReloadDevices(hwnd);
 		return 0;
 	case WM_CTLCOLORSTATIC:
-		return OnColorStatic(hwnd, wParam, lParam);
+		return OnColorStatic(wParam, lParam);
+	case WM_NOTIFY:
+	{
+		LRESULT result = 0;
+		if (OnStatusViewNotify(hwnd, kStatusList, lParam, result))
+		{
+			return result;
+		}
+		break;
+	}
 	case WM_CLOSE:
 		DestroyWindow(hwnd);
 		return 0;
@@ -775,6 +894,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 				state->notify = nullptr;
 			}
 			CloseControl(*state);
+			DestroyStatusView(hwnd, kStatusList);
+			if (state->font != nullptr)
+			{
+				DeleteObject(state->font);
+				state->font = nullptr;
+			}
 			delete state;
 			SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
 		}
@@ -804,12 +929,27 @@ int Run(HINSTANCE instance, int showCommand)
 		return 1;
 	}
 
-	RECT rect = {0, 0, 640, 556};
+	RECT rect = {0, 0, 640, 620};
 	const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
 	AdjustWindowRectEx(&rect, style, FALSE, 0);
+	// The message font is Segoe UI, which is what makes the window look current; the theme
+	// drawing of the list and the group boxes follows the same font size.
+	NONCLIENTMETRICSW metrics = {};
+	metrics.cbSize = sizeof(metrics);
+	HFONT font = SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0) != 0
+					 ? CreateFontIndirectW(&metrics.lfMessageFont)
+					 : nullptr;
 	const HWND hwnd = CreateWindowExW(0, className, L"OpenA2dp - A2DP sink settings", style,
 									  CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
-									  rect.bottom - rect.top, nullptr, nullptr, instance, nullptr);
+									  rect.bottom - rect.top, nullptr, nullptr, instance, &font);
+	if (hwnd == nullptr)
+	{
+		if (font != nullptr)
+		{
+			DeleteObject(font);
+		}
+		return 1;
+	}
 	if (hwnd == nullptr)
 	{
 		return 1;
@@ -836,5 +976,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE previous, _In_ P
 {
 	UNREFERENCED_PARAMETER(previous);
 	UNREFERENCED_PARAMETER(commandLine);
+	INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_LISTVIEW_CLASSES};
+	InitCommonControlsEx(&controls);
 	return OpenA2dp::ConfigUi::Run(instance, show);
 }

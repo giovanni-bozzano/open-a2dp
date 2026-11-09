@@ -299,12 +299,13 @@ it), reattach.
 
 **T24 Config UI (S/A)**
 1. Start `OpenA2dpConfig` elevated: the sink list shows the addresses `OpenA2dpCtl list`
-   prints, the status box matches `OpenA2dpCtl status` field for field, and the controls
-   show the stored codec preference.
+   prints, the status list shows the same fields as `OpenA2dpCtl status` under its
+   Session, Sink, Endpoint, Service and Driver sections, and the controls show the stored
+   codec preference and endpoint format.
 2. Play, then choose `SBC only` and press Apply: the window reports `Stored. The active
-   stream renegotiates to apply it.` and the status box follows the renegotiation within a
+   stream renegotiates to apply it.` and the status list follows the renegotiation within a
    few seconds, with no sink reconnect.
-3. Set `SBC bitpool` to 35 and apply: the same in-place path, and both the status box and
+3. Set `SBC bitpool` to 35 and apply: the same in-place path, and both the status list and
    `status` report the resulting SBC bitrate.
 4. Type 1 or 300 in the bitpool box: the window refuses the value with the 2..250 hint and
    stores nothing.

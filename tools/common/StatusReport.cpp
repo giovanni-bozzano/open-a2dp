@@ -291,6 +291,34 @@ std::string DriverVersionText(uint32_t driverVersion)
 	return Format("%u.%u.%u", (driverVersion >> 24) & 0xFF, (driverVersion >> 16) & 0xFF, driverVersion & 0xFFFF);
 }
 
+bool SplitReportLine(const std::string& line, size_t labelWidth, std::string& label, std::string& value)
+{
+	const size_t begin = line.find_first_not_of(' ');
+	if (begin == std::string::npos || labelWidth == 0)
+	{
+		return false;
+	}
+	label = line.substr(begin, labelWidth);
+	while (!label.empty() && label.back() == ' ')
+	{
+		label.pop_back();
+	}
+	value.clear();
+	if (line.size() > begin + labelWidth)
+	{
+		const size_t valueBegin = line.find_first_not_of(' ', begin + labelWidth);
+		if (valueBegin != std::string::npos)
+		{
+			value = line.substr(valueBegin);
+			while (!value.empty() && value.back() == ' ')
+			{
+				value.pop_back();
+			}
+		}
+	}
+	return !label.empty();
+}
+
 std::string BuildStatusReport(const StatusReportInput& input)
 {
 	if (input.status == nullptr || input.preference == nullptr)
