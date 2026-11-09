@@ -29,28 +29,11 @@ void ServiceStreamStop(_In_ DEVICE_CONTEXT* ctx)
 	LatchEvents(ctx, Ioctl::kEventStreamStop);
 }
 
+// A tick is a lifecycle event like any other for the parked waiter: it gets the latched
+// events plus kEventTick, which is exactly what ReleaseWait does.
 void ServiceTick(_In_ DEVICE_CONTEXT* ctx)
 {
-	WDFREQUEST request = nullptr;
-	Ioctl::WaitEventOut state = {};
-	uint32_t deliver = 0;
-
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->WaitLock, &irql);
-	request = ctx->WaitRequest;
-	if (request != nullptr)
-	{
-		ctx->WaitRequest = nullptr;
-		deliver = ctx->PendingEvents | Ioctl::kEventTick;
-		ctx->PendingEvents = 0;
-		state = ctx->WaitState;
-	}
-	KeReleaseSpinLock(&ctx->WaitLock, irql);
-
-	if (request != nullptr)
-	{
-		CompleteWait(request, state, deliver);
-	}
+	ReleaseWait(ctx, Ioctl::kEventTick);
 }
 
 ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _Out_ uint32_t* samples,

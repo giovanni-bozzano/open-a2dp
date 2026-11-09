@@ -108,18 +108,6 @@ inline const char* CodecName(OpenA2dp::Avdtp::CodecType codec)
 	}
 }
 
-inline const char* ChannelStateName(LONG state)
-{
-	switch (state)
-	{
-	case ChannelClosed: return "Closed";
-	case ChannelOpening: return "Opening";
-	case ChannelOpen: return "Open";
-	case ChannelClosing: return "Closing";
-	}
-	return "?";
-}
-
 // Bounds on how long a thread of ours may wait for the Bluetooth transport. The
 // transport does not always complete a cancelled request, so no wait on it may be
 // unbounded and nothing it still owns may be freed or reused after a wait gave up.
