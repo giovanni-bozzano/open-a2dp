@@ -17,6 +17,11 @@ DECLARE_CONST_UNICODE_STRING(RenderCircuitName, L"Speaker0");
 struct STREAM_CONTEXT
 {
 	DEVICE_CONTEXT* Device;
+	// The format this stream was created with. It becomes the endpoint format only once the
+	// stream runs (AudioSetPinFormat), because Windows creates one stream per format it
+	// enumerates before it opens the one it plays.
+	ULONG SampleRate;
+	USHORT Channels;
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(STREAM_CONTEXT, GetStreamContext)
 
@@ -72,6 +77,6 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
 // they can be listed and unlisted as the sink capabilities change.
 NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
-void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);
 const GUID* EndpointCategory(_In_ BTH_COD cod);
 } // namespace OpenA2dpDriver::Audio

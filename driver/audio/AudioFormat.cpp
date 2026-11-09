@@ -193,18 +193,6 @@ void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* 
 	}
 }
 
-void AdoptStreamFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
-{
-	const auto* wave = format != nullptr
-		? static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format)) : nullptr;
-	if (wave != nullptr)
-	{
-		AdoptFormatIndex(ctx,
-			RenderFormatIndex(wave->WaveFormatEx.nSamplesPerSec, wave->WaveFormatEx.nChannels),
-			"the stream format");
-	}
-}
-
 // Finds the WAVEFORMATEX in a KSDATAFORMAT_WAVEFORMATEX blob or in a bare WAVEFORMATEX. The
 // rate and channel bounds reject the uninitialized output buffer of a plain GET.
 const WAVEFORMATEX* FindWaveFormat(_In_reads_bytes_opt_(bytes) const void* blob, ULONG bytes)
@@ -386,13 +374,17 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	return status;
 }
 
-void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
+// Called when a stream starts running, not when it is created: Windows creates a stream per
+// format it enumerates, so only a stream that actually carries audio may commit the endpoint
+// format. Every committed change invalidates the negotiated configuration, and committing the
+// probes tore the session down once per probe until the shared-mode stream ended up at the
+// first listed format again.
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
 {
-	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
-	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch (actual stream, 16-bit PCM)",
-		wave->WaveFormatEx.nSamplesPerSec, static_cast<unsigned>(wave->WaveFormatEx.nChannels));
-	AdoptStreamFormat(ctx, format);
-	RecordEndpointFormat(ctx, wave->WaveFormatEx.nSamplesPerSec, wave->WaveFormatEx.nChannels);
+	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch (actual stream, 16-bit PCM)", sampleRate,
+		static_cast<unsigned>(channels));
+	AdoptFormatIndex(ctx, RenderFormatIndex(sampleRate, channels), "the stream format");
+	RecordEndpointFormat(ctx, sampleRate, channels);
 }
 
 namespace

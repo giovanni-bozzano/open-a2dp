@@ -45,6 +45,13 @@ and it is kept as `EndpointSampleRate`/`EndpointChannels` under the sink's confi
 so a new device instance lists it first before Windows opens anything. The stored value
 mirrors what played; it is not a driver preference and never narrows the list.
 
+That value is committed when a stream *runs*, not when it is created. Windows creates one
+stream per format it enumerates before it opens the one it plays (four RAW and four DEFAULT
+probes per link-up), and every endpoint format change invalidates the negotiated codec
+configuration, so committing the probes closed the session once per probe and the shared-mode
+stream always came back at the first listed format. A probe never runs, so it now changes
+nothing.
+
 The `PROPOSEDATAFORMAT` SET cannot decide this: Windows sweeps every rate and channel count
 it knows through it while validating the endpoint (8000 Hz to 192000 Hz, 1 to 8 channels),
 so a proposal is only adopted when it is one of the four listed formats, and it never changes

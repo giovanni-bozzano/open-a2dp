@@ -326,8 +326,10 @@ struct DEVICE_CONTEXT
 	KSPIN_LOCK AudioLock;
 	WDFTIMER AudioTimer;
 	ACXSTREAM AudioStream;
-	// PCM format of the current ACX stream (44.1 or 48 kHz, mono or stereo). The encoder
-	// input and the position math follow it; without a stream it holds the default.
+	// PCM format of the stream that runs (44.1 or 48 kHz, mono or stereo). The encoder input,
+	// the position math and the negotiated configuration follow it; it is committed at stream
+	// run, so the probe streams Windows creates per format leave it alone. Without a running
+	// stream it holds the default.
 	ULONG PinSampleRate;
 	USHORT PinChannels;
 	USHORT PinBytesPerFrame;

@@ -55,13 +55,16 @@ NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACX
 		return status;
 	}
 
-	GetStreamContext(stream)->Device = ctx;
+	STREAM_CONTEXT* streamContext = GetStreamContext(stream);
+	streamContext->Device = ctx;
+	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
+	streamContext->SampleRate = wave->WaveFormatEx.nSamplesPerSec;
+	streamContext->Channels = wave->WaveFormatEx.nChannels;
 
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	ctx->AudioStream = stream;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	AudioSetPinFormat(ctx, format);
 	return STATUS_SUCCESS;
 }
 
@@ -110,13 +113,22 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioStartQpc = QpcNow(nullptr);
 	ctx->AudioRunning = TRUE;
 	ctx->AudioDroppedBytes = 0;
-	const ULONG rate = ctx->PinSampleRate;
-	const USHORT channels = ctx->PinChannels;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	WdfTimerStart(ctx->AudioTimer, 0);
 	OA2DP_INFO(ctx, "Audio", "stream run");
-	ConfigSaveEndpointFormat(ctx, rate, channels);
+	// This stream now carries audio, so it is the format Windows plays: commit it, keep it for
+	// the next device instance and lead the format lists with it, so a session renegotiation
+	// rebuilds the Windows stream at the same rate instead of at the first listed format.
+	const STREAM_CONTEXT* streamContext = GetStreamContext(stream);
+	AudioSetPinFormat(ctx, streamContext->SampleRate, streamContext->Channels);
+	ConfigSaveEndpointFormat(ctx, streamContext->SampleRate, streamContext->Channels);
+	const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+	if (!NT_SUCCESS(formatStatus))
+	{
+		OA2DP_WARN(ctx, "Audio", "moving the stream format to the front of the format list failed 0x%08X",
+			formatStatus);
+	}
 	SignalingOnAudioRun(ctx);
 	return STATUS_SUCCESS;
 }
