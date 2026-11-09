@@ -2,6 +2,7 @@
 
 ## Stable constraints
 - Windows 11 KMDF, C++20, x64, toolset v145; warnings as errors. No STL or exceptions in `common/include`.
+- Assume the driver, service and tools always use matching versions from the same build. Keep ABI changes consistent across them; do not preserve obsolete fields or add compatibility for mismatched versions.
 - Lock order: `SessionLock` -> `MediaLock`. Never hold locks across unbounded transport waits.
 - Leave no orphaned resources (handles, work items, timers, pool, references) and create no potential deadlock or lock-order inversion. Keep code as event driven as possible instead of adding polling, timers or new waits.
 - Debug through native WinDbg MCP tools; no custom debugger scripts.
