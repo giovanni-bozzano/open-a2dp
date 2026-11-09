@@ -42,6 +42,11 @@ constexpr GUID kControlArrivalInterface = {
 constexpr uint32_t kMediaMaxMtu = 895;
 constexpr uint32_t kMaxFramePayload = kMediaMaxMtu - static_cast<uint32_t>(Rtp::kHeaderSize);
 
+// Real time sent ahead of the clock so the sink's jitter buffer fills before it runs dry.
+// The kernel paces SBC with it and the service's AAC pacing centres the encoder on it, so
+// both sides of a stream start the same distance ahead.
+constexpr uint32_t kPrerollMs = 60;
+
 // Ring capacities, bytes (powers of two). PCM holds ~370 ms of 44.1 kHz stereo;
 // the frame ring holds ~1.6 s at 320 kbps.
 constexpr uint32_t kPcmRingBytes = 64 * 1024;

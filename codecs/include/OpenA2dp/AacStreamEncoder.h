@@ -24,8 +24,7 @@
 namespace OpenA2dp {
 
 // Samples of real time sent ahead of the clock so the sink's jitter buffer
-// fills. Same value as the SBC path (driver/Media.cpp).
-constexpr uint32_t kAacPrerollMs = 60;
+// fills. Ioctl::kPrerollMs is the same distance the kernel paces SBC with.
 
 struct AacStreamParams {
 	uint32_t sampleRate = 44100;

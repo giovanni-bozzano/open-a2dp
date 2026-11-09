@@ -8,7 +8,8 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
 	const ULONGLONG elapsed = KeQueryInterruptTime() - ctx->MediaStartTime;
-	const ULONGLONG target = elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * PrerollMs / 1000;
+	const ULONGLONG target =
+			elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * Ioctl::kPrerollMs / 1000;
 
 	if (ctx->MediaSamplesSent >= target || !MediaSendReady(ctx, tick))
 	{

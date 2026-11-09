@@ -11,8 +11,6 @@ using namespace OpenA2dp;
 namespace OpenA2dpDriver::Media
 {
 constexpr ULONG MediaPeriodMs = 10;
-// Samples sent ahead of real time so the sink's jitter buffer fills.
-constexpr uint32_t PrerollMs = 60;
 // AAC: no encoded frame for this long counts as an underrun (logged once per second).
 // Diagnostic only: encoder loss is handled by its own events (file cleanup, ring fault).
 constexpr ULONGLONG UnderrunTimeout = 200ull * 10000ull;
