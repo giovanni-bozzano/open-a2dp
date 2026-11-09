@@ -22,13 +22,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
 	<ClCompile Include="main.cpp" />
-	<ClCompile Include="ControlClient.cpp" />
 	<ClCompile Include="StatusView.cpp" />
 	<ClCompile Include="Theme.cpp" />
 	<ClCompile Include="..\common\StatusReport.cpp" />
 	<ClCompile Include="..\common\ControlDevice.cpp" />
 	<ClCompile Include="..\common\Text.cpp" />
-	<ClInclude Include="ControlClient.h" />
 	<ClInclude Include="StatusView.h" />
 	<ClInclude Include="Theme.h" />
 	<ClInclude Include="..\common\StatusReport.h" />

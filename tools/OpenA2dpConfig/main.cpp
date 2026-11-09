@@ -6,10 +6,10 @@
 // applied by the driver itself (an active stream renegotiates in place), so the window
 // never has to wait or guess.
 
-#include "ControlClient.h"
 #include "StatusView.h"
 #include "Theme.h"
 
+#include "common/ControlDevice.h"
 #include "common/StatusReport.h"
 #include "common/Text.h"
 
@@ -35,6 +35,19 @@
 
 namespace OpenA2dp::ConfigUi {
 namespace {
+
+// The control devices and the IOCTLs are the ones the CLI uses too; the window keeps the names
+// its own code reads naturally with.
+using Tools::Device;
+using Tools::EnumerateDevices;
+using Tools::FormatAddress;
+using Tools::OpenControl;
+using Tools::ReadEndpointFormat;
+using Tools::ReadPreference;
+using Tools::ReadStatus;
+using Tools::ReadVersion;
+using Tools::WriteEndpointFormat;
+using Tools::WritePreference;
 
 // Nothing here is shared with the driver; the control IDs are the only contract between
 // the layout and the command handlers.

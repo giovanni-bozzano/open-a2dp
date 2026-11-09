@@ -105,22 +105,6 @@ std::string DeviceLabel(const Device& device)
 	return "Device " + FormatAddress(device.reference);
 }
 
-HANDLE OpenDevice(const Device& device, std::string& error)
-{
-	const HANDLE handle = CreateFileW(device.path.c_str(), GENERIC_READ | GENERIC_WRITE,
-									  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-	if (handle == INVALID_HANDLE_VALUE)
-	{
-		const DWORD code = GetLastError();
-		error = Win32Error("CreateFile", code);
-		if (code == ERROR_ACCESS_DENIED)
-		{
-			error += " (run the tool as Administrator)";
-		}
-	}
-	return handle;
-}
-
 bool FindDevice(const std::vector<Device>& devices, const std::string& spec, size_t& index, std::string& error)
 {
 	if (devices.empty())
@@ -195,115 +179,6 @@ bool FindDevice(const std::vector<Device>& devices, const std::string& spec, siz
 	return true;
 }
 
-bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* out, DWORD outLength,
-			   DWORD& bytes, std::string& error, DWORD timeoutMs = 5000)
-{
-	bytes = 0;
-	OVERLAPPED overlapped = {};
-	overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-	if (overlapped.hEvent == nullptr)
-	{
-		error = Win32Error("CreateEvent", GetLastError());
-		return false;
-	}
-	BOOL ok = DeviceIoControl(handle, code, const_cast<void*>(in), inLength, out, outLength, &bytes, &overlapped);
-	if (!ok)
-	{
-		const DWORD gle = GetLastError();
-		if (gle != ERROR_IO_PENDING)
-		{
-			error = Win32Error("DeviceIoControl", gle);
-			CloseHandle(overlapped.hEvent);
-			return false;
-		}
-		const DWORD wait = WaitForSingleObject(overlapped.hEvent, timeoutMs);
-		if (wait == WAIT_TIMEOUT)
-		{
-			CancelIoEx(handle, &overlapped);
-			// Give the cancel a moment to land so the driver is not left writing into this frame.
-			WaitForSingleObject(overlapped.hEvent, 1000);
-			GetOverlappedResult(handle, &overlapped, &bytes, FALSE);
-			error = "DeviceIoControl timed out after " + std::to_string(timeoutMs) + " ms";
-			CloseHandle(overlapped.hEvent);
-			return false;
-		}
-		if (!GetOverlappedResult(handle, &overlapped, &bytes, FALSE))
-		{
-			error = Win32Error("DeviceIoControl", GetLastError());
-			CloseHandle(overlapped.hEvent);
-			return false;
-		}
-	}
-	CloseHandle(overlapped.hEvent);
-	if (bytes < outLength && out != nullptr && outLength != 0)
-	{
-		// Some IOCTLs legitimately return 0 bytes; only enforce for GET_STATUS/VERSION
-		// where a short buffer is always wrong. Callers that expect 0 pass outLength 0.
-	}
-	return true;
-}
-
-template <typename T>
-bool ReadIoctl(HANDLE handle, ULONG code, T& out, std::string& error)
-{
-	DWORD bytes = 0;
-	if (!IoctlSync(handle, code, nullptr, 0, &out, static_cast<DWORD>(sizeof(out)), bytes, error))
-	{
-		return false;
-	}
-	if (bytes < sizeof(out))
-	{
-		error = "DeviceIoControl returned a short buffer";
-		return false;
-	}
-	return true;
-}
-
-bool ReadStatus(HANDLE handle, Ioctl::Status& status, std::string& error)
-{
-	if (!ReadIoctl(handle, Ioctl::kIoctlGetStatus, status, error))
-	{
-		return false;
-	}
-	if (status.abiVersion != Ioctl::kAbiVersion)
-	{
-		error = "driver ABI " + std::to_string(status.abiVersion) + " does not match the tool ABI " +
-				std::to_string(Ioctl::kAbiVersion) + "; update both from the same build";
-		return false;
-	}
-	return true;
-}
-
-bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& error)
-{
-	if (!ReadIoctl(handle, Ioctl::kIoctlGetPreference, preference, error))
-	{
-		return false;
-	}
-	if (preference.abiVersion != Ioctl::kAbiVersion)
-	{
-		error = "driver ABI " + std::to_string(preference.abiVersion) + " does not match the tool ABI " +
-				std::to_string(Ioctl::kAbiVersion) + "; update both from the same build";
-		return false;
-	}
-	return true;
-}
-
-bool ReadEndpointFormat(HANDLE handle, Ioctl::EndpointFormat& format, std::string& error)
-{
-	if (!ReadIoctl(handle, Ioctl::kIoctlGetEndpointFormat, format, error))
-	{
-		return false;
-	}
-	if (format.abiVersion != Ioctl::kAbiVersion)
-	{
-		error = "driver ABI " + std::to_string(format.abiVersion) + " does not match the tool ABI " +
-				std::to_string(Ioctl::kAbiVersion) + "; update both from the same build";
-		return false;
-	}
-	return true;
-}
-
 std::string EndpointFormatText(const Ioctl::EndpointFormat& format)
 {
 	if (format.sampleRate == 0)
@@ -320,7 +195,7 @@ void PrintStatus(const Device& device, HANDLE handle, const Ioctl::Status& statu
 	// The version block is informational: a failed read never hides the status.
 	Ioctl::VersionInfo version = {};
 	std::string ignored;
-	const bool hasVersion = ReadIoctl(handle, Ioctl::kIoctlGetVersion, version, ignored);
+	const bool hasVersion = ReadVersion(handle, version, ignored);
 
 	Tools::StatusReportInput input;
 	input.title = DeviceLabel(device);
@@ -343,7 +218,7 @@ int CommandStatus(const std::vector<Device>& devices, const std::string& spec, b
 		return 2;
 	}
 	const Device& device = devices[index];
-	const HANDLE handle = OpenDevice(device, error);
+	const HANDLE handle = OpenControl(device, error);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
@@ -399,7 +274,7 @@ int CommandList(const std::vector<Device>& devices)
 		std::string state = "unavailable";
 		std::string codec = "-";
 		std::string error;
-		const HANDLE handle = OpenDevice(device, error);
+		const HANDLE handle = OpenControl(device, error);
 		if (handle != INVALID_HANDLE_VALUE)
 		{
 			Ioctl::Status status = {};
@@ -457,7 +332,7 @@ int CommandVersion(const std::vector<Device>& devices, const std::string& spec)
 		return 2;
 	}
 	const Device& device = devices[index];
-	const HANDLE handle = OpenDevice(device, error);
+	const HANDLE handle = OpenControl(device, error);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
@@ -465,7 +340,7 @@ int CommandVersion(const std::vector<Device>& devices, const std::string& spec)
 	}
 
 	Ioctl::VersionInfo version = {};
-	const bool ok = ReadIoctl(handle, Ioctl::kIoctlGetVersion, version, error);
+	const bool ok = ReadVersion(handle, version, error);
 	CloseHandle(handle);
 	if (!ok)
 	{
@@ -519,7 +394,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		return 2;
 	}
 	const Device& device = devices[index];
-	const HANDLE handle = OpenDevice(device, error);
+	const HANDLE handle = OpenControl(device, error);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
@@ -588,13 +463,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		preference.sbcAllocation = overrides.allocation;
 	}
 
-	DWORD bytes = 0;
-	const bool set = IoctlSync(handle, Ioctl::kIoctlSetPreference, &preference, static_cast<DWORD>(sizeof(preference)),
-							  nullptr, 0, bytes, error);
-	if (!set && error.empty())
-	{
-		error = Win32Error("SET_PREFERENCE", GetLastError());
-	}
+	const bool set = WritePreference(handle, preference, error);
 	Ioctl::Status status = {};
 	const bool read = set && ReadStatus(handle, status, error);
 	if (!set || !read)
@@ -639,7 +508,7 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		return 2;
 	}
 	const Device& device = devices[index];
-	const HANDLE handle = OpenDevice(device, error);
+	const HANDLE handle = OpenControl(device, error);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
@@ -705,13 +574,7 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		}
 	}
 
-	DWORD bytes = 0;
-	const bool set = IoctlSync(handle, Ioctl::kIoctlSetEndpointFormat, &requested,
-							  static_cast<DWORD>(sizeof(requested)), nullptr, 0, bytes, error);
-	if (!set && error.empty())
-	{
-		error = Win32Error("SET_ENDPOINT_FORMAT", GetLastError());
-	}
+	const bool set = WriteEndpointFormat(handle, requested, error);
 	Ioctl::EndpointFormat applied = {};
 	const bool read = set && ReadEndpointFormat(handle, applied, error);
 	if (!set || !read)
@@ -748,7 +611,7 @@ int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 		return 2;
 	}
 	const Device& device = devices[index];
-	const HANDLE handle = OpenDevice(device, error);
+	const HANDLE handle = OpenControl(device, error);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
@@ -758,24 +621,10 @@ int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 	// Every field at its default: the automatic codec order and an endpoint that offers every
 	// format the sink advertises. Each SET is a change for the driver, so a running stream
 	// renegotiates once.
-	DWORD bytes = 0;
 	Ioctl::EndpointFormat format = {};
-	format.abiVersion = Ioctl::kAbiVersion;
 	Ioctl::Preference preference = {};
-	preference.abiVersion = Ioctl::kAbiVersion;
-	const bool formatSet = IoctlSync(handle, Ioctl::kIoctlSetEndpointFormat, &format,
-									static_cast<DWORD>(sizeof(format)), nullptr, 0, bytes, error);
-	if (!formatSet && error.empty())
-	{
-		error = Win32Error("SET_ENDPOINT_FORMAT", GetLastError());
-	}
-	const bool preferenceSet =
-			formatSet && IoctlSync(handle, Ioctl::kIoctlSetPreference, &preference,
-								   static_cast<DWORD>(sizeof(preference)), nullptr, 0, bytes, error);
-	if (!preferenceSet && error.empty())
-	{
-		error = Win32Error("SET_PREFERENCE", GetLastError());
-	}
+	const bool formatSet = WriteEndpointFormat(handle, format, error);
+	const bool preferenceSet = formatSet && WritePreference(handle, preference, error);
 	Ioctl::Status status = {};
 	Ioctl::Preference applied = {};
 	Ioctl::EndpointFormat appliedFormat = {};
