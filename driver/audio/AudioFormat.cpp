@@ -69,29 +69,32 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 		SignalingOnPreferenceChanged(ctx);
 	}
 }
-// The engine builds the next stream from the pin's default format and ACX answers the
-// preferred-mode-format query from it. A Sound-settings selection only reaches the driver
-// as an explicit stream open, so the format the engine actually opened becomes the default
-// of both mode lists; the first listed format is only the default until a stream has run.
-void AdoptStreamFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
+// Index in AudioRenderRates/AudioRenderChannels of a rate and channel count, or
+// AudioRenderFormatCount when the pair is not one of the endpoint formats.
+ULONG RenderFormatIndex(ULONG sampleRate, USHORT channels)
+{
+	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	{
+		if (sampleRate == AudioRenderRates[i / AudioRenderChannelCount] &&
+			channels == AudioRenderChannels[i % AudioRenderChannelCount])
+		{
+			return i;
+		}
+	}
+	return AudioRenderFormatCount;
+}
+
+// Makes the format object the default of both mode lists. The engine builds its next stream
+// from that default and ACX answers its own format queries from it, so the format the engine
+// actually plays, or the one Windows proposes for the pin, has to be the default; the first
+// listed format is only the default until one has been adopted.
+void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* source)
 {
 	const ACXDATAFORMATLIST list =
 		ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
 	const ACXDATAFORMATLIST defaultList = ctx->DefaultModeFormats;
-	const auto* wave = format != nullptr
-		? static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format)) : nullptr;
-	if (wave == nullptr || list == nullptr || defaultList == nullptr || ctx->FormatLock == nullptr)
-	{
-		return;
-	}
-	ULONG index = 0;
-	while (index < AudioRenderFormatCount &&
-		(wave->WaveFormatEx.nSamplesPerSec != AudioRenderRates[index / AudioRenderChannelCount] ||
-			wave->WaveFormatEx.nChannels != AudioRenderChannels[index % AudioRenderChannelCount]))
-	{
-		++index;
-	}
-	if (index == AudioRenderFormatCount)
+	if (index >= AudioRenderFormatCount || list == nullptr || defaultList == nullptr ||
+		ctx->FormatLock == nullptr)
 	{
 		return;
 	}
@@ -120,34 +123,55 @@ void AdoptStreamFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 	WdfWaitLockRelease(ctx->FormatLock);
 	if (adopted)
 	{
-		OA2DP_INFO(ctx, "Audio", "endpoint default follows the stream format: %u Hz %u ch",
+		OA2DP_INFO(ctx, "Audio", "endpoint default follows %s: %u Hz %u ch", source,
 			AudioRenderRates[index / AudioRenderChannelCount],
 			static_cast<unsigned>(AudioRenderChannels[index % AudioRenderChannelCount]));
 	}
 	else if (!NT_SUCCESS(status))
 	{
-		OA2DP_WARN(ctx, "Audio", "adopting the stream format as the endpoint default failed 0x%08X", status);
+		OA2DP_WARN(ctx, "Audio", "adopting %s as the endpoint default failed 0x%08X", source, status);
 	}
 }
 
-// Index of the format the engine opened last, which is the adopted default once a stream has
-// run; before that it is the endpoint default the pin was created with.
-ULONG StreamFormatIndex(_In_ DEVICE_CONTEXT* ctx)
+void AdoptStreamFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	const ULONG rate = ctx->PinSampleRate;
-	const USHORT channels = ctx->PinChannels;
-	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	const auto* wave = format != nullptr
+		? static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format)) : nullptr;
+	if (wave != nullptr)
 	{
-		if (rate == AudioRenderRates[i / AudioRenderChannelCount] &&
-			channels == AudioRenderChannels[i % AudioRenderChannelCount])
+		AdoptFormatIndex(ctx,
+			RenderFormatIndex(wave->WaveFormatEx.nSamplesPerSec, wave->WaveFormatEx.nChannels),
+			"the stream format");
+	}
+}
+
+// Finds the WAVEFORMATEX in a KSDATAFORMAT_WAVEFORMATEX blob or in a bare WAVEFORMATEX. The
+// rate and channel bounds reject the uninitialized output buffer of a plain GET.
+const WAVEFORMATEX* FindWaveFormat(_In_reads_bytes_opt_(bytes) const void* blob, ULONG bytes)
+{
+	constexpr USHORT TagPcm = 1;
+	constexpr USHORT TagExtensible = 0xFFFE;
+	const ULONG offsets[] = {FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx), 0};
+	if (blob == nullptr)
+	{
+		return nullptr;
+	}
+	const auto* base = static_cast<const UCHAR*>(blob);
+	for (const ULONG offset : offsets)
+	{
+		if (bytes < offset + sizeof(WAVEFORMATEX))
 		{
-			return i;
+			continue;
+		}
+		const auto* wave = reinterpret_cast<const WAVEFORMATEX*>(base + offset);
+		if ((wave->wFormatTag == TagPcm || wave->wFormatTag == TagExtensible) &&
+			wave->nSamplesPerSec >= 8000 && wave->nSamplesPerSec <= 192000 &&
+			wave->nChannels >= 1 && wave->nChannels <= 8)
+		{
+			return wave;
 		}
 	}
-	return AudioRenderFormatCount;
+	return nullptr;
 }
 // True the first time a given pin property id is seen; the KSPROPERTY_PIN_* ids are all
 // below 32.
@@ -167,23 +191,19 @@ bool PinPropertyFirstSeen(_In_ DEVICE_CONTEXT* ctx, ULONG id)
 void LogPropertyRequest(_In_ DEVICE_CONTEXT* ctx, ULONG id, ULONG verb, ULONG controlCb, ULONG valueCb,
 	const void* value)
 {
-	const ULONG waveFormatOffset = FIELD_OFFSET(KSDATAFORMAT_WAVEFORMATEX, WaveFormatEx);
-	constexpr USHORT TagPcm = 1;
-	constexpr USHORT TagExtensible = 0xFFFE;
-	if (value != nullptr && valueCb >= waveFormatOffset + sizeof(WAVEFORMATEX))
+	if (const auto* wave = FindWaveFormat(value, value != nullptr ? valueCb : 0); wave != nullptr)
 	{
-		const auto* format = static_cast<const KSDATAFORMAT*>(value);
-		const auto* wave = reinterpret_cast<const WAVEFORMATEX*>(static_cast<const UCHAR*>(value) + waveFormatOffset);
-		if (format->FormatSize <= valueCb &&
-			(wave->wFormatTag == TagPcm || wave->wFormatTag == TagExtensible) &&
-			wave->nSamplesPerSec >= 8000 && wave->nSamplesPerSec <= 192000 &&
-			wave->nChannels >= 1 && wave->nChannels <= 8)
-		{
-			OA2DP_INFO(ctx, "Audio", "pin property %u verb %u input %u B output %u B carries %u Hz %u ch %u bit",
-				id, verb, controlCb, valueCb, wave->nSamplesPerSec,
-				static_cast<unsigned>(wave->nChannels), static_cast<unsigned>(wave->wBitsPerSample));
-			return;
-		}
+		OA2DP_INFO(ctx, "Audio", "pin property %u verb %u input %u B output %u B carries %u Hz %u ch %u bit",
+			id, verb, controlCb, valueCb, wave->nSamplesPerSec,
+			static_cast<unsigned>(wave->nChannels), static_cast<unsigned>(wave->wBitsPerSample));
+		return;
+	}
+	if (value != nullptr && valueCb >= sizeof(ULONG) * 4)
+	{
+		const auto* words = static_cast<const ULONG*>(value);
+		OA2DP_INFO(ctx, "Audio", "pin property %u verb %u input %u B output %u B begins %08X %08X %08X %08X",
+			id, verb, controlCb, valueCb, words[0], words[1], words[2], words[3]);
+		return;
 	}
 	OA2DP_INFO(ctx, "Audio", "pin property %u verb %u input %u B output %u B", id, verb, controlCb, valueCb);
 }
@@ -203,26 +223,23 @@ void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFR
 			LogPropertyRequest(ctx, property.Id, static_cast<ULONG>(property.Verb), property.ControlCb,
 				property.ValueCb, property.Value);
 		}
-		if (property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT2 && property.Verb == AcxPropertyVerbGet)
+		if (property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT && property.Verb == AcxPropertyVerbSet)
 		{
-			// ACX answers this from the default it captured when the pin was created, and Windows
-			// then uses that format for every stream in the mode, ahead of the Sound-settings
-			// selection. Answering with the format the engine opened last keeps the selection.
-			const ULONG index = StreamFormatIndex(ctx);
-			const auto* ks = index < AudioRenderFormatCount
-				? static_cast<const KSDATAFORMAT*>(AcxDataFormatGetKsDataFormat(ctx->FormatObjects[index])) : nullptr;
-			NTSTATUS status = STATUS_NOT_SUPPORTED;
-			if (ks != nullptr && property.Value != nullptr && property.ValueCb >= ks->FormatSize)
+			// Windows proposes the pin format here when the endpoint comes up and never asks for
+			// the preferred-mode-format property, so this is the Sound-settings selection reaching
+			// the driver. Adopting it keeps the engine's next stream and the codec on it.
+			PVOID buffer = nullptr;
+			size_t bytes = 0;
+			if (!NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, 0, &buffer, &bytes)))
 			{
-				RtlCopyMemory(property.Value, ks, ks->FormatSize);
-				status = STATUS_SUCCESS;
+				buffer = property.Value;
+				bytes = property.ValueCb;
 			}
-			else if (ks != nullptr)
+			if (const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes)); wave != nullptr)
 			{
-				status = STATUS_BUFFER_TOO_SMALL;
+				AdoptFormatIndex(ctx,
+					RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels), "the proposed format");
 			}
-			WdfRequestComplete(request, status);
-			return;
 		}
 	}
 	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
