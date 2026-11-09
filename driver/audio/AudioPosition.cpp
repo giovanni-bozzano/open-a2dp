@@ -79,16 +79,7 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 	const BOOLEAN notify = completed > ctx->AudioCompletedPackets;
 	ctx->AudioCompletedPackets = completed;
 	ACXSTREAM stream = ctx->AudioStream;
-	static ULONG ticks;
-	const BOOLEAN report = (++ticks % 1000) == 0;
-	const ULONG readable = ring.ReadableBytes();
-	const ULONGLONG dropped = ctx->AudioDroppedBytes;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
-
-	if (report)
-	{
-		OA2DP_INFO(ctx, "Audio", "position %llu, %u PCM bytes buffered, %llu bytes dropped so far", position, readable, dropped);
-	}
 
 	if (notify && stream != nullptr)
 	{

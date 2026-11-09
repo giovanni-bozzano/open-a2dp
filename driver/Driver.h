@@ -355,10 +355,6 @@ struct DEVICE_CONTEXT
 	// Index of the format that leads both lists. Windows opens the shared-mode stream with
 	// the first listed format, so the selection has to come first (AudioApplyEndpointFormats).
 	ULONG FirstListedIndex;
-	// One bit per KSPROPSETID_Pin property id (all are below 32) already logged from the
-	// request preprocess callback, so the log shows the format negotiation once per device
-	// start instead of once per request.
-	volatile LONG PinPropsLogged;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
