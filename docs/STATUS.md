@@ -15,5 +15,6 @@
 | M8 Signing + release | Not started | Signed release package |
 
 ## Codec audit
-- SBC spec math is single-sourced: `SbcConfig` (IE masks, selector, configured-IE parser), `SbcAllocation` (12.6.3 bit allocation), `SbcFrame` (frame length, CRC, payload header, frames per packet). The driver and the codec library only adapt their own parameter types.
+- SBC spec math is single-sourced: `SbcConfig` (IE masks, selector, configured-IE parser), `SbcAllocation` (12.6.3 bit allocation), `SbcFrame` (frame length, CRC, payload header, frames per packet), `SbcFilter` (Q30 prototypes, Q14 cosines, sine). The driver and the codec library only adapt their own parameter types.
 - Still duplicated by design: the two encoder front-ends, Q12 in the kernel against `double` in the codec library. The service selects the codec library's SBC encoder nowhere, so only the tests exercise it (see [Protocol and codecs](architecture/Protocol-and-Codecs.md)).
+- The service's and the tools' IOCTL wrappers stay separate (different error channels and dependency sides) and share only `Ioctl::kIoctlTimeoutMs`; their cancel grace differs (2000 ms against 1000 ms) until that can be checked against a sink.
