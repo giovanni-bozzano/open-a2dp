@@ -1,5 +1,7 @@
 #include "StatusView.h"
 
+#include "Theme.h"
+
 namespace OpenA2dp::ConfigUi {
 namespace {
 
@@ -30,10 +32,10 @@ COLORREF ToneColor(RowTone tone)
 {
 	switch (tone)
 	{
-	case RowTone::Good: return RGB(0x0E, 0x6B, 0x2E);
-	case RowTone::Warning: return RGB(0x9A, 0x5B, 0x00);
-	case RowTone::Error: return RGB(0xB0, 0x1B, 0x1B);
-	default: return GetSysColor(COLOR_WINDOWTEXT);
+	case RowTone::Good: return ThemeColors().good;
+	case RowTone::Warning: return ThemeColors().warning;
+	case RowTone::Error: return ThemeColors().error;
+	default: return ThemeColors().text;
 	}
 }
 
@@ -44,12 +46,13 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 	RECT strip = {0, y, width, y + state.rowHeight};
 	if (row.section)
 	{
-		FillRect(dc, &strip, GetSysColorBrush(COLOR_BTNFACE));
+		SetDCBrushColor(dc, ThemeColors().section);
+		FillRect(dc, &strip, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 		SelectObject(dc, state.bold);
 	}
 	else
 	{
-		SetDCBrushColor(dc, (index % 2) == 0 ? GetSysColor(COLOR_WINDOW) : RGB(0xF7, 0xF8, 0xFA));
+		SetDCBrushColor(dc, (index % 2) == 0 ? ThemeColors().background : ThemeColors().alternateRow);
 		FillRect(dc, &strip, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 		SelectObject(dc, state.normal);
 	}
@@ -58,7 +61,7 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 	RECT value = {kTextInset + state.labelWidth, y, width - kTextInset, y + state.rowHeight};
 	const UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
 	SetBkMode(dc, TRANSPARENT);
-	SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+	SetTextColor(dc, ThemeColors().text);
 	DrawTextW(dc, row.label.c_str(), -1, &label, format);
 	if (!row.section && !row.value.empty())
 	{
@@ -82,7 +85,7 @@ void Paint(HWND window, ViewState& state)
 	const HGDIOBJ previousBitmap = bitmap != nullptr ? SelectObject(memory, bitmap) : nullptr;
 	if (memory != nullptr)
 	{
-		FillRect(memory, &client, GetSysColorBrush(COLOR_WINDOW));
+		FillRect(memory, &client, BackgroundBrush());
 		// The offset is continuous, so the last row can be scrolled fully into view.
 		const int first = state.scrollTop / state.rowHeight;
 		int y = first * state.rowHeight - state.scrollTop;

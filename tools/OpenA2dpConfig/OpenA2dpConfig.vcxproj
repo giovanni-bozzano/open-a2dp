@@ -13,8 +13,9 @@
 	</ClCompile>
 	<Link>
 	  <SubSystem>Windows</SubSystem>
-	  <!-- CM_Register_Notification: the control-device arrivals the window follows. -->
-	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <!-- CM_Register_Notification: the control-device arrivals the window follows; dwmapi and
+	       uxtheme: the dark title bar and the dark combo boxes; advapi32: the apps theme key. -->
+	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;dwmapi.lib;uxtheme.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	  <!-- The control device is limited to Administrators, so ask for that up front. -->
 	  <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
 	</Link>
@@ -23,9 +24,11 @@
 	<ClCompile Include="main.cpp" />
 	<ClCompile Include="ControlClient.cpp" />
 	<ClCompile Include="StatusView.cpp" />
+	<ClCompile Include="Theme.cpp" />
 	<ClCompile Include="..\common\StatusReport.cpp" />
 	<ClInclude Include="ControlClient.h" />
 	<ClInclude Include="StatusView.h" />
+	<ClInclude Include="Theme.h" />
 	<ClInclude Include="..\common\StatusReport.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

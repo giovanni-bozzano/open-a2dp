@@ -8,6 +8,7 @@
 
 #include "ControlClient.h"
 #include "StatusView.h"
+#include "Theme.h"
 
 #include "common/StatusReport.h"
 
@@ -16,6 +17,7 @@
 #include <windows.h>
 
 #include <commctrl.h>
+#include <uxtheme.h>
 
 // The standard controls need the version 6 common controls, or they draw with the classic
 // theme. The status panel paints itself and does not depend on it.
@@ -114,6 +116,15 @@ enum class DeviceState {
 	Playing,
 };
 
+// One group of controls: the frame the window draws and the caption on its top line. A
+// system group box cannot be used, because it draws itself from the system colours, which
+// stay light in a process that has only opted into the dark theme.
+struct GroupFrame
+{
+	RECT rect = {};
+	const wchar_t* caption = nullptr;
+};
+
 struct SinkState
 {
 	std::vector<Device> devices;
@@ -135,12 +146,10 @@ struct SinkState
 	bool details = false;  // show every field, including the ones the formatted lines hide
 	HCMNOTIFICATION notify = nullptr; // control-device arrival/removal
 	HWND sinkLabel = nullptr;
-	HWND sessionGroup = nullptr;
 	HWND sessionPanel = nullptr;
-	HWND codecGroup = nullptr;
 	HWND codecHint = nullptr;
-	HWND formatGroup = nullptr;
 	HWND formatHint = nullptr;
+	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
 };
 
 // Relabels a sink in the list and re-reads every sink's state; defined with the sink list
@@ -521,6 +530,17 @@ void SelectComboValueOrAdd(HWND hwnd, int id, uint32_t value)
 	SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(count), 0);
 }
 
+// The tick box of the Details check box and the gap after it: the layout sizes the control
+// with them and the owner-drawn button paints it with them, so the caption is never cut off.
+int CheckSide(int textHeight)
+{
+	return textHeight - 4;
+}
+int CheckTextGap(int textHeight)
+{
+	return textHeight / 2;
+}
+
 // Sizes and places every control from the strings it holds. The window has no scroll bar of
 // its own: it is made as large as its contents need, and the session panel - the one part
 // whose length the driver decides - scrolls itself for the rows that do not fit.
@@ -564,7 +584,8 @@ void ApplyLayout(HWND hwnd)
 	const int sinkComboWidth = ComboContentWidth(dc, GetDlgItem(hwnd, kSinkCombo)) + arrow;
 	const int refreshWidth = TextWidth(dc, kRefreshText) + gap * 2;
 	const int copyWidth = TextWidth(dc, kCopyText) + gap * 2;
-	const int detailsWidth = TextWidth(dc, kDetailsText) + gap * 5;
+	const int detailsWidth =
+			CheckSide(textHeight) + CheckTextGap(textHeight) + TextWidth(dc, kDetailsText) + 4;
 	const int headerWidth = margin + sinkLabelWidth + gap + sinkComboWidth + gap + refreshWidth + gap +
 							copyWidth + gap + detailsWidth + margin;
 
@@ -620,17 +641,26 @@ void ApplyLayout(HWND hwnd)
 	const int detailsLeft = width - margin - detailsWidth;
 	const int copyLeft = detailsLeft - gap - copyWidth;
 	const int refreshLeft = copyLeft - gap - refreshWidth;
-	Place(GetDlgItem(hwnd, kDetailsCheck), detailsLeft, headerTop + (rowHeight - textHeight) / 2, detailsWidth,
-		  textHeight + 2);
-	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, rowHeight);
-	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, rowHeight);
 	const int sinkLeft = margin + sinkLabelWidth + gap;
-	Place(GetDlgItem(hwnd, kSinkCombo), sinkLeft, headerTop, refreshLeft - gap - sinkLeft, kComboListHeight);
+	const HWND sinkCombo = GetDlgItem(hwnd, kSinkCombo);
+	Place(sinkCombo, sinkLeft, headerTop, refreshLeft - gap - sinkLeft, kComboListHeight);
+	// A drop-down combo is only as tall as its closed field, whatever height it is given, so
+	// the controls beside it are given the height it settled at instead of a guessed one.
+	RECT comboRect = {};
+	const int controlHeight = GetWindowRect(sinkCombo, &comboRect) != FALSE && comboRect.bottom > comboRect.top
+							  ? static_cast<int>(comboRect.bottom - comboRect.top)
+							  : rowHeight;
+	Place(GetDlgItem(hwnd, kDetailsCheck), detailsLeft, headerTop, detailsWidth, controlHeight);
+	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, controlHeight);
+	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, controlHeight);
 
-	// The three groups.
-	Place(state->sessionGroup, groupLeft, sessionTop, groupWidth, sessionHeight);
-	Place(state->codecGroup, groupLeft, codecTop, groupWidth, codecHeight);
-	Place(state->formatGroup, groupLeft, formatTop, groupWidth, formatHeight);
+	// The three groups: the window draws the frame, so only the rectangles are kept.
+	state->groups.clear();
+	state->groups.push_back({groupLeft, sessionTop, groupLeft + groupWidth, sessionTop + sessionHeight,
+						  kSessionGroupText});
+	state->groups.push_back({groupLeft, codecTop, groupLeft + groupWidth, codecTop + codecHeight, kCodecGroupText});
+	state->groups.push_back({groupLeft, formatTop, groupLeft + groupWidth, formatTop + formatHeight,
+						  kFormatGroupText});
 	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
 
 	// One row per field: label first, then the combo it describes.
@@ -712,16 +742,10 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"BUTTON", kDetailsText, BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0, 10, 10, kDetailsCheck,
 				font);
 
-	if (state != nullptr)
-	{
-		state->sessionGroup = CreateChild(hwnd, L"BUTTON", kSessionGroupText, BS_GROUPBOX, 0, 0, 10, 10, 0,
-										  font);
-	}
 	CreateStatusView(hwnd, kStatusList, 0, 0, 10, 10, font);
 	if (state != nullptr)
 	{
 		state->sessionPanel = GetDlgItem(hwnd, kStatusList);
-		state->codecGroup = CreateChild(hwnd, L"BUTTON", kCodecGroupText, BS_GROUPBOX, 0, 0, 10, 10, 0, font);
 	}
 	CreateField(hwnd, L"Codec", kCodecCombo, 0, 0, font);
 	CreateField(hwnd, L"AAC bitrate", kBitrateCombo, 1, 0, font);
@@ -732,8 +756,6 @@ void CreateControls(HWND hwnd)
 	if (state != nullptr)
 	{
 		state->codecHint = CreateChild(hwnd, L"STATIC", kCodecHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
-		state->formatGroup = CreateChild(hwnd, L"BUTTON", kFormatGroupText, BS_GROUPBOX, 0, 0, 10, 10, 0,
-										font);
 	}
 	CreateField(hwnd, L"PCM format", kFormatCombo, 0, 0, font);
 	if (state != nullptr)
@@ -1221,24 +1243,187 @@ void ApplySettings(HWND hwnd)
 							   : L"Stored. The setting applies at the next negotiation.");
 }
 
-// The colour the window and every label on it are drawn in. The window is filled with it
-// explicitly instead of by the class brush, so the labels, the group box captions and the
-// checkbox cannot end up as rectangles of a second colour.
-constexpr int kBackgroundColor = COLOR_WINDOW;
+// A themed static or button fills its own text background with the light theme's colour and
+// draws the text in its own colour, whatever the window answers for WM_CTLCOLOR; taking them
+// off the theme is what lets the palette reach the captions and the field labels.
+BOOL CALLBACK UnthemeTextControl(HWND child, LPARAM context)
+{
+	UNREFERENCED_PARAMETER(context);
+	wchar_t className[64] = {};
+	GetClassNameW(child, className, ARRAYSIZE(className));
+	if (lstrcmpiW(className, L"Static") == 0 || lstrcmpiW(className, L"Button") == 0)
+	{
+		SetWindowTheme(child, L"", L"");
+	}
+	return TRUE;
+}
+
+// The dark parts of the styled controls. The buttons and the check box are taken off the theme
+// entirely and painted from the palette, the combos keep it and are given its dark parts, which
+// is also what their drop-down lists ask the window to fill.
+void ApplyDarkControls(HWND hwnd)
+{
+	if (!DarkTheme())
+	{
+		return;
+	}
+	EnumChildWindows(hwnd, UnthemeTextControl, 0);
+	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo,
+				 kBlocksCombo, kSubbandsCombo, kAllocationCombo})
+	{
+		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
+	}
+	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDetailsCheck})
+	{
+		// Owner-drawn, because a themed or classic button paints its own face from the light
+		// system colours; the window then keeps the check box's state itself.
+		SendMessageW(GetDlgItem(hwnd, id), BM_SETSTYLE, BS_OWNERDRAW, TRUE);
+	}
+	InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+// A button or the check box, drawn from the palette: its own drawing would use the light
+// system colours whatever the window answers for WM_CTLCOLOR, so in the dark theme the four
+// of them are owner-drawn.
+void PaintButton(const DRAWITEMSTRUCT& item)
+{
+	const HDC dc = item.hDC;
+	const Colors& colors = ThemeColors();
+	const bool checkbox = item.CtlID == kDetailsCheck;
+	const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+	const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+
+	// The layout measured the control with the window's font, and a WM_DRAWITEM DC carries the
+	// system font, so the button's own font is selected for both measuring and drawing.
+	const HFONT font = reinterpret_cast<HFONT>(SendMessageW(item.hwndItem, WM_GETFONT, 0, 0));
+	const HGDIOBJ previousFont = font != nullptr ? SelectObject(dc, font) : nullptr;
+	TEXTMETRICW metrics = {};
+	GetTextMetricsW(dc, &metrics);
+	const int textHeight = metrics.tmHeight > 0 ? metrics.tmHeight : 16;
+
+	wchar_t text[128] = {};
+	GetWindowTextW(item.hwndItem, text, ARRAYSIZE(text));
+	RECT box = item.rcItem;
+	const HBRUSH face = CreateSolidBrush(pressed ? colors.section : colors.background);
+	FillRect(dc, &box, face);
+	DeleteObject(face);
+
+	const HBRUSH border = CreateSolidBrush(colors.border);
+	RECT textRect = box;
+	if (checkbox)
+	{
+		// The tick box and the caption are the sizes the layout reserved; the state is the
+		// window's, because an owner-drawn button keeps none of its own.
+		bool checked = false;
+		if (const SinkState* state = StateOf(GetParent(item.hwndItem)); state != nullptr)
+		{
+			checked = state->details;
+		}
+		const int side = CheckSide(textHeight);
+		RECT glyph = {box.left, box.top + (box.bottom - box.top - side) / 2, box.left + side, 0};
+		glyph.bottom = glyph.top + side;
+		FrameRect(dc, &glyph, border);
+		if (checked)
+		{
+			// A tick drawn with a pen, so it does not depend on a glyph the font may not have.
+			const HPEN pen = CreatePen(PS_SOLID, 2, colors.text);
+			const HGDIOBJ previousPen = SelectObject(dc, pen);
+			MoveToEx(dc, glyph.left + 3, glyph.top + side / 2, nullptr);
+			LineTo(dc, glyph.left + side / 2 - 1, glyph.bottom - 4);
+			LineTo(dc, glyph.right - 3, glyph.top + 3);
+			SelectObject(dc, previousPen);
+			DeleteObject(pen);
+		}
+		textRect.left = glyph.right + CheckTextGap(textHeight);
+	}
+	else
+	{
+		FrameRect(dc, &box, border);
+	}
+	DeleteObject(border);
+
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, disabled ? colors.muted : colors.text);
+	const UINT format = (checkbox ? DT_LEFT : DT_CENTER) | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+	DrawTextW(dc, text, -1, &textRect, format);
+	if ((item.itemState & ODS_FOCUS) != 0)
+	{
+		// A check box is focused around the whole control, so the frame never sits on a glyph;
+		// a button's frame is the caption it is drawn around.
+		RECT focus = checkbox ? box : textRect;
+		InflateRect(&focus, -1, -1);
+		DrawFocusRect(dc, &focus);
+	}
+	if (previousFont != nullptr)
+	{
+		SelectObject(dc, previousFont);
+	}
+}
 
 LRESULT OnEraseBackground(HWND hwnd, HDC dc)
 {
 	RECT client = {};
 	GetClientRect(hwnd, &client);
-	FillRect(dc, &client, GetSysColorBrush(kBackgroundColor));
+	FillRect(dc, &client, BackgroundBrush());
 	return 1;
 }
 
 LRESULT OnColorStatic(WPARAM wParam, LPARAM lParam)
 {
 	UNREFERENCED_PARAMETER(lParam);
-	SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
-	return reinterpret_cast<LRESULT>(GetSysColorBrush(kBackgroundColor));
+	const HDC dc = reinterpret_cast<HDC>(wParam);
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, ThemeColors().text);
+	return reinterpret_cast<LRESULT>(BackgroundBrush());
+}
+
+// A combo's drop-down list is a list box of its own and asks the window for its colours; an
+// opaque background is what stops the items from being drawn over the light list fill.
+LRESULT OnColorListBox(WPARAM wParam)
+{
+	const HDC dc = reinterpret_cast<HDC>(wParam);
+	SetBkMode(dc, OPAQUE);
+	SetBkColor(dc, ThemeColors().background);
+	SetTextColor(dc, ThemeColors().text);
+	return reinterpret_cast<LRESULT>(BackgroundBrush());
+}
+
+// The group frames and their captions, in the palette's colours. The caption sits on the top
+// line with the window's background behind it, which is what makes the line pass behind it.
+void PaintGroups(HWND hwnd, HDC dc)
+{
+	const SinkState* state = StateOf(hwnd);
+	if (state == nullptr || state->groups.empty())
+	{
+		return;
+	}
+	const Colors& colors = ThemeColors();
+	if (state->font != nullptr)
+	{
+		SelectObject(dc, state->font);
+	}
+	TEXTMETRICW metrics = {};
+	GetTextMetricsW(dc, &metrics);
+	const int textHeight = metrics.tmHeight;
+
+	const HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
+	const HGDIOBJ previousPen = SelectObject(dc, pen);
+	const HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, colors.text);
+	for (const GroupFrame& group : state->groups)
+	{
+		Rectangle(dc, group.rect.left, group.rect.top + textHeight / 2, group.rect.right, group.rect.bottom);
+		SIZE size = {};
+		GetTextExtentPoint32W(dc, group.caption, static_cast<int>(wcslen(group.caption)), &size);
+		RECT caption = {group.rect.left + textHeight / 2, group.rect.top,
+						group.rect.left + textHeight / 2 + size.cx, group.rect.top + textHeight + 2};
+		FillRect(dc, &caption, BackgroundBrush());
+		DrawTextW(dc, group.caption, -1, &caption, DT_LEFT | DT_SINGLELINE | DT_TOP | DT_NOPREFIX);
+	}
+	SelectObject(dc, previousBrush);
+	SelectObject(dc, previousPen);
+	DeleteObject(pen);
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -1299,8 +1484,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 			SinkState* state = StateOf(hwnd);
 			if (state != nullptr)
 			{
-				const LRESULT checked = SendMessageW(GetDlgItem(hwnd, kDetailsCheck), BM_GETCHECK, 0, 0);
-				state->details = checked == BST_CHECKED;
+				// The dark theme's check box is owner-drawn, and an owner-drawn button keeps no
+				// check state of its own: the window's flag is the state both themes draw from.
+				state->details = !state->details;
+				InvalidateRect(GetDlgItem(hwnd, kDetailsCheck), nullptr, TRUE);
 				RefreshStatusView(hwnd);
 			}
 			return 0;
@@ -1320,11 +1507,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 	case kDeviceChangeMessage:
 		ReloadDevices(hwnd);
 		return 0;
+	case WM_DRAWITEM:
+		PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+		return TRUE;
+	case WM_PAINT:
+	{
+		PAINTSTRUCT paint = {};
+		const HDC dc = BeginPaint(hwnd, &paint);
+		PaintGroups(hwnd, dc);
+		EndPaint(hwnd, &paint);
+		return 0;
+	}
 	case WM_ERASEBKGND:
 		return OnEraseBackground(hwnd, reinterpret_cast<HDC>(wParam));
 	case WM_CTLCOLORSTATIC:
 	case WM_CTLCOLORBTN:
 		return OnColorStatic(wParam, lParam);
+	case WM_CTLCOLORLISTBOX:
+		return OnColorListBox(wParam);
 	case WM_CLOSE:
 		DestroyWindow(hwnd);
 		return 0;
@@ -1362,13 +1562,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 
 int Run(HINSTANCE instance, int showCommand)
 {
+	// The theme is read once, before the class brush and the first measurement exist.
+	SelectTheme();
 	const wchar_t* const className = L"OpenA2dpConfigWindow";
 	WNDCLASSEXW windowClass = {};
 	windowClass.cbSize = sizeof(windowClass);
 	windowClass.lpfnWndProc = WindowProc;
 	windowClass.hInstance = instance;
 	windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-	windowClass.hbrBackground = GetSysColorBrush(kBackgroundColor);
+	windowClass.hbrBackground = BackgroundBrush();
 	windowClass.lpszClassName = className;
 	if (RegisterClassExW(&windowClass) == 0)
 	{
@@ -1397,6 +1599,8 @@ int Run(HINSTANCE instance, int showCommand)
 		}
 		return 1;
 	}
+	ApplyTheme(hwnd);
+	ApplyDarkControls(hwnd);
 	ShowWindow(hwnd, showCommand);
 	UpdateWindow(hwnd);
 
