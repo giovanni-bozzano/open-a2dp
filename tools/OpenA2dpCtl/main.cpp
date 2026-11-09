@@ -35,6 +35,7 @@ Usage:
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--device <mac|index>]
   OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
+  OpenA2dpCtl reset [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
 
@@ -59,6 +60,9 @@ Commands:
             first format the endpoint lists and ignores the Sound-settings pick,
             so pinning is the only way to force one; the sink has to advertise
             it. Pinning also limits WASAPI exclusive-mode players to it.
+  reset     Clear this sink's stored codec preference and endpoint format, so
+            the automatic codec order and every sink-supported PCM format
+            apply again.
   version   Show the driver ABI and version.
 
 Options:
@@ -865,6 +869,71 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 	return 0;
 }
 
+int CommandReset(const std::vector<Device>& devices, const std::string& spec)
+{
+	size_t index = 0;
+	std::string error;
+	if (!FindDevice(devices, spec, index, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 2;
+	}
+	const Device& device = devices[index];
+	const HANDLE handle = OpenDevice(device, error);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	// Every field at its default: the automatic codec order and an endpoint that offers every
+	// format the sink advertises. Each SET is a change for the driver, so a running stream
+	// renegotiates once.
+	DWORD bytes = 0;
+	Ioctl::EndpointFormat format = {};
+	format.abiVersion = Ioctl::kAbiVersion;
+	Ioctl::Preference preference = {};
+	preference.abiVersion = Ioctl::kAbiVersion;
+	const bool formatSet = IoctlSync(handle, Ioctl::kIoctlSetEndpointFormat, &format,
+									static_cast<DWORD>(sizeof(format)), nullptr, 0, bytes, error);
+	if (!formatSet && error.empty())
+	{
+		error = Win32Error("SET_ENDPOINT_FORMAT", GetLastError());
+	}
+	const bool preferenceSet =
+			formatSet && IoctlSync(handle, Ioctl::kIoctlSetPreference, &preference,
+								   static_cast<DWORD>(sizeof(preference)), nullptr, 0, bytes, error);
+	if (!preferenceSet && error.empty())
+	{
+		error = Win32Error("SET_PREFERENCE", GetLastError());
+	}
+	Ioctl::Status status = {};
+	Ioctl::Preference applied = {};
+	Ioctl::EndpointFormat appliedFormat = {};
+	const bool read = preferenceSet && ReadStatus(handle, status, error) &&
+					  ReadPreference(handle, applied, error) && ReadEndpointFormat(handle, appliedFormat, error);
+	if (!formatSet || !preferenceSet || !read)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	const bool forced = (applied.flags & Ioctl::kPreferenceForceCodec) != 0;
+	std::printf("%s: codec preference reset to %s, endpoint format reset to %s.\n",
+			DeviceLabel(device).c_str(),
+			!forced ? "auto (AAC > SBC)" : (applied.codec == Ioctl::kCodecAac ? "AAC" : "SBC"),
+			EndpointFormatText(appliedFormat).c_str());
+	if (status.mediaState == Ioctl::MediaState::Streaming)
+	{
+		std::printf("\nnote: the active stream renegotiates to apply this (the status above may lag "
+					"until the sink answers).\n");
+	}
+	PrintStatus(device, handle, status, applied, false);
+	CloseHandle(handle);
+	return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1021,7 +1090,7 @@ int main(int argc, char** argv)
 		return 0;
 	}
 	if (command != "list" && command != "status" && command != "codec" && command != "version" &&
-		command != "format")
+		command != "format" && command != "reset")
 	{
 		std::fprintf(stderr, "unknown command '%s'\n\n%s", command.c_str(), kUsage);
 		return 2;
@@ -1060,6 +1129,10 @@ int main(int argc, char** argv)
 	if (command == "format")
 	{
 		return CommandFormat(devices, deviceSpec, formatRateArg, formatChannelsArg);
+	}
+	if (command == "reset")
+	{
+		return CommandReset(devices, deviceSpec);
 	}
 	return CommandStatus(devices, deviceSpec, watch, interval, verbose);
 }

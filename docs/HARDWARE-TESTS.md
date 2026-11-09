@@ -247,39 +247,55 @@ it), reattach.
    without another `does not fit` warning or RECONFIGURE: the connection keeps the MTU
    its media channel reported until it ends.
 
-**T23 Endpoint rate selection (S/A)**
-1. Sound settings > the OpenA2dp endpoint > *Advanced* > `16 bit, 48000 Hz`; play (S).
-- Expect `endpoint format 48000 Hz 2 ch`, then `configured codec SBC` and the media
-  `endpoint PCM, SBC 48000 Hz ...` line; audible at the normal pitch, `packets`
-  advancing, no `does not match the endpoint format`.
-2. Stop playback, choose `16 bit, 44100 Hz`, play again.
-- Expect `endpoint format 44100 Hz 2 ch` and a 44.1 kHz stream, without a sink reconnect.
-3. Choose a mono format (`1 channel`), play (S).
-- Expect `endpoint format 44100 Hz 1 ch`, `configured codec SBC` with `mode 0` and audible
+**T23 Endpoint format selection (S/A)**
+1. `OpenA2dpCtl status`: `endpoint format automatic (every sink format)`, and
+   *Sound settings > the endpoint > Advanced* offers every format the sink advertises.
+   Pick another one there and play: the stream still runs at the first listed format
+   (`endpoint format ... (actual stream)`), because the picker does not reach the driver.
+2. While streaming, `OpenA2dpCtl format 48000 2`.
+- Expect `endpoint format set to 48000 Hz 2 ch`, one `endpoint formats 48000 Hz 2 ch`
+  line, then the stream runs at `endpoint format 48000 Hz 2 ch (actual stream)` and stays
+  audible at 48 kHz; no `closing to renegotiate` burst, no reconnect per probe.
+3. *Advanced* now offers that one format only. Choose `16 bit, 44100 Hz` there and play:
+   the stream keeps running at 48 kHz.
+4. Reconnect the sink: `Config: endpoint format 48000 Hz 2 ch restored from the registry`
+   and `endpoint formats 48000 Hz 2 ch` appear before Windows opens anything.
+5. `format 48000 1`, play (S).
+- Expect `endpoint format 48000 Hz 1 ch`, `configured codec SBC` with `mode 0` and audible
   mono audio; `status` shows one channel. Repeat on A: AAC negotiates mono.
-4. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 2 ch`, `status`
+6. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 1 ch`, `status`
    reports the 48 kHz bitrate, audio is audible.
-5. A sink that configures the stream itself with another rate or channel count
+7. `format auto`: every sink format is listed again, `status` reads
+   `endpoint format automatic (every sink format)`, and the *Advanced* list grows back.
+   A WASAPI exclusive-mode player can open any of them; with a pinned format it is limited
+   to that one.
+8. `format 48000 2` on a 44.1-only sink is refused with the advertised masks, nothing is
+   stored, and the endpoint keeps its previous list.
+9. `OpenA2dpCtl reset`: `codec preference reset to auto (AAC > SBC), endpoint format reset
+   to automatic (every format the sink supports)`, and both settings stay there after a
+   reconnect.
+10. A sink that configures the stream itself with another rate or channel count
    (non-compliant, one format only) is rejected: our SET_CONFIGURATION response carries
    0xC4 (sampling frequency), 0xC6 (channel mode) or 0xD9 (channels) and the sink should
    retry. If it insists, the stream never opens; `does not match the endpoint format` in
    the media log is the safety net, not the normal path.
-6. Switch codec and SBC/AAC parameters while playing: the Windows *Advanced* list remains
-   unchanged and contains every driver-supported format the sink advertises over SBC.
-   The config UI has no rate/channel filter; CLI `--rate`/`--channels` explain their removal.
-7. With old global/per-device `CodecPreferenceEndpointRate`/`EndpointChannels` values
+11. Switch codec and SBC/AAC parameters while playing: the offered list does not change
+    (a pinned format stays the only entry). The window has the same setting; CLI
+    `--rate`/`--channels` explain their removal.
+12. With old global/per-device `CodecPreferenceEndpointRate`/`EndpointChannels` values
    already present, load the current ABI 1 development build: `GET_PREFERENCE` has no
-   rate/channel fields and Windows still offers all sink-supported driver formats.
+   rate/channel fields, those values are not read as an endpoint format, and Windows
+   still offers all sink-supported driver formats.
    Even invalid old format values must not
    discard valid codec parameters. On a stereo-only/44.1-only sink only those supported
    choices appear after discovery; the initial four-format log is labelled provisional.
-8. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
+13. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
    advertise AAC (it offers SBC)`, and `status` lists `sink formats 44100 Hz, 48000 Hz, mono,
    stereo (SBC)`; Windows offers only the sink's formats.
-9. Discovery with an unchanged format set does not repeat `endpoint formats` or emit an
-   explicit format-change notification. `advertised default` initially names the first
-   available entry (44100 stereo first), while `stream format` and `endpoint format ...
-   (actual stream)` follow the Windows selection; neither proves the Windows mix value.
+14. Discovery with an unchanged format set does not repeat `endpoint formats` or emit an
+   explicit format-change notification, and the log carries no pin-property traffic.
+   `endpoint format ... (actual stream)` is the encoder input, not proof of the Windows
+   mix value.
 
 **T24 Config UI (S/A)**
 1. Start `OpenA2dpConfig` elevated: the sink list shows the addresses `OpenA2dpCtl list`
@@ -297,8 +313,9 @@ it), reattach.
 6. Connect a second sink while the window is open: both are listed within a second without
    pressing Refresh, and each loads its own preference. Unplug the selected sink: the window
    reports it as gone instead of retrying forever.
-7. Store `44.1 kHz` and `Mono`, apply, then check Sound settings: the endpoint offers only
-   that format. Choose `Any` in both fields to restore every served format.
+7. Store endpoint format `44100 Hz` and `Mono (1 ch)`, apply, then check Sound settings:
+   the endpoint offers only that format. `Automatic` in both fields restores every served
+   format, and so does `OpenA2dpCtl reset`.
 8. Tick **Details**, then press **Copy** and paste into an editor: the text matches
    `OpenA2dpCtl status --verbose` for the same sink, one field per line, every value with
    its decimal and hex form. Use this dump for any failure found below it.

@@ -19,7 +19,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 2;
+constexpr uint32_t kAbiVersion = 1;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -215,6 +215,11 @@ struct Status {
 	// kSinkCodec* bits for the codecs the sink advertised in the last discovery, 0 until
 	// one ran. SBC is mandatory, so it is only ever clear before the first discovery.
 	uint32_t sinkCodecs;
+	// The endpoint format setting (SET/GET_ENDPOINT_FORMAT): 0/0 is automatic, otherwise the
+	// one format the endpoint offers Windows. Mirrored here so a status report shows it
+	// without a second IOCTL.
+	uint32_t endpointRate;
+	uint32_t endpointChannels;
 };
 
 struct Preference {
@@ -283,7 +288,7 @@ static_assert(sizeof(Preference) == 36, "Preference layout is part of the driver
 
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 104, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 112, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

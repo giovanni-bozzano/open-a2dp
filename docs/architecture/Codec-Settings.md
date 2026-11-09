@@ -5,18 +5,29 @@ Which fields exist, who chooses them, and what a change does. The design notes a
 
 ## Who chooses the PCM format
 
-Windows does. The ACX render endpoint publishes the formats it supports, the audio engine
-opens a stream with one of them (shared mode uses Windows' persisted mix format, changeable
-in *Sound settings > the endpoint > Advanced*), and the driver receives that
-`ACXDATAFORMAT` when the stream is created. The driver never asserts a format on its own.
+Windows plays the first format the endpoint lists. It publishes the formats the ACX render
+endpoint supports and opens the shared-mode stream with the leading entry; the format picked
+in *Sound settings > the endpoint > Advanced* is remembered by Windows but never consulted
+for this endpoint - under Windows 11's Unified Audio Endpoint the mix format is decided when
+the endpoint's format list changes. Hardware shows both sides: the picked format arrives as
+a stream that is built and discarded, and the graph that runs is at the first listed format.
+Nothing in the audio stack reports the pick, so the only way to control it is which formats
+the endpoint offers.
+
+The driver therefore decides which formats it offers, through the endpoint format setting
+(`GET`/`SET_ENDPOINT_FORMAT`, stored per sink): automatic offers every format the sink
+advertises, a pinned rate and channel count is offered alone. The driver still asserts no
+format on its own - Windows opens the listed one and its format reaches the encoder when the
+stream runs.
 
 The driver can publish 16-bit PCM at 44.1 and 48 kHz, mono and stereo. After discovery it
 lists the intersection with the sink's SBC rate/channel capabilities. The selected format is
 recorded as the device's `PinSampleRate`/`PinChannels`, drives the position and packet math
 and the PCM buffers, and AVDTP then negotiates a configuration that matches it.
 
-No preference narrows this list. Rate/channel controls and `--rate`/`--channels` have been
-removed; old registry values are ignored, including global defaults. SBC is the baseline
+Codec settings never narrow this list; only the endpoint format setting does. The old
+`--rate`/`--channels` flags are gone (use `format`), and the registry values they wrote are
+ignored, including global defaults. SBC is the baseline
 because it is mandatory; AAC has separate capabilities and may not support every listed
 PCM format. Automatic selection can use SBC in that case; forced AAC can fail rather than
 silently encode a different format. A forced codec the sink does not advertise is refused.
@@ -38,8 +49,8 @@ Windows ignores the format picked in Sound settings for this endpoint: the decis
 when the format list changes, so Windows plays the first format the endpoint lists and the
 latter selection is never consulted. Hardware shows it from both sides - the request arrives
 as a stream at the picked format that is built and then discarded, and the graph that runs is
-at the first listed format. `Alternative A2DP Driver` documents the same platform behaviour
-for Windows 11's Unified Audio Endpoint and recommends offering a single format.
+at the first listed format. That is platform behaviour under Windows 11's Unified Audio
+Endpoint, not something this driver can influence.
 
 An endpoint format is therefore selected in the driver's own settings (`SET_ENDPOINT_FORMAT`,
 stored per sink as `SelectedSampleRate`/`SelectedChannels`) and offered as the only entry of
@@ -75,15 +86,13 @@ The actual stream format arrives at `OnCreateStream`, is validated as supported 
 and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not
 reported as a fabricated 44100 stereo fallback.
 
-Logs distinguish `endpoint formats` (availability, 16-bit and provisional/discovered source),
-`advertised default` (initial suggestion when the lists change, pinned or sink-selected),
-`endpoint default follows the stream format` (which took over the list default), `pin property`
-(the format questions Windows asks, once each), the stream processing mode, `stream format`
-(Windows' raw request), and `endpoint format ... (actual stream)` (encoder input). The media/AVDTP logs report the negotiated codec format, not the
-Windows mix format. Previously
-the same availability line was printed at initialization and discovery even if nothing
-changed, with an extra explicit notification despite ACX already notifying; neither is
-needed.
+Logs report `endpoint formats` (what is listed, 16-bit, provisional before discovery or the
+sink's SBC capabilities after) and `endpoint format ... (actual stream)` (the format the
+encoder follows). The media/AVDTP logs report the negotiated codec format, not the Windows
+mix format. The list line is printed only when the list actually changes, and ACX's own
+format-change notification is not duplicated explicitly. The property traffic Windows uses to
+build the graph is not logged: it is hundreds of requests per graph and none of them can
+decide the format.
 
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
@@ -98,12 +107,13 @@ One preference per sink, kept in the registry and restored when the device start
 - `HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters` - global default.
 - `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
 
-All values are `REG_DWORD`, `0` means "driver default", and `OpenA2dpCtl codec` writes them
-through `SET_PREFERENCE` (`kAbiVersion` 1). Deleting the sink subkey returns it to auto.
-The driver reads it in `OnDeviceAdd`, before the endpoint exists. The development ABI
-baseline removes the obsolete format preference and fallback fields: `Preference` is
-36 bytes and `Status` is 104 bytes. Rebuild the tools and AAC service with the driver;
-earlier development layouts are incompatible, even if they also reported ABI 1.
+All values are `REG_DWORD`, `0` means "driver default", `OpenA2dpCtl codec` writes the codec
+fields through `SET_PREFERENCE` and `OpenA2dpCtl format` writes the endpoint format through
+`SET_ENDPOINT_FORMAT`. Deleting the sink subkey returns it to auto. The driver reads it in
+`OnDeviceAdd`, before the endpoint exists. The development ABI baseline removes the obsolete
+format preference and fallback fields: `Preference` is 36 bytes, `EndpointFormat` 16 bytes
+and `Status` 112 bytes. Rebuild the tools and AAC service with the driver; earlier
+development layouts are incompatible, even if they also reported ABI 1.
 `status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows
 mix-format query. `codec aac` is refused on a sink that does not advertise AAC.
 
@@ -115,6 +125,7 @@ mix-format query. `codec aac` is refused on a sink that does not advertise AAC.
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to the MTU ceiling |
+| Endpoint format | `SelectedSampleRate`, `SelectedChannels` | `format [auto\|<rate> <channels>]` | automatic, or 44100/48000 Hz with 1 or 2 channels the sink advertises | automatic (every sink format) |
 
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
 `CodecPreferenceEndpointChannels` are obsolete and no longer read or written.
@@ -143,6 +154,22 @@ float input (`0xC00D36B4`), so a 24-bit endpoint would only add a truncation ste
 A value the sink does not advertise falls back to the selector's own order instead of
 failing the negotiation; a bitpool is lifted to the sink's minimum and capped at its
 maximum for the chosen mode.
+
+## Shared and exclusive mode
+
+Shared mode is what every ordinary application uses: applications hand PCM to the Windows
+audio engine (`audiodg.exe`), which mixes all of them into one shared-mode stream at the
+endpoint's format - the first listed one, which is also what *Sound settings > Advanced*
+shows as the device format. Everything played through the endpoint is resampled to it, so a
+pinned format is the format the whole system plays on this sink.
+
+Exclusive mode (WASAPI exclusive) bypasses the mixer: the application opens the pin itself,
+no mixing or conversion happens and the stream is bit-exact, but only one application holds
+the device and the format it asks for must be one the endpoint lists. Automatic therefore
+keeps every sink format available to such a player; a pinned format limits it to that one.
+
+Neither mode overrides the endpoint setting: the Sound-settings picker only ever recorded
+the shared-mode default, which this endpoint ignores.
 
 ## SBC
 
@@ -174,11 +201,14 @@ maximum for the chosen mode.
   configuration from the sink's advertised capabilities and sends RECONFIGURE, then START.
   A refused suspend, a rejected command, or a sink-configured stream whose capabilities are
   unknown falls back to close-and-rediscover.
-- Format change in Windows: applies the next time a stream is opened; the endpoint rate is
-  preferred for the new negotiation.
-  A stream configured for another PCM format is closed and negotiated again (RECONFIGURE
-  cannot change the sampling frequency or channel count). A stream already matching it is
-  left alone. Codec/parameter settings do not change the available PCM formats.
+- Endpoint format change (`format`): the offered list is rebuilt in place, so Windows
+  re-queries the endpoint and rebuilds the graph at the new (single) format. A stream
+  configured for another PCM format is closed and negotiated again (RECONFIGURE cannot
+  change the sampling frequency or channel count); a stream already matching it is left
+  alone. Codec/parameter settings do not change the available PCM formats.
+- A stream Windows opens: its format reaches `PinSampleRate` and the encoder when the stream
+  runs. It never changes the offered list - Windows creates one stream per format it
+  enumerates before it plays one, and those probes must not redefine the endpoint.
 - Configuration the endpoint format cannot serve, whichever side proposed it: refused at
   negotiation, not at media start - `NotSupportedSamplingFrequency` (0xC4),
   `NotSupportedChannelMode` (0xC6), `NotSupportedChannels` (0xD9) or `NotSupportedBitRate`

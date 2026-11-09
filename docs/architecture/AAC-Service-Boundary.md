@@ -138,6 +138,8 @@ struct.
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
 | `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. Forced AAC is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks AAC. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
+| `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format the endpoint offers Windows. 0/0 is automatic (every sink format), otherwise the one pinned rate and channel count |
+| `SET_ENDPOINT_FORMAT` | `EndpointFormat` | – | Stored per sink (`SelectedSampleRate`/`SelectedChannels`) and applied by rebuilding the listed formats in place, which makes Windows re-query the endpoint. Automatic (`0`/`0`) or 44100/48000 Hz with 1 or 2 channels; a format the discovered sink does not advertise is refused with `STATUS_NOT_SUPPORTED`. Windows plays the first listed format and ignores the Sound-settings pick, so a pinned format is listed alone |
 
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
@@ -146,14 +148,16 @@ The control queue is parallel, so a parked `WAIT_EVENT` does not block
 waiting on `SessionLock`. `Preference` carries the SBC bitpool, block length, subbands,
 allocation and AAC bitrate. `Status.mediaMtu`/`bitrateLimit` report the AAC bitrate one
 media packet carries at the current endpoint rate; `sinkRates`/`sinkChannels` report the
-sink's SBC PCM capabilities and `sinkCodecs` its advertised codecs. A forced codec the
-sink does not advertise is refused. Negotiation follows the actual Windows stream format.
+sink's SBC PCM capabilities, `sinkCodecs` its advertised codecs, and
+`endpointRate`/`endpointChannels` the endpoint format setting. A forced codec the sink does
+not advertise is refused. Negotiation follows the actual Windows stream format.
 
 ABI 1 is the current development baseline, not compatibility with the original ABI 1.
 Obsolete format preferences and fallback fields are removed, not reserved: `Preference`
-is 36 bytes and `Status` is 104 bytes. The CLI and UI have no rate/channel filters.
-Always rebuild and install the driver, tools and service together; older development
-layouts are incompatible even when their version number matches.
+is 36 bytes, `EndpointFormat` 16 bytes and `Status` 112 bytes. The endpoint format is its
+own setting, not a preference field. Always rebuild and install the driver, tools and
+service together; older development layouts are incompatible even when their version
+number matches.
 
 `REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
 separate call; if mapping fails, the service must close its handle to clear registration.

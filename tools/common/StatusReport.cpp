@@ -92,6 +92,20 @@ void AppendSinkFormats(std::string& text, const Ioctl::Status& status)
 	AppendLine(text, "sink formats", line.empty() ? std::string("unknown") : line);
 }
 
+void AppendEndpointFormat(std::string& text, const Ioctl::Status& status)
+{
+	// Windows plays the first listed format and ignores the Sound-settings pick, so this line is
+	// the answer to "what will the shared-mode stream run at" whenever it is pinned.
+	if (status.endpointRate == 0)
+	{
+		AppendLine(text, "endpoint format", "automatic (every sink format)");
+		return;
+	}
+	AppendLine(text, "endpoint format",
+			   Format("%u Hz, %s (pinned; offered alone)", status.endpointRate,
+					  status.endpointChannels == 1 ? "mono" : "stereo"));
+}
+
 void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 {
 	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0)
@@ -117,7 +131,6 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 						  preference.sbcSubbands != 0 ? preference.sbcSubbands : 8u,
 						  preference.sbcAllocation == Ioctl::kSbcAllocationSnr ? "SNR" : "loudness"));
 	}
-	AppendLine(text, "endpoint", "Windows-selected; all supported PCM formats");
 }
 
 void AppendDriver(std::string& text, const Ioctl::VersionInfo& version)
@@ -167,6 +180,8 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.sinkRates", status.sinkRates);
 	AppendField(text, "status.sinkChannels", status.sinkChannels);
 	AppendField(text, "status.sinkCodecs", status.sinkCodecs);
+	AppendField(text, "status.endpointRate", status.endpointRate);
+	AppendField(text, "status.endpointChannels", status.endpointChannels);
 	AppendField(text, "preference.abiVersion", preference.abiVersion);
 	AppendField(text, "preference.flags", preference.flags);
 	AppendField(text, "preference.codec", preference.codec);
@@ -296,6 +311,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkFormats(text, status);
+	AppendEndpointFormat(text, status);
 	AppendPreference(text, preference);
 	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
 	AppendLine(text, "rings",

@@ -92,7 +92,7 @@ TEST(StatusReport_FormatsTheSession)
 	CHECK(Contains(report, "672 B, 660 B payload; AAC up to 352000 bps"));
 	CHECK(Contains(report, "44100 Hz, 48000 Hz, stereo (SBC, AAC)"));
 	CHECK(Contains(report, "force AAC"));
-	CHECK(Contains(report, "endpoint        Windows-selected; all supported PCM formats"));
+	CHECK(Contains(report, "endpoint format automatic (every sink format)"));
 	CHECK(Contains(report, "registered"));
 	CHECK(Contains(report, "packets 12"));
 	CHECK(Contains(report, "ABI " + std::to_string(Ioctl::kAbiVersion) + ", version 1.2.3"));
@@ -141,6 +141,18 @@ TEST(StatusReport_VerboseListsEveryField)
 
 	CHECK(Contains(report, "0xC000009A"));
 	CHECK(Contains(report, "last error      0xC000009A"));
+}
+
+TEST(StatusReport_ShowsAPinnedEndpointFormat)
+{
+	// The one format the endpoint offers is the answer to "what will the shared-mode stream
+	// run at", so it is a line of its own, not a preference field.
+	Ioctl::Status status = StreamingStatus();
+	status.endpointRate = 48000;
+	status.endpointChannels = 1;
+	const std::string report = Report(false, status, StreamingPreference());
+	CHECK(Contains(report, "endpoint format 48000 Hz, mono (pinned; offered alone)"));
+	CHECK(!Contains(report, "automatic (every sink format)"));
 }
 
 TEST(StatusReport_NeedsAStatus)
