@@ -6,6 +6,7 @@
 
 #include "Text.h"
 
+#include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/Rtp.h>
 
 #include <cstdarg>
@@ -219,26 +220,18 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 
 } // namespace
 
+// The names themselves are Avdtp's, next to the enums the driver also uses; a value from a
+// corrupt or older IOCTL reply gets the tool's own word instead of indexing off a table.
 const char* CodecName(uint32_t codec)
 {
-	if (codec == Ioctl::kCodecSbc)
-	{
-		return "SBC";
-	}
-	if (codec == Ioctl::kCodecAac)
-	{
-		return "AAC";
-	}
-	return "none";
+	const char* const name = codec > 0xFF ? nullptr : Avdtp::CodecTypeName(static_cast<Avdtp::CodecType>(codec));
+	return name != nullptr ? name : "none";
 }
 
 const char* AvdtpStateName(uint32_t state)
 {
-	static const char* const names[] = {
-		"Idle", "Discovering", "GettingCapabilities", "Configuring", "Configured", "Opening",
-		"Open", "Starting", "Streaming", "Suspending", "Closing", "Aborting", "Failed",
-	};
-	return state < sizeof(names) / sizeof(names[0]) ? names[state] : "Unknown";
+	const char* const name = state > 0xFF ? nullptr : Avdtp::SessionStateName(static_cast<Avdtp::SessionState>(state));
+	return name != nullptr ? name : "Unknown";
 }
 
 const char* MediaStateName(uint32_t state)

@@ -77,35 +77,18 @@ inline constexpr LONG ChannelOpening = 1;
 inline constexpr LONG ChannelOpen = 2;
 inline constexpr LONG ChannelClosing = 3;
 
+// The names live with the enums in common/include, so the driver and the tools cannot
+// disagree; these only fill in the word for a value the shared table does not know.
 inline const char* AvdtpStateName(OpenA2dp::Avdtp::SessionState state)
 {
-	switch (state)
-	{
-	case OpenA2dp::Avdtp::SessionState::Idle: return "Idle";
-	case OpenA2dp::Avdtp::SessionState::Discovering: return "Discovering";
-	case OpenA2dp::Avdtp::SessionState::GettingCapabilities: return "GettingCapabilities";
-	case OpenA2dp::Avdtp::SessionState::Configuring: return "Configuring";
-	case OpenA2dp::Avdtp::SessionState::Configured: return "Configured";
-	case OpenA2dp::Avdtp::SessionState::Opening: return "Opening";
-	case OpenA2dp::Avdtp::SessionState::Open: return "Open";
-	case OpenA2dp::Avdtp::SessionState::Starting: return "Starting";
-	case OpenA2dp::Avdtp::SessionState::Streaming: return "Streaming";
-	case OpenA2dp::Avdtp::SessionState::Suspending: return "Suspending";
-	case OpenA2dp::Avdtp::SessionState::Closing: return "Closing";
-	case OpenA2dp::Avdtp::SessionState::Aborting: return "Aborting";
-	case OpenA2dp::Avdtp::SessionState::Failed: return "Failed";
-	}
-	return "?";
+	const char* const name = OpenA2dp::Avdtp::SessionStateName(state);
+	return name != nullptr ? name : "?";
 }
 
 inline const char* CodecName(OpenA2dp::Avdtp::CodecType codec)
 {
-	switch (codec)
-	{
-	case OpenA2dp::Avdtp::CodecType::Sbc: return "SBC";
-	case OpenA2dp::Avdtp::CodecType::Aac: return "AAC";
-	default: return "other";
-	}
+	const char* const name = OpenA2dp::Avdtp::CodecTypeName(codec);
+	return name != nullptr ? name : "other";
 }
 
 // Bounds on how long a thread of ours may wait for the Bluetooth transport. The

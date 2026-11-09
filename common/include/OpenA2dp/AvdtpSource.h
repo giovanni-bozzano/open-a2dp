@@ -36,6 +36,31 @@ enum class SessionState : uint8_t {
 	Failed,
 };
 
+// The state name in logs and in the tools' report. nullptr for a value outside the enum, so
+// each caller keeps its own word for that. Full switch on purpose: a state added to the
+// enum without a name here does not compile, and the tools no longer index a string array
+// whose order has to match the enum.
+constexpr const char* SessionStateName(SessionState state) noexcept
+{
+	switch (state)
+	{
+	case SessionState::Idle: return "Idle";
+	case SessionState::Discovering: return "Discovering";
+	case SessionState::GettingCapabilities: return "GettingCapabilities";
+	case SessionState::Configuring: return "Configuring";
+	case SessionState::Configured: return "Configured";
+	case SessionState::Opening: return "Opening";
+	case SessionState::Open: return "Open";
+	case SessionState::Starting: return "Starting";
+	case SessionState::Streaming: return "Streaming";
+	case SessionState::Suspending: return "Suspending";
+	case SessionState::Closing: return "Closing";
+	case SessionState::Aborting: return "Aborting";
+	case SessionState::Failed: return "Failed";
+	}
+	return nullptr;
+}
+
 enum class DiscoveryFailure : uint8_t {
 	None,
 	Rejected,

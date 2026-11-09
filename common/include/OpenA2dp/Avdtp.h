@@ -64,6 +64,19 @@ enum class CodecType : uint8_t {
 	Vendor = 0xFF,
 };
 
+// The codec name in logs and in the tools' report. nullptr for the codecs this stack never
+// negotiates (the tools print "none", the driver "other"); SBC and AAC are the only two it
+// advertises, so the table stays at that.
+constexpr const char* CodecTypeName(CodecType codec) noexcept
+{
+	switch (codec)
+	{
+	case CodecType::Sbc: return "SBC";
+	case CodecType::Aac: return "AAC";
+	default: return nullptr;
+	}
+}
+
 enum class SepType : uint8_t {
 	Source = 0,
 	Sink = 1,
