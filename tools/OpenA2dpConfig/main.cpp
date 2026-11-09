@@ -17,7 +17,8 @@
 
 #include <commctrl.h>
 
-// The list view needs the version 6 common controls, or it draws with the classic theme.
+// The standard controls need the version 6 common controls, or they draw with the classic
+// theme. The status panel paints itself and does not depend on it.
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include <cfgmgr32.h>
@@ -41,10 +42,9 @@ enum ControlId : int {
 	kDetailsCheck,
 	kStatusList,
 	kCodecCombo,
-	kFormatRateCombo,
-	kFormatChannelsCombo,
+	kFormatCombo,
 	kBitrateCombo,
-	kBitpoolEdit,
+	kBitpoolCombo,
 	kBlocksCombo,
 	kSubbandsCombo,
 	kAllocationCombo,
@@ -56,6 +56,13 @@ constexpr int kStatusTimerId = 1;
 constexpr int kStatusRefreshMs = 1000;
 // Posted from the interface notification thread; the list is re-enumerated on the UI thread.
 constexpr UINT kDeviceChangeMessage = WM_APP + 1;
+
+// The endpoint format combo carries the whole format in its item data: 0 is automatic,
+// otherwise rate * 10 + channels (480001 = 48000 Hz mono). One selection, one setting.
+constexpr uint32_t FormatComboValue(uint32_t sampleRate, uint32_t channels)
+{
+	return sampleRate == 0 ? 0u : sampleRate * 10 + channels;
+}
 
 // Codec combo indices; stored in the item data so the order in the list can change.
 constexpr int kCodecAuto = 0;
@@ -354,6 +361,28 @@ void SelectComboValue(HWND hwnd, int id, uint32_t value)
 	SendMessageW(combo, CB_SETCURSEL, 0, 0);
 }
 
+// Selects a stored value that the list may not offer (a bitpool this tool does not list), so
+// reading a setting back never silently replaces it with the first item.
+void SelectComboValueOrAdd(HWND hwnd, int id, uint32_t value)
+{
+	const HWND combo = GetDlgItem(hwnd, id);
+	if (combo == nullptr)
+	{
+		return;
+	}
+	const LRESULT count = SendMessageW(combo, CB_GETCOUNT, 0, 0);
+	for (LRESULT i = 0; i < count; ++i)
+	{
+		if (SendMessageW(combo, CB_GETITEMDATA, static_cast<WPARAM>(i), 0) == static_cast<LRESULT>(value))
+		{
+			SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(i), 0);
+			return;
+		}
+	}
+	AddComboItem(hwnd, id, Format(L"%u", value).c_str(), value);
+	SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(count), 0);
+}
+
 // Creates every control once; the layout is fixed, so the window is not resizable.
 void CreateControls(HWND hwnd)
 {
@@ -382,8 +411,8 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 358, 196, 220,
 				kBitrateCombo, font);
 	CreateChild(hwnd, L"STATIC", L"SBC bitpool", SS_LEFT, 24, 394, 84, 20, 0, font);
-	CreateChild(hwnd, L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_RIGHT, 112, 392, 80, 22,
-				kBitpoolEdit, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 390, 190, 240,
+				kBitpoolCombo, font);
 	CreateChild(hwnd, L"STATIC", L"SBC blocks", SS_LEFT, 320, 394, 92, 20, 0, font);
 	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 390, 196, 160,
 				kBlocksCombo, font);
@@ -398,11 +427,8 @@ void CreateControls(HWND hwnd)
 
 	CreateChild(hwnd, L"BUTTON", L"Endpoint format", BS_GROUPBOX, 12, 492, 616, 76, 0, font);
 	CreateChild(hwnd, L"STATIC", L"PCM format", SS_LEFT, 24, 514, 84, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 510, 190, 160,
-				kFormatRateCombo, font);
-	CreateChild(hwnd, L"STATIC", L"Channels", SS_LEFT, 320, 514, 92, 20, 0, font);
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 420, 510, 196, 160,
-				kFormatChannelsCombo, font);
+	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 112, 510, 300, 200,
+				kFormatCombo, font);
 	CreateChild(hwnd, L"STATIC",
 			L"Windows plays the first format the endpoint lists and ignores the Sound-settings pick, so a pinned "
 			L"format is offered alone.",
@@ -411,13 +437,11 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"BUTTON", L"Apply", BS_PUSHBUTTON | WS_TABSTOP, 496, 576, 132, 28, kApplyButton, font);
 	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 12, 582, 476, 20, kMessageLabel, font);
 
-	AddComboItem(hwnd, kFormatRateCombo, L"Automatic (every supported format)", 0);
-	AddComboItem(hwnd, kFormatRateCombo, L"44100 Hz", 44100);
-	AddComboItem(hwnd, kFormatRateCombo, L"48000 Hz", 48000);
-
-	AddComboItem(hwnd, kFormatChannelsCombo, L"Automatic", 0);
-	AddComboItem(hwnd, kFormatChannelsCombo, L"Mono (1 ch)", 1);
-	AddComboItem(hwnd, kFormatChannelsCombo, L"Stereo (2 ch)", 2);
+	AddComboItem(hwnd, kFormatCombo, L"Automatic (every sink format)", 0);
+	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, stereo", FormatComboValue(44100, 2));
+	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, mono", FormatComboValue(44100, 1));
+	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, stereo", FormatComboValue(48000, 2));
+	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, mono", FormatComboValue(48000, 1));
 
 	AddComboItem(hwnd, kCodecCombo, L"Automatic (AAC, then SBC)", kCodecAuto);
 	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);
@@ -430,6 +454,15 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kBitrateCombo, L"192 kbps", 192000);
 	AddComboItem(hwnd, kBitrateCombo, L"256 kbps", 256000);
 	AddComboItem(hwnd, kBitrateCombo, L"320 kbps", 320000);
+
+	// A ladder of the values a sink is normally driven at; the sink clamps it to its own
+	// range, and a stored value outside the ladder is added when the preference is loaded.
+	AddComboItem(hwnd, kBitpoolCombo, L"Automatic (sink's choice)", 0);
+	for (const uint32_t bitpool : {2u, 8u, 16u, 24u, 32u, 35u, 40u, 45u, 50u, 53u, 60u, 70u, 80u, 100u, 120u,
+						  150u, 200u, 250u})
+	{
+		AddComboItem(hwnd, kBitpoolCombo, Format(L"%u", bitpool).c_str(), bitpool);
+	}
 
 	AddComboItem(hwnd, kBlocksCombo, L"Default (16)", 0);
 	AddComboItem(hwnd, kBlocksCombo, L"4 blocks", 4);
@@ -445,8 +478,8 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kAllocationCombo, L"Loudness", Ioctl::kSbcAllocationLoudness);
 	AddComboItem(hwnd, kAllocationCombo, L"SNR", Ioctl::kSbcAllocationSnr);
 
-	for (const int id : {kCodecCombo, kFormatRateCombo, kFormatChannelsCombo, kBitrateCombo, kBlocksCombo,
-						 kSubbandsCombo, kAllocationCombo})
+	for (const int id : {kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo, kSubbandsCombo,
+						 kAllocationCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -470,10 +503,9 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	SelectComboValue(hwnd, kBlocksCombo, preference.sbcBlocks);
 	SelectComboValue(hwnd, kSubbandsCombo, preference.sbcSubbands);
 	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
-	const std::wstring bitpool = preference.sbcBitpool != 0 ? Format(L"%u", preference.sbcBitpool) : L"";
-	SetWindowTextW(GetDlgItem(hwnd, kBitpoolEdit), bitpool.c_str());
-	SelectComboValue(hwnd, kFormatRateCombo, state->endpointFormat.sampleRate);
-	SelectComboValue(hwnd, kFormatChannelsCombo, state->endpointFormat.channels);
+	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
+	SelectComboValue(hwnd, kFormatCombo,
+					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
 }
 
 void CloseControl(SinkState& state)
@@ -689,33 +721,6 @@ HCMNOTIFICATION RegisterInterfaceNotifications(HWND hwnd)
 	return notify;
 }
 
-// Reads the bitpool box; an empty box means "driver default".
-bool ReadBitpool(HWND hwnd, uint32_t& value, std::wstring& error)
-{
-	wchar_t text[16] = {};
-	GetWindowTextW(GetDlgItem(hwnd, kBitpoolEdit), text, ARRAYSIZE(text));
-	std::wstring trimmed(text);
-	while (!trimmed.empty() && (trimmed.front() == L' ' || trimmed.front() == L'\t'))
-	{
-		trimmed.erase(0, 1);
-	}
-	if (trimmed.empty())
-	{
-		value = 0;
-		return true;
-	}
-	wchar_t* end = nullptr;
-	const unsigned long parsed = std::wcstoul(trimmed.c_str(), &end, 10);
-	if (end == nullptr || *end != L'\0' || parsed < Ioctl::kSbcMinBitpool || parsed > Ioctl::kSbcMaxBitpool)
-	{
-		error = Format(L"The SBC bitpool is %u..%u, or empty for the driver default.", Ioctl::kSbcMinBitpool,
-					   Ioctl::kSbcMaxBitpool);
-		return false;
-	}
-	value = static_cast<uint32_t>(parsed);
-	return true;
-}
-
 // Stores the settings the controls show. The driver applies them itself: a running stream
 // renegotiates in place, and a codec change reconfigures the session.
 void ApplySettings(HWND hwnd)
@@ -727,36 +732,25 @@ void ApplySettings(HWND hwnd)
 		return;
 	}
 
-	uint32_t bitpool = 0;
-	std::wstring error;
-	if (!ReadBitpool(hwnd, bitpool, error))
-	{
-		SetMessage(hwnd, error);
-		return;
-	}
-
 	// Start from the stored preference so a field the window does not expose is kept.
 	Ioctl::Preference preference = state->preference;
 	const uint32_t codec = ComboValue(hwnd, kCodecCombo);
 	preference.flags = codec == kCodecAuto ? 0 : Ioctl::kPreferenceForceCodec;
 	preference.codec = codec == kCodecAacChoice ? Ioctl::kCodecAac : (codec == kCodecSbcChoice ? Ioctl::kCodecSbc : 0);
 	preference.aacBitrate = ComboValue(hwnd, kBitrateCombo);
-	preference.sbcBitpool = bitpool;
+	preference.sbcBitpool = ComboValue(hwnd, kBitpoolCombo);
 	preference.sbcBlocks = ComboValue(hwnd, kBlocksCombo);
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
 
-	// The endpoint format is its own setting: a rate without a channel count is not a format.
+	// The endpoint format is its own setting; the combo carries the whole format.
+	const uint32_t formatValue = ComboValue(hwnd, kFormatCombo);
 	Ioctl::EndpointFormat endpointFormat = {};
-	endpointFormat.sampleRate = ComboValue(hwnd, kFormatRateCombo);
-	endpointFormat.channels = ComboValue(hwnd, kFormatChannelsCombo);
-	if (endpointFormat.sampleRate == 0)
-	{
-		endpointFormat.channels = 0;
-	}
+	endpointFormat.sampleRate = formatValue / 10;
+	endpointFormat.channels = formatValue % 10;
 	if (!Ioctl::ValidEndpointFormat(endpointFormat))
 	{
-		SetMessage(hwnd, L"Choose a channel count with the pinned sample rate.");
+		SetMessage(hwnd, L"Choose a format from the list.");
 		return;
 	}
 
@@ -870,15 +864,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		return 0;
 	case WM_CTLCOLORSTATIC:
 		return OnColorStatic(wParam, lParam);
-	case WM_NOTIFY:
-	{
-		LRESULT result = 0;
-		if (OnStatusViewNotify(hwnd, kStatusList, lParam, result))
-		{
-			return result;
-		}
-		break;
-	}
 	case WM_CLOSE:
 		DestroyWindow(hwnd);
 		return 0;
@@ -976,7 +961,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE previous, _In_ P
 {
 	UNREFERENCED_PARAMETER(previous);
 	UNREFERENCED_PARAMETER(commandLine);
-	INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_LISTVIEW_CLASSES};
+	INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_STANDARD_CLASSES};
 	InitCommonControlsEx(&controls);
 	return OpenA2dp::ConfigUi::Run(instance, show);
 }

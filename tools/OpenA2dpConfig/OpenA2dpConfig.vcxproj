@@ -14,7 +14,7 @@
 	<Link>
 	  <SubSystem>Windows</SubSystem>
 	  <!-- CM_Register_Notification: the control-device arrivals the window follows. -->
-	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;uxtheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	  <!-- The control device is limited to Administrators, so ask for that up front. -->
 	  <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
 	</Link>
