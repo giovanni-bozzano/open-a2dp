@@ -146,11 +146,9 @@ NTSTATUS RebuildListing(_In_ DEVICE_CONTEXT* ctx, ULONG desired, ULONG startInde
 }
 
 // Makes the format object the default of both mode lists. The engine builds its next stream
-// from that default and ACX answers its own format queries from it, so the format the engine
-// actually plays, or the one Windows proposes for the pin, has to be the default; the first
-// listed format is only the default until one has been adopted. lead moves the format to the
-// front of the lists, which is what decides the Windows stream.
-void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* source, bool lead = false)
+// from that default and ACX answers its own format queries from it. List order, not this
+// default, decides the Windows stream (see AudioApplyEndpointFormats).
+void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* source)
 {
 	const ACXDATAFORMATLIST list =
 		ctx->StreamingPin != nullptr ? AcxPinGetRawDataFormatList(ctx->StreamingPin) : nullptr;
@@ -180,20 +178,6 @@ void AdoptFormatIndex(_In_ DEVICE_CONTEXT* ctx, ULONG index, _In_z_ const char* 
 				status = AcxDataFormatListAssignDefaultDataFormat(defaultList, ctx->FormatObjects[index]);
 			}
 			adopted = NT_SUCCESS(status);
-		}
-	}
-	if (NT_SUCCESS(status) && lead && ctx->FirstListedIndex != index &&
-		(ctx->FormatsListed & (1u << index)) != 0)
-	{
-		status = RebuildListing(ctx, ctx->FormatsListed, index);
-		if (NT_SUCCESS(status))
-		{
-			ctx->FirstListedIndex = index;
-		}
-		else
-		{
-			OA2DP_WARN(ctx, "Audio", "moving %s to the front of the format list failed 0x%08X", source,
-				status);
 		}
 	}
 	WdfWaitLockRelease(ctx->FormatLock);
@@ -315,30 +299,21 @@ void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFR
 			// the driver. Adopting it keeps the engine's next stream and the codec on it.
 			PVOID buffer = nullptr;
 			size_t bytes = 0;
-			const bool fromRequest = NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, 0, &buffer, &bytes));
-			if (!fromRequest)
+			if (!NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, 0, &buffer, &bytes)))
 			{
 				buffer = property.Value;
 				bytes = property.ValueCb;
 			}
-			const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes));
-			if (wave != nullptr)
+			// Windows sweeps every rate it knows through this property while it validates the
+			// endpoint, so only the four formats this driver lists count as a proposal; anything
+			// else is ignored and never touches the default or the encoder.
+			if (const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes)); wave != nullptr)
 			{
-				// The proposal is the selection: adopt it, put it in front of the lists so the next
-				// Windows stream uses it, and keep it for the next device instance.
-				AdoptFormatIndex(ctx,
-					RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels), "the proposed format", true);
-				ConfigSaveEndpointFormat(ctx, wave->nSamplesPerSec, wave->nChannels);
-			}
-			else if (buffer != nullptr && bytes >= sizeof(ULONG) * 4)
-			{
-				// The proposal shape is not one this driver recognises; keep its words so it can be
-				// decoded rather than guessed. Rare enough to log every time.
-				const auto* words = static_cast<const ULONG*>(buffer);
-				OA2DP_INFO(ctx, "Audio",
-					"proposed format from %s, %u B: %08X %08X %08X %08X %08X %08X %08X %08X",
-					fromRequest ? "the request" : "the value", static_cast<unsigned>(bytes), words[0],
-					words[1], words[2], words[3], words[4], words[5], words[6], words[7]);
+				const ULONG index = RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels);
+				if (index < AudioRenderFormatCount)
+				{
+					AdoptFormatIndex(ctx, index, "the proposed format");
+				}
 			}
 		}
 	}

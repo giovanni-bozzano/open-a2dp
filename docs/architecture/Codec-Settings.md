@@ -39,17 +39,23 @@ default.
 
 The assigned default does not reach the engine: hardware showed the stored selection listed
 fourth while Windows opened the first listed format for the shared-mode stream, and moving
-only the default changed nothing. The selection therefore leads both lists - `RebuildListing`
-removes and re-adds the objects so it is the first entry - and the format Windows proposes
-is kept as `EndpointSampleRate`/`EndpointChannels` under the sink's configuration key, so a
-new device instance lists it first before Windows opens anything. The stored value mirrors
-Windows' choice; it is not a driver preference and never narrows the list.
+only the default changed nothing. The format of the last stream that actually ran therefore
+leads both lists - `RebuildListing` removes and re-adds the objects so it is the first entry -
+and it is kept as `EndpointSampleRate`/`EndpointChannels` under the sink's configuration key,
+so a new device instance lists it first before Windows opens anything. The stored value
+mirrors what played; it is not a driver preference and never narrows the list.
+
+The `PROPOSEDATAFORMAT` SET cannot decide this: Windows sweeps every rate and channel count
+it knows through it while validating the endpoint (8000 Hz to 192000 Hz, 1 to 8 channels),
+so a proposal is only adopted when it is one of the four listed formats, and it never changes
+the list order or the stored value - otherwise the sweep stores a rate the sink cannot use
+and the resulting list churn makes Windows sweep again.
 
 Windows does not ask this pin for `KSPROPERTY_PIN_PROPOSEDATAFORMAT2`; a device-start log
 shows only the enumeration queries, then `MODEDATAFORMATS` as a size probe. It sends the
 selection as the legacy `KSPROPERTY_PIN_PROPOSEDATAFORMAT` **SET** when the link comes up,
-which is what the driver adopts, lists first and stores. The same property also arrives as
-a 64-byte bare `KSDATAFORMAT` (`KSDATAFORMAT_TYPE_AUDIO`, no `WAVEFORMATEX`): that is
+which only moves the default between listed formats. The same property also arrives as a
+64-byte bare `KSDATAFORMAT` (`KSDATAFORMAT_TYPE_AUDIO`, no `WAVEFORMATEX`): that is
 "audio, unspecified" and carries no selection. The property requests are logged once per
 device start, not per request, and the stream processing mode is logged once per stream.
 `EvtAcxPinSetDataFormat` is not a Sound-settings callback:

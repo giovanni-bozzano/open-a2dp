@@ -110,10 +110,13 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioStartQpc = QpcNow(nullptr);
 	ctx->AudioRunning = TRUE;
 	ctx->AudioDroppedBytes = 0;
+	const ULONG rate = ctx->PinSampleRate;
+	const USHORT channels = ctx->PinChannels;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	WdfTimerStart(ctx->AudioTimer, 0);
 	OA2DP_INFO(ctx, "Audio", "stream run");
+	ConfigSaveEndpointFormat(ctx, rate, channels);
 	SignalingOnAudioRun(ctx);
 	return STATUS_SUCCESS;
 }
