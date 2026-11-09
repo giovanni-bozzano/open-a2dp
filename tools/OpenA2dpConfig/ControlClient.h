@@ -3,6 +3,8 @@
 // text that already names what the user can do about them.
 #pragma once
 
+#include "common/ControlDevice.h"
+
 #include <OpenA2dp/Ioctl.h>
 
 #include <windows.h>
@@ -12,15 +14,11 @@
 
 namespace OpenA2dp::ConfigUi {
 
-struct Device
-{
-	std::wstring path;
-	std::string reference; // 12 hex digits, the driver's symbolic link suffix
-};
-
-// Every sink the driver owns has a control device named after its address.
-std::vector<Device> EnumerateDevices(std::string& error);
-std::string FormatAddress(const std::string& reference);
+// Every sink the driver owns has a control device named after its address; finding them and
+// naming them is shared with the CLI, the IOCTL wrappers below are the window's own.
+using Tools::Device;
+using Tools::EnumerateDevices;
+using Tools::FormatAddress;
 
 HANDLE OpenControl(const Device& device, std::string& error);
 bool ReadVersion(HANDLE handle, Ioctl::VersionInfo& version, std::string& error);

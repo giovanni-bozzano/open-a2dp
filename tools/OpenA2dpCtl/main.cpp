@@ -8,7 +8,9 @@
 
 #include <OpenA2dp/Ioctl.h>
 
+#include "common/ControlDevice.h"
 #include "common/StatusReport.h"
+#include "common/Text.h"
 
 #include <windows.h>
 
@@ -82,50 +84,6 @@ The tool must run elevated: the control device only allows SYSTEM and
 Administrators.
 )";
 
-struct Device
-{
-	std::wstring path;
-	std::string reference; // 12 hex digits (the driver's symbolic link suffix)
-};
-
-std::string Narrow(const wchar_t* text)
-{
-	if (text == nullptr)
-	{
-		return {};
-	}
-	const int length = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
-	if (length <= 1)
-	{
-		return {};
-	}
-	std::vector<char> buffer(static_cast<size_t>(length));
-	WideCharToMultiByte(CP_UTF8, 0, text, -1, buffer.data(), length, nullptr, nullptr);
-	return std::string(buffer.data(), static_cast<size_t>(length - 1));
-}
-
-std::string Win32Error(const char* what, DWORD code)
-{
-	char* text = nullptr;
-	const DWORD length = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-											FORMAT_MESSAGE_IGNORE_INSERTS,
-										nullptr, code, 0, reinterpret_cast<LPSTR>(&text), 0, nullptr);
-	std::string message;
-	if (length != 0 && text != nullptr)
-	{
-		message.assign(text, length);
-		while (!message.empty() && (message.back() == '\r' || message.back() == '\n'))
-		{
-			message.pop_back();
-		}
-	}
-	LocalFree(text);
-
-	char suffix[32];
-	std::snprintf(suffix, sizeof(suffix), " (0x%08lX)", static_cast<unsigned long>(code));
-	return std::string(what) + ": " + (message.empty() ? "error" : message) + suffix;
-}
-
 bool IsDecimal(const std::string& text)
 {
 	if (text.empty())
@@ -140,118 +98,6 @@ bool IsDecimal(const std::string& text)
 		}
 	}
 	return true;
-}
-
-bool IsHex12(const std::string& text)
-{
-	if (text.size() != 12)
-	{
-		return false;
-	}
-	for (const char c : text)
-	{
-		const bool digit = c >= '0' && c <= '9';
-		const bool lower = c >= 'a' && c <= 'f';
-		const bool upper = c >= 'A' && c <= 'F';
-		if (!digit && !lower && !upper)
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
-char LowerAscii(char c)
-{
-	return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-}
-
-std::string Lower(const std::string& text)
-{
-	std::string result = text;
-	for (char& c : result)
-	{
-		c = LowerAscii(c);
-	}
-	return result;
-}
-
-std::string Upper(const std::string& text)
-{
-	std::string result = text;
-	for (char& c : result)
-	{
-		c = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
-	}
-	return result;
-}
-
-// The driver creates \DosDevices\OpenA2dpCtl-<address> for every sink, so the
-// MS-DOS device list is enough to find all control devices.
-std::vector<Device> EnumerateDevices(std::string& error)
-{
-	std::vector<Device> devices;
-	const std::wstring prefix = Ioctl::kControlLinkPrefix;
-	DWORD size = 64 * 1024;
-	std::vector<wchar_t> buffer;
-	for (int attempt = 0; attempt < 4; ++attempt)
-	{
-		buffer.assign(size, L'\0');
-		if (QueryDosDeviceW(nullptr, buffer.data(), size) == 0)
-		{
-			const DWORD code = GetLastError();
-			if (code != ERROR_INSUFFICIENT_BUFFER)
-			{
-				error = Win32Error("QueryDosDevice", code);
-				return devices;
-			}
-			size *= 2;
-			continue;
-		}
-
-		for (const wchar_t* name = buffer.data(); *name != L'\0'; name += std::wcslen(name) + 1)
-		{
-			const std::wstring link(name);
-			if (link.size() != prefix.size() + Ioctl::kControlAddressChars ||
-				link.compare(0, prefix.size(), prefix) != 0)
-			{
-				continue;
-			}
-			const std::string reference = Upper(Narrow(link.c_str() + prefix.size()));
-			if (!IsHex12(reference))
-			{
-				continue;
-			}
-			Device device;
-			device.reference = reference;
-			device.path = L"\\\\.\\" + link;
-			devices.push_back(std::move(device));
-		}
-
-		std::sort(devices.begin(), devices.end(),
-				  [](const Device& a, const Device& b) { return a.reference < b.reference; });
-		return devices;
-	}
-	error = "the MS-DOS device name list is too large";
-	return devices;
-}
-
-std::string FormatAddress(const std::string& reference)
-{
-	if (!IsHex12(reference))
-	{
-		return reference.empty() ? "unknown" : reference;
-	}
-	std::string result;
-	for (size_t i = 0; i < reference.size(); i += 2)
-	{
-		if (i != 0)
-		{
-			result.push_back(':');
-		}
-		result.append(reference, i, 2);
-	}
-	return result;
 }
 
 std::string DeviceLabel(const Device& device)
@@ -561,7 +407,7 @@ int CommandList(const std::vector<Device>& devices)
 			{
 				if (status.sinkName[0] != L'\0')
 				{
-					sink = Narrow(status.sinkName) + " (" + sink + ")";
+					sink = Utf8(status.sinkName) + " (" + sink + ")";
 				}
 				state = AvdtpStateName(status.avdtpState);
 				if (status.mediaState == Ioctl::MediaState::Streaming && status.codec == 0)

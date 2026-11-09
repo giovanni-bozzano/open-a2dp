@@ -26,10 +26,14 @@
 	<ClCompile Include="StatusView.cpp" />
 	<ClCompile Include="Theme.cpp" />
 	<ClCompile Include="..\common\StatusReport.cpp" />
+	<ClCompile Include="..\common\ControlDevice.cpp" />
+	<ClCompile Include="..\common\Text.cpp" />
 	<ClInclude Include="ControlClient.h" />
 	<ClInclude Include="StatusView.h" />
 	<ClInclude Include="Theme.h" />
 	<ClInclude Include="..\common\StatusReport.h" />
+	<ClInclude Include="..\common\ControlDevice.h" />
+	<ClInclude Include="..\common\Text.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

@@ -4,6 +4,8 @@
 
 #include "common/StatusReport.h"
 
+#include "Text.h"
+
 #include <cstdarg>
 #include <cstdio>
 
@@ -74,24 +76,6 @@ void AppendCodec(std::string& text, const Ioctl::Status& status)
 	{
 		AppendLine(text, "codec", "none");
 	}
-}
-
-// The name is UTF-16 because the driver got it from the Bluetooth stack; the report is UTF-8
-// like the console it is printed in.
-std::string Utf8(const wchar_t* text)
-{
-	if (text == nullptr || text[0] == L'\0')
-	{
-		return {};
-	}
-	const int length = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
-	if (length <= 1)
-	{
-		return {};
-	}
-	std::string result(static_cast<size_t>(length - 1), '\0');
-	WideCharToMultiByte(CP_UTF8, 0, text, -1, result.data(), length, nullptr, nullptr);
-	return result;
 }
 
 // The sink's own name next to the formats it offers: the list names the sink the same way.

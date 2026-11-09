@@ -11,6 +11,7 @@
 #include "Theme.h"
 
 #include "common/StatusReport.h"
+#include "common/Text.h"
 
 #include <OpenA2dp/Ioctl.h>
 
@@ -159,38 +160,6 @@ void RefreshDeviceLabels(HWND hwnd);
 // "name (address)", which the list, the message line and the report share.
 std::wstring SinkTitle(const std::string& reference, const std::wstring& name);
 
-std::wstring Widen(const std::string& text)
-{
-	if (text.empty())
-	{
-		return {};
-	}
-	const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-	if (length <= 1)
-	{
-		return {};
-	}
-	std::vector<wchar_t> buffer(static_cast<size_t>(length));
-	MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, buffer.data(), length);
-	return std::wstring(buffer.data());
-}
-
-std::string Narrow(const std::wstring& text)
-{
-	if (text.empty())
-	{
-		return {};
-	}
-	const int length = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
-	if (length <= 1)
-	{
-		return {};
-	}
-	std::vector<char> buffer(static_cast<size_t>(length));
-	WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, buffer.data(), length, nullptr, nullptr);
-	return std::string(buffer.data());
-}
-
 std::wstring Format(const wchar_t* format, ...)
 {
 	wchar_t text[512];
@@ -210,12 +179,12 @@ std::wstring ReportText(const SinkState& state)
 		return state.message;
 	}
 	Tools::StatusReportInput input;
-	input.title = Narrow(Format(L"Sink %s", Widen(FormatAddress(state.reference)).c_str()));
+	input.title = Tools::Utf8(Format(L"Sink %s", Tools::Widen(FormatAddress(state.reference)).c_str()));
 	input.status = &state.status;
 	input.preference = &state.preference;
 	input.version = &state.version;
 	input.verbose = state.details;
-	const std::wstring report = Widen(Tools::BuildStatusReport(input));
+	const std::wstring report = Tools::Widen(Tools::BuildStatusReport(input));
 	std::wstring text;
 	text.reserve(report.size() + 32);
 	for (const wchar_t character : report)
@@ -370,11 +339,11 @@ std::wstring RowLabel(const std::string& label)
 {
 	if (label.empty() || label[0] < 'a' || label[0] > 'z')
 	{
-		return Widen(label);
+		return Tools::Widen(label);
 	}
 	std::string capital = label;
 	capital[0] = static_cast<char>(capital[0] - 'a' + 'A');
-	return Widen(capital);
+	return Tools::Widen(capital);
 }
 
 std::vector<StatusRow> BuildStatusRows(const SinkState& state)
@@ -420,7 +389,7 @@ std::vector<StatusRow> BuildStatusRows(const SinkState& state)
 				rows.push_back({true, next, std::wstring(), RowTone::Normal});
 			}
 		}
-		rows.push_back({false, RowLabel(label), Widen(value), ToneForLabel(label, value)});
+		rows.push_back({false, RowLabel(label), Tools::Widen(value), ToneForLabel(label, value)});
 	}
 	return rows;
 }
@@ -873,7 +842,7 @@ void OpenSelected(HWND hwnd)
 	const HANDLE control = OpenControl(device, error);
 	if (control == INVALID_HANDLE_VALUE)
 	{
-		state->message = Widen(error);
+		state->message = Tools::Widen(error);
 		SetMessage(hwnd, state->message);
 		RefreshStatusView(hwnd);
 		return;
@@ -885,7 +854,7 @@ void OpenSelected(HWND hwnd)
 		!ReadEndpointFormat(control, state->endpointFormat, error))
 	{
 		CloseControl(*state);
-		state->message = Widen(error);
+		state->message = Tools::Widen(error);
 		SetMessage(hwnd, state->message);
 		RefreshStatusView(hwnd);
 		return;
@@ -956,7 +925,7 @@ void RefreshStatus(HWND hwnd)
 	{
 		CloseControl(*state);
 		EnableWindow(GetDlgItem(hwnd, kApplyButton), FALSE);
-		state->message = Widen(error);
+		state->message = Tools::Widen(error);
 		SetMessage(hwnd, state->message);
 		RefreshStatusView(hwnd);
 		return;
@@ -1026,7 +995,7 @@ void RefreshDeviceLabels(HWND hwnd)
 // "name (address)", or just the address when the sink reported no name.
 std::wstring SinkTitle(const std::string& reference, const std::wstring& name)
 {
-	const std::wstring address = Widen(FormatAddress(reference));
+	const std::wstring address = Tools::Widen(FormatAddress(reference));
 	return name.empty() ? address : name + L" (" + address + L")";
 }
 
@@ -1102,7 +1071,7 @@ void ReloadDevices(HWND hwnd)
 	std::vector<Device> devices = EnumerateDevices(error);
 	if (!error.empty())
 	{
-		SetMessage(hwnd, Widen(error));
+		SetMessage(hwnd, Tools::Widen(error));
 		return;
 	}
 
@@ -1222,7 +1191,7 @@ void ApplySettings(HWND hwnd)
 	if (!WriteEndpointFormat(state->control, endpointFormat, failure) ||
 		!WritePreference(state->control, preference, failure))
 	{
-		SetMessage(hwnd, Widen(failure));
+		SetMessage(hwnd, Tools::Widen(failure));
 		return;
 	}
 
