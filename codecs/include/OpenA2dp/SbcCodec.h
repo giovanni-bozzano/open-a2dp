@@ -89,9 +89,13 @@ public:
 							 const CodecPreference& preference, A2dpCodecConfig& out) const noexcept override;
 	uint8_t ValidateConfiguration(const uint8_t* ie, size_t ieLength) const noexcept override;
 	HRESULT CreateEncoder(const A2dpCodecConfig& config, std::unique_ptr<IA2dpEncoder>& encoder) const override;
-};
-
-class SbcEncoder final : public IA2dpEncoder {
+};// The codec library's SBC encoder: the readable, floating-point form of what SbcFixed does
+// in fixed point. It allocates bits with the same shared solver, and no production path
+// selects it -- the driver encodes SBC in the kernel and the service encodes AAC only -- so
+// the tests own it: they pin the frame layout and the allocation output against it. If that
+// stops being worth it, this class and those tests go together.
+class SbcEncoder final : public IA2dpEncoder
+{
 public:
 	explicit SbcEncoder(const Sbc::FrameParams& params) noexcept;
 
