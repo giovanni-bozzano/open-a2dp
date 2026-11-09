@@ -198,6 +198,15 @@ void LogPropertyRequest(_In_ DEVICE_CONTEXT* ctx, ULONG id, ULONG verb, ULONG co
 			static_cast<unsigned>(wave->nChannels), static_cast<unsigned>(wave->wBitsPerSample));
 		return;
 	}
+	if (value != nullptr && valueCb >= sizeof(ULONG) * 8)
+	{
+		const auto* words = static_cast<const ULONG*>(value);
+		OA2DP_INFO(ctx, "Audio",
+			"pin property %u verb %u input %u B output %u B begins %08X %08X %08X %08X %08X %08X %08X %08X",
+			id, verb, controlCb, valueCb, words[0], words[1], words[2], words[3], words[4], words[5],
+			words[6], words[7]);
+		return;
+	}
 	if (value != nullptr && valueCb >= sizeof(ULONG) * 4)
 	{
 		const auto* words = static_cast<const ULONG*>(value);
@@ -230,15 +239,27 @@ void OnPropertyRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFR
 			// the driver. Adopting it keeps the engine's next stream and the codec on it.
 			PVOID buffer = nullptr;
 			size_t bytes = 0;
-			if (!NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, 0, &buffer, &bytes)))
+			const bool fromRequest = NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, 0, &buffer, &bytes));
+			if (!fromRequest)
 			{
 				buffer = property.Value;
 				bytes = property.ValueCb;
 			}
-			if (const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes)); wave != nullptr)
+			const auto* wave = FindWaveFormat(buffer, static_cast<ULONG>(bytes));
+			if (wave != nullptr)
 			{
 				AdoptFormatIndex(ctx,
 					RenderFormatIndex(wave->nSamplesPerSec, wave->nChannels), "the proposed format");
+			}
+			else if (buffer != nullptr && bytes >= sizeof(ULONG) * 4)
+			{
+				// The proposal shape is not one this driver recognises; keep its words so it can be
+				// decoded rather than guessed. Rare enough to log every time.
+				const auto* words = static_cast<const ULONG*>(buffer);
+				OA2DP_INFO(ctx, "Audio",
+					"proposed format from %s, %u B: %08X %08X %08X %08X %08X %08X %08X %08X",
+					fromRequest ? "the request" : "the value", static_cast<unsigned>(bytes), words[0],
+					words[1], words[2], words[3], words[4], words[5], words[6], words[7]);
 			}
 		}
 	}
