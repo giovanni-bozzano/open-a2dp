@@ -129,7 +129,71 @@ void AdoptStreamFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 		OA2DP_WARN(ctx, "Audio", "adopting the stream format as the endpoint default failed 0x%08X", status);
 	}
 }
+
+// Index of the format the engine opened last, which is the adopted default once a stream has
+// run; before that it is the endpoint default the pin was created with.
+ULONG StreamFormatIndex(_In_ DEVICE_CONTEXT* ctx)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const ULONG rate = ctx->PinSampleRate;
+	const USHORT channels = ctx->PinChannels;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
+	{
+		if (rate == AudioRenderRates[i / AudioRenderChannelCount] &&
+			channels == AudioRenderChannels[i % AudioRenderChannelCount])
+		{
+			return i;
+		}
+	}
+	return AudioRenderFormatCount;
+}
 } // namespace
+
+void OnPinFormatRequest(_In_ ACXOBJECT object, _In_ ACXCONTEXT context, _In_ WDFREQUEST request)
+{
+	auto* ctx = static_cast<DEVICE_CONTEXT*>(context);
+	ACX_REQUEST_PARAMETERS parameters;
+	ACX_REQUEST_PARAMETERS_INIT(&parameters);
+	AcxRequestGetParameters(request, &parameters);
+	const auto& property = parameters.Parameters.Property;
+	if (parameters.Type == AcxRequestTypeProperty && IsEqualGUID(property.Set, KSPROPSETID_Pin) &&
+		property.Id == KSPROPERTY_PIN_PROPOSEDATAFORMAT2 && property.Verb == KSPROPERTY_TYPE_GET)
+	{
+		// ACX answers this from the default it captured when the pin was created, and Windows
+		// then uses that format for every stream in the mode, ahead of the Sound-settings
+		// selection. Answering with the format the engine opened last keeps the selection.
+		const ULONG index = StreamFormatIndex(ctx);
+		const auto* ks = index < AudioRenderFormatCount
+			? static_cast<const KSDATAFORMAT*>(AcxDataFormatGetKsDataFormat(ctx->FormatObjects[index])) : nullptr;
+		NTSTATUS status = STATUS_NOT_SUPPORTED;
+		if (ks != nullptr && property.Value != nullptr && property.ValueCb >= ks->FormatSize)
+		{
+			RtlCopyMemory(property.Value, ks, ks->FormatSize);
+			status = STATUS_SUCCESS;
+		}
+		else if (ks != nullptr)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+		}
+		if (index < AudioRenderFormatCount && InterlockedExchange(&ctx->ProposedFormatLogged, 1) == 0)
+		{
+			// One line per device start, not one per query.
+			OA2DP_INFO(ctx, "Audio", "preferred mode format answered with %u Hz %u ch (value %u B, status 0x%08X)",
+				AudioRenderRates[index / AudioRenderChannelCount],
+				static_cast<unsigned>(AudioRenderChannels[index % AudioRenderChannelCount]),
+				property.ValueCb, status);
+		}
+		WdfRequestComplete(request, status);
+		return;
+	}
+	const NTSTATUS status = AcxCircuitDispatchAcxRequest(static_cast<ACXCIRCUIT>(object), request);
+	if (!NT_SUCCESS(status))
+	{
+		WdfRequestComplete(request, status);
+	}
+}
 
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {

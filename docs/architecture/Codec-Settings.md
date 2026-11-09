@@ -33,10 +33,10 @@ list the same formats with the same default. Unchanged lists cause no notificati
 repeated log.
 The first available format in this order is only the starting default: 44100 stereo,
 44100 mono, 48000 stereo, 48000 mono. A still-listed default survives discovery, and the
-default follows the format of the stream the engine opened last. Hardware showed the engine
-building the next stream from this default rather than from the format Sound settings
-persisted, so a selection only sticks once the default moves with it. An active stream is
-never relabelled with the list default.
+default follows the format of the stream the engine opened last. Hardware showed Sound
+settings persisting the selection while the engine still opened the next stream at the
+first listed format, so the default alone is not what Windows reads; the preferred-mode
+query below is. An active stream is never relabelled with the list default.
 
 The Sound-settings selection reaches the driver as an explicit stream open: with 48 kHz mono
 and with 48 kHz stereo applied, the first stream matched the selection and the next engine
@@ -45,14 +45,15 @@ therefore follows the pin default, not the persisted selection. The streaming pi
 assigns a DEFAULT mode list, as Microsoft's SDCA ACX sample does; the engine opened both
 observed streams in RAW mode.
 
-`KSPROPERTY_PIN_PROPOSEDATAFORMAT2` stays ACX-managed:
+`KSPROPERTY_PIN_PROPOSEDATAFORMAT2` is answered by the driver:
 [Windows always uses a preferred processing-mode format when this property succeeds](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksproperty-pin-proposedataformat2),
-and ACX answers it from the mode's list default, so that default has to be the selection.
-Refusing the query left Windows on the pin default instead. Legacy `PROPOSEDATAFORMAT`
-requests stay ACX-managed. The queries are not logged per request; the stream processing
-mode is logged once per stream and should be `default` for shared-mode playback. The normal
-format list and initial-default queries remain ACX-managed. `EvtAcxPinSetDataFormat` is not
-a Sound-settings callback:
+and ACX answers it from a default it captured when the pin was created, which kept replacing
+the selection with the first listed format; refusing the query left Windows on the pin
+default instead. The driver answers the GET with the format the engine opened last. Legacy
+`PROPOSEDATAFORMAT` requests stay ACX-managed. The query is logged once per device start,
+not per request; the stream processing mode is logged once per stream and should be
+`default` for shared-mode playback. The normal format list and initial-default queries
+remain ACX-managed. `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
 The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
 and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not
@@ -60,9 +61,9 @@ reported as a fabricated 44100 stereo fallback.
 
 Logs distinguish `endpoint formats` (availability, 16-bit and provisional/discovered source),
 `advertised default` (initial suggestion when the lists change), `endpoint default follows
-the stream format` (the default moved to the format the engine opened), the stream
-processing mode, `stream format` (Windows' raw request), and `endpoint format ... (actual
-stream)` (encoder input). The media/AVDTP logs report the negotiated codec format, not the
+the stream format` (the default moved to the format the engine opened), `preferred mode
+format answered` (once per device start), the stream processing mode, `stream format`
+(Windows' raw request), and `endpoint format ... (actual stream)` (encoder input). The media/AVDTP logs report the negotiated codec format, not the
 Windows mix format. Previously
 the same availability line was printed at initialization and discovery even if nothing
 changed, with an extra explicit notification despite ACX already notifying; neither is
