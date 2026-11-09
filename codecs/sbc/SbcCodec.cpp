@@ -198,11 +198,11 @@ bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept
 	if (len < kIeLength) {
 		return false;
 	}
-	const uint8_t fs = ie[0] & 0xF0;
-	const uint8_t mode = ie[0] & 0x0F;
-	const uint8_t blocks = ie[1] & 0xF0;
-	const uint8_t subbands = ie[1] & 0x0C;
-	const uint8_t alloc = ie[1] & 0x03;
+	const uint8_t fs = ie[0] & kAllRates;
+	const uint8_t mode = ie[0] & kAllModes;
+	const uint8_t blocks = ie[1] & kAllBlocks;
+	const uint8_t subbands = ie[1] & kAllSubbands;
+	const uint8_t alloc = ie[1] & kAllAllocations;
 	if (!SingleBit(fs) || !SingleBit(mode) || !SingleBit(blocks) || !SingleBit(subbands) || !SingleBit(alloc)) {
 		return false;
 	}
@@ -213,7 +213,7 @@ bool ParseConfiguredIe(const uint8_t* ie, size_t len, FrameParams& out) noexcept
 					: ChannelMode::JointStereo;
 	out.blocks = blocks == kBlocks4 ? 4 : blocks == kBlocks8 ? 8 : blocks == kBlocks12 ? 12 : 16;
 	out.subbands = subbands == kSubbands4 ? 4 : 8;
-	out.allocation = alloc == kAllocSnr ? Allocation::Snr : Allocation::Loudness;
+	out.allocation = alloc == kAllocationSnr ? Allocation::Snr : Allocation::Loudness;
 	if (ie[2] < kMinBitpool || ie[3] < ie[2] || ie[3] > MaxBitpoolForMode(out.channelMode, out.subbands)) {
 		return false;
 	}
@@ -230,10 +230,10 @@ size_t SbcCodec::BuildLocalCapabilities(uint8_t* ie, size_t capacity) const noex
 	if (capacity < kIeLength) {
 		return 0;
 	}
-	ie[0] = kFs16000 | kFs32000 | kFs44100 | kFs48000 | kModeMono | kModeDual | kModeStereo | kModeJoint;
-	ie[1] = kBlocks4 | kBlocks8 | kBlocks12 | kBlocks16 | kSubbands4 | kSubbands8 | kAllocSnr | kAllocLoudness;
-	ie[2] = kMinBitpool;
-	ie[3] = kMaxBitpool;
+	// The same table the driver's selector picks from.
+	for (size_t i = 0; i < kIeLength; ++i) {
+		ie[i] = SbcConfig::kLocalCapabilities[i];
+	}
 	return kIeLength;
 }
 
@@ -263,19 +263,19 @@ uint8_t SbcCodec::ValidateConfiguration(const uint8_t* ie, size_t ieLength) cons
 	if (ieLength < kIeLength) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::BadLength);
 	}
-	if (!SingleBit(ie[0] & 0xF0)) {
+	if (!SingleBit(ie[0] & kAllRates)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency);
 	}
-	if (!SingleBit(ie[0] & 0x0F)) {
+	if (!SingleBit(ie[0] & kAllModes)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidChannelMode);
 	}
-	if (!SingleBit(ie[1] & 0x0C)) {
+	if (!SingleBit(ie[1] & kAllSubbands)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSubbands);
 	}
-	if (!SingleBit(ie[1] & 0x03)) {
+	if (!SingleBit(ie[1] & kAllAllocations)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidAllocationMethod);
 	}
-	if (!SingleBit(ie[1] & 0xF0)) {
+	if (!SingleBit(ie[1] & kAllBlocks)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::BadPayloadFormat);
 	}
 	if (ie[2] < kMinBitpool || ie[2] > kMaxBitpool) {

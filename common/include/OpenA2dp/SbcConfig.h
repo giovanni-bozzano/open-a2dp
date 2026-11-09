@@ -10,8 +10,37 @@ constexpr size_t kIeLength = 4;
 constexpr uint8_t kMinBitpool = 2;
 constexpr uint8_t kMaxBitpool = 250;
 
+// Codec IE bit masks (A2DP spec 4.3.2): byte 0 holds the sample rates and channel modes,
+// byte 1 the block counts, the subbands per frame and the allocation method. The driver's
+// selector and the SBC codec share this one table, so an advertised capability and the
+// configuration selected from it cannot drift apart.
+constexpr uint8_t kFs16000 = 0x80;
+constexpr uint8_t kFs32000 = 0x40;
+constexpr uint8_t kFs44100 = 0x20;
+constexpr uint8_t kFs48000 = 0x10;
+constexpr uint8_t kModeMono = 0x08;
+constexpr uint8_t kModeDual = 0x04;
+constexpr uint8_t kModeStereo = 0x02;
+constexpr uint8_t kModeJoint = 0x01;
+constexpr uint8_t kBlocks4 = 0x80;
+constexpr uint8_t kBlocks8 = 0x40;
+constexpr uint8_t kBlocks12 = 0x20;
+constexpr uint8_t kBlocks16 = 0x10;
+constexpr uint8_t kSubbands4 = 0x08;
+constexpr uint8_t kSubbands8 = 0x04;
+constexpr uint8_t kAllocationLoudness = 0x01;
+constexpr uint8_t kAllocationSnr = 0x02;
+
+// Every bit of a field, which is what "supports everything the encoder can do" means.
+constexpr uint8_t kAllRates = kFs16000 | kFs32000 | kFs44100 | kFs48000;
+constexpr uint8_t kAllModes = kModeMono | kModeDual | kModeStereo | kModeJoint;
+constexpr uint8_t kAllBlocks = kBlocks4 | kBlocks8 | kBlocks12 | kBlocks16;
+constexpr uint8_t kAllSubbands = kSubbands4 | kSubbands8;
+constexpr uint8_t kAllAllocations = kAllocationLoudness | kAllocationSnr;
+
 // Everything the encoder supports.
-constexpr uint8_t kLocalCapabilities[kIeLength] = {0xFF, 0xFF, kMinBitpool, kMaxBitpool};
+constexpr uint8_t kLocalCapabilities[kIeLength] = {
+	kAllRates | kAllModes, kAllBlocks | kAllSubbands | kAllAllocations, kMinBitpool, kMaxBitpool};
 
 constexpr uint8_t PickFirst(uint8_t available, const uint8_t* order, size_t count) noexcept
 {
@@ -41,22 +70,27 @@ struct FramePreference {
 	uint8_t channels = 0;   // 1 or 2; 0 keeps the selector's joint-stereo-first order
 };
 
-constexpr uint8_t kAllocationLoudness = 0x01;
-constexpr uint8_t kAllocationSnr = 0x02;
-
 constexpr uint8_t BlocksBit(uint8_t blocks) noexcept
 {
-	return blocks == 4 ? 0x80 : blocks == 8 ? 0x40 : blocks == 12 ? 0x20 : blocks == 16 ? 0x10 : 0;
+	return blocks == 4 ? kBlocks4
+		: blocks == 8 ? kBlocks8
+		: blocks == 12 ? kBlocks12
+		: blocks == 16 ? kBlocks16
+		: 0;
 }
 
 constexpr uint8_t SubbandsBit(uint8_t subbands) noexcept
 {
-	return subbands == 4 ? 0x08 : subbands == 8 ? 0x04 : 0;
+	return subbands == 4 ? kSubbands4 : subbands == 8 ? kSubbands8 : 0;
 }
 
 constexpr uint8_t SampleRateBit(uint32_t rate) noexcept
 {
-	return rate == 16000 ? 0x80 : rate == 32000 ? 0x40 : rate == 44100 ? 0x20 : rate == 48000 ? 0x10 : 0;
+	return rate == 16000 ? kFs16000
+		: rate == 32000 ? kFs32000
+		: rate == 44100 ? kFs44100
+		: rate == 48000 ? kFs48000
+		: 0;
 }
 
 // The sample rates and channel modes an advertised capability byte (IE byte 0) offers, as
@@ -64,12 +98,13 @@ constexpr uint8_t SampleRateBit(uint32_t rate) noexcept
 // stereo. 0 means the sink has not been queried yet.
 constexpr uint32_t AdvertisedRates(uint8_t capabilities) noexcept
 {
-	return (capabilities & 0x20 ? 1u : 0u) | (capabilities & 0x10 ? 2u : 0u);
+	return (capabilities & kFs44100 ? 1u : 0u) | (capabilities & kFs48000 ? 2u : 0u);
 }
 
 constexpr uint32_t AdvertisedChannels(uint8_t capabilities) noexcept
 {
-	return (capabilities & 0x08 ? 1u : 0u) | (capabilities & 0x07 ? 2u : 0u);
+	return (capabilities & kModeMono ? 1u : 0u)
+			| (capabilities & (kModeDual | kModeStereo | kModeJoint) ? 2u : 0u);
 }
 
 // Whether the sink's advertised capabilities (byte 0 of its IE, 0 = unknown) cover an
@@ -96,38 +131,39 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 	if (remoteIeLength < kIeLength) {
 		return false;
 	}
-	const uint8_t fsOrder[] = {0x20, 0x10, 0x40, 0x80};
-	const uint8_t modeOrder[] = {0x01, 0x02, 0x04, 0x08};
-	const uint8_t blocksOrder[] = {0x10, 0x20, 0x40, 0x80};
-	const uint8_t subbandsOrder[] = {0x04, 0x08};
-	const uint8_t allocOrder[] = {0x01, 0x02};
+	const uint8_t fsOrder[] = {kFs44100, kFs48000, kFs32000, kFs16000};
+	const uint8_t modeOrder[] = {kModeJoint, kModeStereo, kModeDual, kModeMono};
+	const uint8_t blocksOrder[] = {kBlocks16, kBlocks12, kBlocks8, kBlocks4};
+	const uint8_t subbandsOrder[] = {kSubbands8, kSubbands4};
+	const uint8_t allocOrder[] = {kAllocationLoudness, kAllocationSnr};
 
-	const uint8_t fsAvail = remoteIe[0] & kLocalCapabilities[0] & 0xF0;
+	const uint8_t fsAvail = remoteIe[0] & kLocalCapabilities[0] & kAllRates;
 	uint8_t fs = SampleRateBit(preferredSampleRate) & fsAvail;
 	if (!fs) {
 		fs = PickFirst(fsAvail, fsOrder, 4);
 	}
 	// Prefer the mode that matches the endpoint's channel count: mono for a mono stream,
 	// joint stereo otherwise. Falls back to the sink's own capabilities.
-	const uint8_t modeAvail = remoteIe[0] & 0x0F;
+	const uint8_t modeAvail = remoteIe[0] & kAllModes;
 	uint8_t mode = 0;
-	if (frame.channels == 1 && (modeAvail & 0x08)) {
-		mode = 0x08; // mono
-	} else if (frame.channels == 2 && (modeAvail & 0x01)) {
-		mode = 0x01; // joint stereo
+	if (frame.channels == 1 && (modeAvail & kModeMono)) {
+		mode = kModeMono;
+	} else if (frame.channels == 2 && (modeAvail & kModeJoint)) {
+		mode = kModeJoint;
 	}
 	if (!mode) {
 		mode = PickFirst(modeAvail, modeOrder, 4);
 	}
-	const uint8_t blocks = PickPreferred(remoteIe[1] & 0xF0, BlocksBit(frame.blocks), blocksOrder, 4);
-	const uint8_t subbands = PickPreferred(remoteIe[1] & 0x0C, SubbandsBit(frame.subbands), subbandsOrder, 2);
-	const uint8_t alloc = PickPreferred(remoteIe[1] & 0x03, frame.allocation, allocOrder, 2);
+	const uint8_t blocks = PickPreferred(remoteIe[1] & kAllBlocks, BlocksBit(frame.blocks), blocksOrder, 4);
+	const uint8_t subbands =
+			PickPreferred(remoteIe[1] & kAllSubbands, SubbandsBit(frame.subbands), subbandsOrder, 2);
+	const uint8_t alloc = PickPreferred(remoteIe[1] & kAllAllocations, frame.allocation, allocOrder, 2);
 	if (!fs || !mode || !blocks || !subbands || !alloc) {
 		return false;
 	}
 
-	const unsigned nsb = subbands == 0x08 ? 4u : 8u;
-	const bool singleChannelLimit = mode == 0x08 || mode == 0x04;
+	const unsigned nsb = subbands == kSubbands4 ? 4u : 8u;
+	const bool singleChannelLimit = mode == kModeMono || mode == kModeDual;
 	unsigned modeLimit = (singleChannelLimit ? 16u : 32u) * nsb;
 	if (modeLimit > kMaxBitpool) {
 		modeLimit = kMaxBitpool;

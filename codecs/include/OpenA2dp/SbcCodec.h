@@ -1,32 +1,40 @@
 #pragma once
 
 #include <OpenA2dp/IA2dpCodec.h>
+#include <OpenA2dp/SbcConfig.h>
 
 namespace OpenA2dp {
 
 namespace Sbc {
 
-// Codec IE bit masks (A2DP spec 4.3.2).
-constexpr uint8_t kFs16000 = 0x80;
-constexpr uint8_t kFs32000 = 0x40;
-constexpr uint8_t kFs44100 = 0x20;
-constexpr uint8_t kFs48000 = 0x10;
-constexpr uint8_t kModeMono = 0x08;
-constexpr uint8_t kModeDual = 0x04;
-constexpr uint8_t kModeStereo = 0x02;
-constexpr uint8_t kModeJoint = 0x01;
-constexpr uint8_t kBlocks4 = 0x80;
-constexpr uint8_t kBlocks8 = 0x40;
-constexpr uint8_t kBlocks12 = 0x20;
-constexpr uint8_t kBlocks16 = 0x10;
-constexpr uint8_t kSubbands4 = 0x08;
-constexpr uint8_t kSubbands8 = 0x04;
-constexpr uint8_t kAllocSnr = 0x02;
-constexpr uint8_t kAllocLoudness = 0x01;
+// The codec IE masks and bitpool bounds live in SbcConfig, so the selector that picks a
+// configuration and the codec that encodes it read the same table.
+using SbcConfig::kFs16000;
+using SbcConfig::kFs32000;
+using SbcConfig::kFs44100;
+using SbcConfig::kFs48000;
+using SbcConfig::kModeMono;
+using SbcConfig::kModeDual;
+using SbcConfig::kModeStereo;
+using SbcConfig::kModeJoint;
+using SbcConfig::kBlocks4;
+using SbcConfig::kBlocks8;
+using SbcConfig::kBlocks12;
+using SbcConfig::kBlocks16;
+using SbcConfig::kSubbands4;
+using SbcConfig::kSubbands8;
+using SbcConfig::kAllocationLoudness;
+using SbcConfig::kAllocationSnr;
+using SbcConfig::kIeLength;
+using SbcConfig::kMinBitpool;
+using SbcConfig::kMaxBitpool;
+// The whole of each field, for parsing or writing an IE without spelling out the layout.
+using SbcConfig::kAllRates;
+using SbcConfig::kAllModes;
+using SbcConfig::kAllBlocks;
+using SbcConfig::kAllSubbands;
+using SbcConfig::kAllAllocations;
 
-constexpr size_t kIeLength = 4;
-constexpr uint8_t kMinBitpool = 2;
-constexpr uint8_t kMaxBitpool = 250;
 constexpr uint8_t kSyncWord = 0x9C;
 constexpr size_t kMaxFramesPerPacket = 15;
 

@@ -16,9 +16,11 @@ constexpr uint8_t SbcMaxBitpool = 53;
 // What the driver can actually play. The endpoint serves 16-bit PCM at 44.1 or 48 kHz,
 // mono or stereo, and MediaStart refuses any other rate or channel count, so 16/32 kHz is
 // not advertised: that would let a sink configure a stream we then cannot start.
-// Byte 0: 44.1 kHz (0x20) | 48 kHz (0x10) | dual (0x04) | stereo (0x02) | joint (0x01) | mono (0x08).
 constexpr uint8_t kSbcDriverCapabilities[SbcConfig::kIeLength] = {
-	0x3F, 0xFF, SbcConfig::kMinBitpool, SbcConfig::kMaxBitpool};
+	SbcConfig::kFs44100 | SbcConfig::kFs48000 | SbcConfig::kAllModes,
+	SbcConfig::kAllBlocks | SbcConfig::kAllSubbands | SbcConfig::kAllAllocations,
+	SbcConfig::kMinBitpool,
+	SbcConfig::kMaxBitpool};
 // Initiator media channel opens per connection before the signaling channel is torn down.
 constexpr ULONG kMediaOpenAttempts = 3;
 

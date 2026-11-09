@@ -4,6 +4,7 @@
 // Kernel-safe: no STL, no exceptions, no allocation, no floating point.
 
 #include <OpenA2dp/BitWriter.h>
+#include <OpenA2dp/SbcConfig.h>
 #include <OpenA2dp/SbcFixedTables.h>
 #include <OpenA2dp/Types.h>
 
@@ -35,30 +36,37 @@ inline int SampleRateIndex(uint32_t rate) noexcept
 
 inline bool SingleBit(uint8_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 
-// Parses a configured SBC IE (one bit per field); the max bitpool is used.
+// Parses a configured SBC IE (one bit per field); the max bitpool is used. The field masks
+// are SbcConfig's, so this reads the same table the driver's selector picks from.
 inline bool ParseIe(const uint8_t* ie, size_t len, Params& out) noexcept
 {
-	if (len < 4) {
+	if (len < SbcConfig::kIeLength) {
 		return false;
 	}
-	const uint8_t fs = ie[0] & 0xF0;
-	const uint8_t mode = ie[0] & 0x0F;
-	const uint8_t blocks = ie[1] & 0xF0;
-	const uint8_t subbands = ie[1] & 0x0C;
-	const uint8_t alloc = ie[1] & 0x03;
+	const uint8_t fs = ie[0] & SbcConfig::kAllRates;
+	const uint8_t mode = ie[0] & SbcConfig::kAllModes;
+	const uint8_t blocks = ie[1] & SbcConfig::kAllBlocks;
+	const uint8_t subbands = ie[1] & SbcConfig::kAllSubbands;
+	const uint8_t alloc = ie[1] & SbcConfig::kAllAllocations;
 	if (!SingleBit(fs) || !SingleBit(mode) || !SingleBit(blocks) || !SingleBit(subbands) || !SingleBit(alloc)) {
 		return false;
 	}
-	out.sampleRate = fs == 0x80 ? 16000 : fs == 0x40 ? 32000 : fs == 0x20 ? 44100 : 48000;
-	out.channelMode = mode == 0x08 ? ChannelMode::Mono
-					: mode == 0x04 ? ChannelMode::DualChannel
-					: mode == 0x02 ? ChannelMode::Stereo
+	out.sampleRate = fs == SbcConfig::kFs16000 ? 16000
+					: fs == SbcConfig::kFs32000 ? 32000
+					: fs == SbcConfig::kFs44100 ? 44100
+					: 48000;
+	out.channelMode = mode == SbcConfig::kModeMono ? ChannelMode::Mono
+					: mode == SbcConfig::kModeDual ? ChannelMode::DualChannel
+					: mode == SbcConfig::kModeStereo ? ChannelMode::Stereo
 					: ChannelMode::JointStereo;
-	out.blocks = blocks == 0x80 ? 4 : blocks == 0x40 ? 8 : blocks == 0x20 ? 12 : 16;
-	out.subbands = subbands == 0x08 ? 4 : 8;
-	out.allocation = alloc == 0x02 ? Allocation::Snr : Allocation::Loudness;
+	out.blocks = blocks == SbcConfig::kBlocks4 ? 4
+					: blocks == SbcConfig::kBlocks8 ? 8
+					: blocks == SbcConfig::kBlocks12 ? 12
+					: 16;
+	out.subbands = subbands == SbcConfig::kSubbands4 ? 4 : 8;
+	out.allocation = alloc == SbcConfig::kAllocationSnr ? Allocation::Snr : Allocation::Loudness;
 	out.bitpool = ie[3];
-	return out.bitpool >= 2 && out.bitpool >= ie[2];
+	return out.bitpool >= SbcConfig::kMinBitpool && out.bitpool >= ie[2];
 }
 
 inline size_t FrameLength(const Params& p) noexcept

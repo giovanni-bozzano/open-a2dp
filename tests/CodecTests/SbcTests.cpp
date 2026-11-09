@@ -176,7 +176,7 @@ TEST(Sbc_SelectConfiguration_TypicalSink)
 	A2dpCodecConfig cfg;
 	REQUIRE(codec.SelectConfiguration(remote, 4, CodecPreference{}, cfg));
 	CHECK_EQ(cfg.ie[0], uint8_t{kFs44100 | kModeJoint});
-	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks16 | kSubbands8 | kAllocLoudness});
+	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks16 | kSubbands8 | kAllocationLoudness});
 	CHECK_EQ(cfg.ie[2], uint8_t{2});
 	CHECK_EQ(cfg.ie[3], uint8_t{53});
 	CHECK_EQ(codec.ValidateConfiguration(cfg.ie, cfg.ieLength), uint8_t{0});
@@ -207,14 +207,14 @@ TEST(Sbc_AdvertisedFormatsMatchTheSelector)
 TEST(Sbc_SelectConfiguration_PreferenceAndLimits)
 {
 	SbcCodec codec;
-	const uint8_t remote[4] = {kFs48000 | kFs44100 | kModeStereo | kModeMono, kBlocks8 | kSubbands4 | kAllocSnr, 10, 35};
+	const uint8_t remote[4] = {kFs48000 | kFs44100 | kModeStereo | kModeMono, kBlocks8 | kSubbands4 | kAllocationSnr, 10, 35};
 	CodecPreference pref;
 	pref.preferredSampleRate = 48000;
 	pref.sbcMaxBitpool = 30;
 	A2dpCodecConfig cfg;
 	REQUIRE(codec.SelectConfiguration(remote, 4, pref, cfg));
 	CHECK_EQ(cfg.ie[0], uint8_t{kFs48000 | kModeStereo});
-	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks8 | kSubbands4 | kAllocSnr});
+	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks8 | kSubbands4 | kAllocationSnr});
 	CHECK_EQ(cfg.ie[2], uint8_t{10});
 	CHECK_EQ(cfg.ie[3], uint8_t{30});
 }
@@ -223,7 +223,7 @@ TEST(Sbc_SelectConfiguration_ClampsBitpoolPreference)
 {
 	SbcCodec codec;
 	// 44.1 kHz joint stereo, 16 blocks, 8 subbands, sink bitpool 11..53.
-	const uint8_t remote[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 11, 53};
+	const uint8_t remote[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocationLoudness, 11, 53};
 	A2dpCodecConfig cfg;
 
 	CodecPreference low;
@@ -246,25 +246,25 @@ TEST(Sbc_SelectConfiguration_PrefersFrameParameters)
 	SbcCodec codec;
 	const uint8_t remote[4] = {kFs44100 | kFs48000 | kModeJoint | kModeStereo,
 							 kBlocks4 | kBlocks8 | kBlocks12 | kBlocks16 | kSubbands4 | kSubbands8 |
-								 kAllocSnr | kAllocLoudness,
+								 kAllocationSnr | kAllocationLoudness,
 							 2, 53};
 	A2dpCodecConfig cfg;
 
 	CodecPreference pref;
 	pref.sbcBlocks = 8;
 	pref.sbcSubbands = 4;
-	pref.sbcAllocation = kAllocSnr;
+	pref.sbcAllocation = kAllocationSnr;
 	REQUIRE(codec.SelectConfiguration(remote, 4, pref, cfg));
-	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks8 | kSubbands4 | kAllocSnr});
+	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks8 | kSubbands4 | kAllocationSnr});
 
 	// A pinned value the sink does not offer falls back to the selector's own order.
-	const uint8_t narrow[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 53};
+	const uint8_t narrow[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocationLoudness, 2, 53};
 	CodecPreference unavailable;
 	unavailable.sbcBlocks = 4;
 	unavailable.sbcSubbands = 4;
-	unavailable.sbcAllocation = kAllocSnr;
+	unavailable.sbcAllocation = kAllocationSnr;
 	REQUIRE(codec.SelectConfiguration(narrow, 4, unavailable, cfg));
-	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks16 | kSubbands8 | kAllocLoudness});
+	CHECK_EQ(cfg.ie[1], uint8_t{kBlocks16 | kSubbands8 | kAllocationLoudness});
 }
 
 TEST(Sbc_Select_PrefersEndpointChannels)
@@ -294,7 +294,7 @@ TEST(Sbc_Select_PrefersEndpointChannels)
 TEST(Sbc_SelectedFramesFitMediaPayload)
 {
 	SbcCodec codec;
-	const uint8_t remote[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 250};
+	const uint8_t remote[4] = {kFs44100 | kModeJoint, kBlocks16 | kSubbands8 | kAllocationLoudness, 2, 250};
 	const uint8_t presets[] = {2, 35, 53, 250};
 	for (const uint8_t bitpool : presets)
 	{
@@ -316,7 +316,7 @@ TEST(Sbc_SelectedFramesFitMediaPayload)
 TEST(Sbc_SelectConfiguration_RejectsNoCommonMode)
 {
 	SbcCodec codec;
-	const uint8_t remote[4] = {kFs44100, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 53}; // no channel mode
+	const uint8_t remote[4] = {kFs44100, kBlocks16 | kSubbands8 | kAllocationLoudness, 2, 53}; // no channel mode
 	A2dpCodecConfig cfg;
 	CHECK(!codec.SelectConfiguration(remote, 4, CodecPreference{}, cfg));
 }
@@ -324,9 +324,9 @@ TEST(Sbc_SelectConfiguration_RejectsNoCommonMode)
 TEST(Sbc_ValidateConfiguration_RejectsAmbiguous)
 {
 	SbcCodec codec;
-	const uint8_t twoRates[4] = {kFs44100 | kFs48000 | kModeJoint, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 53};
+	const uint8_t twoRates[4] = {kFs44100 | kFs48000 | kModeJoint, kBlocks16 | kSubbands8 | kAllocationLoudness, 2, 53};
 	CHECK_EQ(codec.ValidateConfiguration(twoRates, 4), static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency));
-	const uint8_t badPool[4] = {kFs44100 | kModeMono, kBlocks16 | kSubbands8 | kAllocLoudness, 2, 200};
+	const uint8_t badPool[4] = {kFs44100 | kModeMono, kBlocks16 | kSubbands8 | kAllocationLoudness, 2, 200};
 	CHECK_EQ(codec.ValidateConfiguration(badPool, 4), static_cast<uint8_t>(Avdtp::ErrorCode::InvalidMaximumBitpoolValue));
 }
 
