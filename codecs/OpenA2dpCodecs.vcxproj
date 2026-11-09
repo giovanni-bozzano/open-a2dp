@@ -11,7 +11,6 @@
 	<ClInclude Include="include\OpenA2dp\SbcCodec.h" />
 	<ClInclude Include="include\OpenA2dp\AacCodec.h" />
 	<ClInclude Include="include\OpenA2dp\AacStreamEncoder.h" />
-	<ClInclude Include="sbc\SbcTables.h" />
 	<ClInclude Include="aac\LatmWriter.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\Avdtp.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\AvdtpSource.h" />
@@ -23,7 +22,7 @@
 	<ClInclude Include="..\common\include\OpenA2dp\SbcConfig.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixed.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFrame.h" />
-	<ClInclude Include="..\common\include\OpenA2dp\SbcFixedTables.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\SbcFilter.h" />
   </ItemGroup>
   <ItemGroup>
 	<ClCompile Include="CodecFactory.cpp" />

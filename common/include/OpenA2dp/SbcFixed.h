@@ -6,7 +6,7 @@
 #include <OpenA2dp/BitWriter.h>
 #include <OpenA2dp/SbcAllocation.h>
 #include <OpenA2dp/SbcConfig.h>
-#include <OpenA2dp/SbcFixedTables.h>
+#include <OpenA2dp/SbcFilter.h>
 #include <OpenA2dp/SbcFrame.h>
 #include <OpenA2dp/Types.h>
 
@@ -245,7 +245,7 @@ private:
 			in += nch;
 		}
 
-		const int32_t* c = m == 4 ? Tables::kProto4Q30 : Tables::kProto8Q30;
+		const int32_t* c = m == 4 ? SbcFilter::kProto4Q30 : SbcFilter::kProto8Q30;
 		int64_t y[16] = {};
 		for (int i = 0; i < 2 * m; ++i) {
 			int64_t sum = 0;
@@ -259,7 +259,7 @@ private:
 		for (int i = 0; i < m; ++i) {
 			int64_t sum = 0;
 			for (int k = 0; k < 2 * m; ++k) {
-				const int16_t coeff = m == 4 ? Tables::kCos4Q14[i][k] : Tables::kCos8Q14[i][k];
+				const int16_t coeff = m == 4 ? SbcFilter::kCos4Q14[i][k] : SbcFilter::kCos8Q14[i][k];
 				sum += coeff * y[k];
 			}
 			subbandSamples[i] = static_cast<int32_t>(sum >> 14);
@@ -289,7 +289,7 @@ public:
 	void Fill(int16_t* out, size_t frames, int channels) noexcept
 	{
 		for (size_t n = 0; n < frames; ++n) {
-			const int32_t s = (static_cast<int32_t>(Tables::kSine256Q15[phase_ >> 24]) * amplitude_) >> 15;
+			const int32_t s = (static_cast<int32_t>(SbcFilter::kSine256Q15[phase_ >> 24]) * amplitude_) >> 15;
 			for (int ch = 0; ch < channels; ++ch) {
 				out[n * channels + ch] = static_cast<int16_t>(s);
 			}

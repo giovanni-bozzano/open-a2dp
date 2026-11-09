@@ -1,7 +1,6 @@
 #include <OpenA2dp/SbcCodec.h>
 #include <OpenA2dp/BitWriter.h>
-
-#include "SbcTables.h"
+#include <OpenA2dp/SbcFilter.h>
 
 #include <algorithm>
 #include <cmath>
@@ -83,15 +82,18 @@ void SbcEncoder::Analyze(const int16_t* pcm, int channel, int block, double* sub
 		in += nch;
 	}
 
-	const double* c = m == 4 ? Tables::kProto4 : Tables::kProto8;
+	// The same Q30 prototypes the kernel encoder multiplies; scaled here because this
+	// filter accumulates in double.
+	const int32_t* c = m == 4 ? SbcFilter::kProto4Q30 : SbcFilter::kProto8Q30;
+	const double q30 = 1.0 / static_cast<double>(SbcFilter::kQ30One);
 	double y[16] = {};
 	for (int i = 0; i < 2 * m; ++i) {
 		double sum = 0.0;
 		for (int j = 0; j < 5; ++j) {
 			const int idx = i + j * 2 * m;
-			sum += c[idx] * x[idx];
+			sum += static_cast<double>(c[idx]) * x[idx];
 		}
-		y[i] = sum;
+		y[i] = sum * q30;
 	}
 
 	const auto& mats = GetMatrices();

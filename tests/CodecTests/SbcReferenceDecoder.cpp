@@ -1,8 +1,7 @@
 #include "SbcReferenceDecoder.h"
 
 #include <OpenA2dp/BitWriter.h>
-
-#include "sbc/SbcTables.h"
+#include <OpenA2dp/SbcFilter.h>
 
 #include <algorithm>
 #include <cmath>
@@ -99,7 +98,8 @@ bool SbcReferenceDecoder::DecodeFrame(const uint8_t* data, size_t length, std::v
 		return false;
 	}
 
-	const double* c = nsb == 4 ? Tables::kProto4 : Tables::kProto8;
+	const int32_t* c = nsb == 4 ? SbcFilter::kProto4Q30 : SbcFilter::kProto8Q30;
+	const double q30 = 1.0 / static_cast<double>(SbcFilter::kQ30One);
 	const double gain = SynthesisScale(nsb);
 	const size_t base = pcm.size();
 	pcm.resize(base + static_cast<size_t>(nblk) * nsb * nch);
@@ -119,7 +119,7 @@ bool SbcReferenceDecoder::DecodeFrame(const uint8_t* data, size_t length, std::v
 				for (int age = 0; age < 10; ++age) {
 					const int n = age * nsb + j;
 					// Plain prototype: the analysis table C carries (-1)^floor(n/2M) folding signs.
-					const double prototype = ((n / (2 * nsb)) & 1) ? -c[n] : c[n];
+					const double prototype = static_cast<double>(((n / (2 * nsb)) & 1) ? -c[n] : c[n]) * q30;
 					for (int i = 0; i < nsb; ++i) {
 						const double f = prototype * std::cos((i + 0.5) * (n + nsb / 2.0) * std::numbers::pi / nsb);
 						sum += hist[age * nsb + i] * f;

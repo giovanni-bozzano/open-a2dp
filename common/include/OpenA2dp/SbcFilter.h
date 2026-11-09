@@ -1,13 +1,20 @@
 #pragma once
 
-// Fixed-point SBC tables (A2DP spec Appendix B). Kernel-safe.
+// SBC filter tables (A2DP spec Appendix B), fixed point so the driver's encoder can use them
+// as they are. Kernel-safe: integers only, no STL, no exceptions.
+//
+// These are the only copies: the kernel multiplies them directly, and the codec library
+// scales the same Q30 prototypes to double for its floating-point analysis filter. Keeping
+// the coefficients in one place is what stops the two filters from quietly disagreeing.
 
 #include <OpenA2dp/Types.h>
 
-namespace OpenA2dp::SbcFixed::Tables {
+namespace OpenA2dp::SbcFilter {
 
-// Generated from codecs/sbc/SbcTables.h: prototypes in Q30, cosine matrices in Q14, sine in Q15.
+// 1 in Q30, so user-mode code can turn a Q30 coefficient into a double.
+constexpr int32_t kQ30One = 1 << 30;
 
+// Analysis prototype filter for 4 subbands (C[i], i = 0..39) in Q30.
 inline constexpr int32_t kProto4Q30[40] = {
 	0, 576115, 1601898, 2935298, 4120164, 4179058, 2003406, -3285782,
 	11718563, 21945682, 31005089, 34567968, 27784982, 6584670, -30947094, -83372133,
@@ -16,6 +23,7 @@ inline constexpr int32_t kProto4Q30[40] = {
 	-11718563, -3285782, 2003406, 4179058, 4120164, 2935298, 1601898, 576115,
 };
 
+// Analysis prototype filter for 8 subbands (C[i], i = 0..79) in Q30.
 inline constexpr int32_t kProto8Q30[80] = {
 	0, 168122, 368569, 595519, 884677, 1223985, 1585274, 1915252,
 	2160181, 2258852, 2141627, 1735771, 968681, -191991, -1771385, -3755063,
@@ -29,6 +37,7 @@ inline constexpr int32_t kProto8Q30[80] = {
 	2160181, 1915252, 1585274, 1223985, 884677, 595519, 368569, 168122,
 };
 
+// Analysis cosine matrices in Q14.
 inline constexpr int16_t kCos4Q14[4][8] = {
 	11585, 15137, 16384, 15137, 11585, 6270, 0, -6270,
 	-11585, 6270, 16384, 6270, -11585, -15137, 0, 15137,
@@ -47,6 +56,7 @@ inline constexpr int16_t kCos8Q14[8][16] = {
 	11585, -13623, 15137, -16069, 16384, -16069, 15137, -13623, 11585, -9102, 6270, -3196, 0, 3196, -6270, 9102,
 };
 
+// One sine period in Q15, for the test-tone generator.
 inline constexpr int16_t kSine256Q15[256] = {
 	0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
 	12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403, 22005, 22594,
@@ -67,4 +77,4 @@ inline constexpr int16_t kSine256Q15[256] = {
 };
 
 
-} // namespace OpenA2dp::SbcFixed::Tables
+} // namespace OpenA2dp::SbcFilter
