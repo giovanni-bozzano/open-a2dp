@@ -127,7 +127,7 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	}
 	else
 	{
-		AppendLine(text, "preference", "auto (aptX HD > AAC > SBC)");
+		AppendLine(text, "preference", "auto (aptX HD > aptX > AAC > SBC)");
 	}
 	if (preference.sbcBitpool != 0)
 	{
@@ -224,10 +224,15 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 // corrupt or older IOCTL reply gets the tool's own word instead of indexing off a table.
 const char* CodecName(uint32_t codec)
 {
-	// aptX HD is a vendor codec, so its preference/status value is not an AVDTP codec type.
+	// The aptX codecs are vendor codecs, so their preference/status values are not AVDTP codec
+	// types.
 	if (codec == Ioctl::kCodecAptxHd)
 	{
 		return "aptX HD";
+	}
+	if (codec == Ioctl::kCodecAptx)
+	{
+		return "aptX";
 	}
 	const char* const name = codec > 0xFF ? nullptr : Avdtp::CodecTypeName(static_cast<Avdtp::CodecType>(codec));
 	return name != nullptr ? name : "none";
@@ -292,6 +297,10 @@ std::string CodecListText(uint32_t codecs)
 	if ((codecs & Ioctl::kSinkCodecAac) != 0)
 	{
 		text += text.empty() ? "AAC" : ", AAC";
+	}
+	if ((codecs & Ioctl::kSinkCodecAptx) != 0)
+	{
+		text += text.empty() ? "aptX" : ", aptX";
 	}
 	if ((codecs & Ioctl::kSinkCodecAptxHd) != 0)
 	{

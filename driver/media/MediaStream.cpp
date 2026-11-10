@@ -46,7 +46,16 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	}
 	if (codec == Avdtp::CodecType::Vendor)
 	{
-		StartAptxHd(ctx, ie, ieLength);
+		// Every vendor codec shares this type; the IE says which one was negotiated.
+		uint8_t capabilities = 0;
+		if (AptxHd::ParseIe(ie, ieLength, capabilities))
+		{
+			StartAptxHd(ctx, ie, ieLength);
+		}
+		else
+		{
+			StartAptx(ctx, ie, ieLength);
+		}
 		return;
 	}
 

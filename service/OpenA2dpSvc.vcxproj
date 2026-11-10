@@ -8,7 +8,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\include;$(OpenA2dpRoot)codecs\aptx\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\include;$(OpenA2dpRoot)codecs\aptx\src;$(OpenA2dpRoot)codecs\aptx\classic\include;$(OpenA2dpRoot)codecs\aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
@@ -23,8 +23,10 @@
 	<ClCompile Include="..\codecs\aac\LatmWriter.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcCodec.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcEncoder.cpp" />
+	<ClCompile Include="..\codecs\aptx\AptxCodec.cpp" />
 	<ClCompile Include="..\codecs\aptx\AptxHdCodec.cpp" />
 	<ClCompile Include="..\codecs\aptx\AptxHdStreamEncoder.cpp" />
+	<ClCompile Include="..\codecs\aptx\AptxStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="..\codecs\aptx\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
@@ -38,12 +40,30 @@
 	<ClCompile Include="..\codecs\aptx\src\QuantiseDifference.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
+	<!-- Same base names as the HD drop's sources, so each needs its own object file. -->
+	<ClCompile Include="..\codecs\aptx\classic\src\aptXbtenc.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
+	<ClCompile Include="..\codecs\aptx\classic\src\ProcessSubband.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
+	<ClCompile Include="..\codecs\aptx\classic\src\QmfConv.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
+	<ClCompile Include="..\codecs\aptx\classic\src\QuantiseDifference.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
   </ItemGroup>
   <ItemGroup>
 	<ClInclude Include="..\codecs\include\OpenA2dp\IA2dpCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AacCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AacStreamEncoder.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\SbcCodec.h" />
+	<ClInclude Include="..\codecs\include\OpenA2dp\AptxCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AptxHdCodec.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

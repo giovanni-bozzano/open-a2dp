@@ -1,6 +1,7 @@
 #include "TestFramework.h"
 
 #include <OpenA2dp/AacConfig.h>
+#include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/SbcCodec.h>
@@ -1029,4 +1030,65 @@ TEST(AvdtpSource_SelectsAptxHdVendorSep)
 	CHECK(s.SelectedCodec() == CodecType::Vendor);
 	CHECK_EQ(s.SelectedIeLength(), AptxHd::kIeLength);
 	CHECK_EQ(s.LocalSeid(), uint8_t{kLocalAptxHdSeid});
+}
+
+namespace {
+
+// Scores classic aptX above SBC and writes a classic configuration.
+uint32_t AptxSelector(void*, CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
+					  uint8_t* config, size_t& configLength)
+{
+	if (codec == CodecType::Sbc) {
+		std::memcpy(config, kSbcConfig, sizeof(kSbcConfig));
+		configLength = sizeof(kSbcConfig);
+		return 1;
+	}
+	uint8_t capabilities = 0;
+	if (codec == CodecType::Vendor && Aptx::ParseIe(remoteIe, remoteIeLength, capabilities)) {
+		Aptx::WriteIe(Aptx::kSampleRate48000, config);
+		configLength = Aptx::kIeLength;
+		return 3;
+	}
+	return 0;
+}
+
+} // namespace
+
+TEST(AvdtpSource_SelectsAptxVendorSep)
+{
+	// Both aptX SEPs are advertised; the sink offers classic aptX, so its SEID must be the
+	// classic one (4), not HD's (3), even though the codec type is the same.
+	uint8_t hdIe[AptxHd::kIeLength] = {};
+	AptxHd::WriteIe(static_cast<uint8_t>(AptxHd::kSampleRate44100 | AptxHd::kSampleRate48000), hdIe);
+	uint8_t aptxIe[Aptx::kIeLength] = {};
+	Aptx::WriteIe(static_cast<uint8_t>(Aptx::kSampleRate44100 | Aptx::kSampleRate48000), aptxIe);
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), AptxSelector, nullptr);
+	s.SetLocalSep(kLocalAptxHdSeid, CodecType::Vendor, hdIe, sizeof(hdIe));
+	s.SetLocalSep(kLocalAptxSeid, CodecType::Vendor, aptxIe, sizeof(aptxIe));
+
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+
+	REQUIRE(s.Connect(cmd, kMaxSignalPacket) == 2);
+	uint8_t seps[2];
+	WriteSepInfo({5, false, MediaType::Audio, SepType::Sink}, seps);
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, seps, sizeof(seps), rsp), cmd, kMaxSignalPacket) == 3);
+
+	const CodecType codecs[2] = {CodecType::Sbc, CodecType::Vendor};
+	const uint8_t* ies[2] = {kSbcRemoteCaps, aptxIe};
+	const size_t lengths[2] = {sizeof(kSbcRemoteCaps), sizeof(aptxIe)};
+	const size_t capsLength = MultiCodecCaps(payload, codecs, ies, lengths, 2);
+
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, payload, capsLength, rsp), cmd, kMaxSignalPacket) != 0);
+	REQUIRE(Header(cmd).signal == Signal::SetConfiguration);
+	CHECK_EQ(cmd[2], uint8_t{5 << 2});
+	CHECK_EQ(cmd[3], uint8_t{kLocalAptxSeid << 2});
+	CHECK_EQ(cmd[9], uint8_t{static_cast<uint8_t>(CodecType::Vendor)});
+	CHECK_EQ(cmd[10], uint8_t{Aptx::kVendorId & 0xFF});
+	CHECK_EQ(cmd[10 + 4], uint8_t{Aptx::kCodecId & 0xFF});
+	CHECK_EQ(cmd[10 + 6], uint8_t{Aptx::kSampleRate48000 | Aptx::kChannelStereo});
+	CHECK(s.SelectedCodec() == CodecType::Vendor);
+	CHECK_EQ(s.SelectedIeLength(), Aptx::kIeLength);
+	CHECK_EQ(s.LocalSeid(), uint8_t{kLocalAptxSeid});
 }

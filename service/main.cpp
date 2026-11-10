@@ -3,8 +3,10 @@
 #include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/IA2dpCodec.h>
 #include <OpenA2dp/AacStreamEncoder.h>
+#include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AptxHdStreamEncoder.h>
+#include <OpenA2dp/AptxStreamEncoder.h>
 
 #include <windows.h>
 #include <winioctl.h>
@@ -262,12 +264,13 @@ void DeviceLoop(const std::wstring& linkName)
 	}
 
 	// AAC is the codec Windows falls back to, so failing to register it means the stream would
-	// have nothing to encode with; aptX HD is optional and only removes that codec from
+	// have nothing to encode with; the aptX codecs are optional and only remove themselves from
 	// negotiation.
 	if (!RegisterEncoder(h, Ioctl::kCodecAac, "AAC")) {
 		CloseHandle(h);
 		return;
 	}
+	(void)RegisterEncoder(h, Ioctl::kCodecAptx, "aptX");
 	(void)RegisterEncoder(h, Ioctl::kCodecAptxHd, "aptX HD");
 
 	// Map rings.
@@ -297,6 +300,7 @@ void DeviceLoop(const std::wstring& linkName)
 
 	AacStreamEncoder streamEncoder;
 	AptxHdStreamEncoder hdStreamEncoder;
+	AptxStreamEncoder aptxStreamEncoder;
 
 	// Main event loop.
 	for (;;) {
@@ -326,6 +330,7 @@ void DeviceLoop(const std::wstring& linkName)
 			// One stream runs one codec; whatever the previous start left running is stale.
 			streamEncoder.Stop();
 			hdStreamEncoder.Stop();
+			aptxStreamEncoder.Stop();
 
 			if (ev.codec == Ioctl::kCodecAptxHd) {
 				Log("[svc] aptX HD stream start: %u Hz, %u ch", ev.sampleRate, ev.channels);
@@ -358,6 +363,42 @@ void DeviceLoop(const std::wstring& linkName)
 				params.channels = static_cast<uint16_t>(ev.channels);
 				if (!hdStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
 					Log("[svc] AptxHdStreamEncoder::Start failed");
+				}
+				continue;
+			}
+
+			if (ev.codec == Ioctl::kCodecAptx) {
+				Log("[svc] aptX stream start: %u Hz, %u ch, %u-bit", ev.sampleRate, ev.channels,
+					ev.pcmValidBits);
+				if (ev.channels != 2 || ev.pcmValidBits != Aptx::kBitsPerSample) {
+					Log("[svc] aptX needs 16-bit stereo, got %u ch %u-bit", ev.channels, ev.pcmValidBits);
+					continue;
+				}
+
+				uint8_t ie[Aptx::kIeLength] = {};
+				Aptx::WriteIe(ev.sampleRate == 44100 ? Aptx::kSampleRate44100 : Aptx::kSampleRate48000, ie);
+				A2dpCodecConfig config = {};
+				config.codec = CodecType::Vendor;
+				std::memcpy(config.ie, ie, sizeof(ie));
+				config.ieLength = static_cast<uint8_t>(sizeof(ie));
+
+				auto codec = CreateVendorCodec(Aptx::kVendorId, Aptx::kCodecId);
+				if (!codec) {
+					Log("[svc] aptX codec is not available");
+					continue;
+				}
+				std::unique_ptr<IA2dpEncoder> encoder;
+				const HRESULT hr = codec->CreateEncoder(config, encoder);
+				if (FAILED(hr)) {
+					Log("[svc] aptX CreateEncoder failed: 0x%08X", (unsigned)hr);
+					continue;
+				}
+
+				AptxStreamParams params;
+				params.sampleRate = ev.sampleRate;
+				params.channels = static_cast<uint16_t>(ev.channels);
+				if (!aptxStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
+					Log("[svc] AptxStreamEncoder::Start failed");
 				}
 				continue;
 			}
@@ -408,12 +449,19 @@ void DeviceLoop(const std::wstring& linkName)
 					hdStreamEncoder.Stop();
 				}
 			}
+			if (aptxStreamEncoder.Active()) {
+				if (!aptxStreamEncoder.Pump(nowUs, pcmRing, frameRing, 8)) {
+					Log("[svc] aptX pump failed, stopping");
+					aptxStreamEncoder.Stop();
+				}
+			}
 		}
 
 		if (ev.events & Ioctl::kEventStreamStop) {
 			Log("[svc] stream stop");
 			streamEncoder.Stop();
 			hdStreamEncoder.Stop();
+			aptxStreamEncoder.Stop();
 		}
 	}
 

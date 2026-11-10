@@ -12,14 +12,15 @@ namespace OpenA2dp::Avdtp {
 constexpr size_t kMaxSignalPacket = 128;
 constexpr size_t kMaxSinkSeps = 8;
 constexpr size_t kMaxCodecIe = 32;
-constexpr size_t kMaxLocalSeps = 3;
-// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC; SEID 3 is aptX HD. All are
-// always advertised: whether a codec may actually be selected is decided per negotiation
-// by the selector, because the encoder service can register after the session was created
-// (and can disappear again).
+constexpr size_t kMaxLocalSeps = 4;
+// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC; SEID 3 is aptX HD and SEID 4 is
+// classic aptX. All are always advertised: whether a codec may actually be selected is
+// decided per negotiation by the selector, because the encoder service can register after
+// the session was created (and can disappear again).
 constexpr uint8_t kLocalSeid = 1;
 constexpr uint8_t kLocalAacSeid = 2;
 constexpr uint8_t kLocalAptxHdSeid = 3;
+constexpr uint8_t kLocalAptxSeid = 4;
 
 enum class SessionState : uint8_t {
 	Idle,
@@ -95,7 +96,8 @@ public:
 		localSepCount_ = 1;
 	}
 
-	// Adds or replaces an extra local SEP (SEID 2 = AAC, SEID 3 = aptX HD). Ignored for SEID 1.
+	// Adds or replaces an extra local SEP (SEID 2 = AAC, SEID 3 = aptX HD, SEID 4 = aptX).
+	// Ignored for SEID 1.
 	void SetLocalSep(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
 	{
 		if (seid == kLocalSeid || ieLength > kMaxCodecIe) {

@@ -128,6 +128,10 @@ TEST(Ioctl_PreferenceValidation)
 	CHECK(Ioctl::ValidPreference(preference));
 	preference.codec = Ioctl::kCodecAac;
 	CHECK(Ioctl::ValidPreference(preference));
+	preference.codec = Ioctl::kCodecAptx;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.codec = Ioctl::kCodecAptxHd;
+	CHECK(Ioctl::ValidPreference(preference));
 	preference.codec = 7;
 	CHECK(!Ioctl::ValidPreference(preference));
 	preference.flags = 0x1u << 1;

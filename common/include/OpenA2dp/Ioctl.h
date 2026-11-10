@@ -58,9 +58,10 @@ constexpr uint32_t kMaxFrameRecordBytes = 2048;
 // AAC-LC: 1024 PCM samples per raw_data_block.
 constexpr uint32_t kAacSamplesPerFrame = 1024;
 
-// SBC and AAC values match Avdtp::CodecType. aptX HD cannot: AVDTP has one type for every
-// vendor codec, so preferences and registration identify it by this value instead.
+// SBC and AAC values match Avdtp::CodecType. The aptX codecs cannot: AVDTP has one type for
+// every vendor codec, so preferences and registration identify them by these values.
 constexpr uint32_t kCodecSbc = 0x00;
+constexpr uint32_t kCodecAptx = 0x01;
 constexpr uint32_t kCodecAac = 0x02;
 constexpr uint32_t kCodecAptxHd = 0x03;
 
@@ -104,6 +105,7 @@ constexpr bool ValidSbcFrameParameters(uint32_t blocks, uint32_t subbands, uint3
 constexpr uint32_t kSinkCodecSbc = 1u << 0;
 constexpr uint32_t kSinkCodecAac = 1u << 1;
 constexpr uint32_t kSinkCodecAptxHd = 1u << 2;
+constexpr uint32_t kSinkCodecAptx = 1u << 3;
 
 // Status.encoderRegistered and DEVICE_CONTEXT::EncoderRegistered hold one bit per registered
 // encoder codec. Registration is per codec because each provider supplies one codec, and a
@@ -319,8 +321,8 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	{
 		return true;
 	}
-	return preference.codec == kCodecSbc || preference.codec == kCodecAac ||
-		   preference.codec == kCodecAptxHd;
+	return preference.codec == kCodecSbc || preference.codec == kCodecAptx ||
+		   preference.codec == kCodecAac || preference.codec == kCodecAptxHd;
 }
 
 static_assert(sizeof(Preference) == 36, "Preference layout is part of the driver/CLI ABI");

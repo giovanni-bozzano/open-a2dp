@@ -321,10 +321,18 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 {
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 	const uint8_t hdFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0));
+	const uint8_t aptxFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkAptxCapabilities, 0, 0));
+	const LONG sinkCodecs = InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0);
 	const bool hdAvailable = HdFormatsAvailable(ctx);
+	// Classic aptX needs a registered provider and this connection's advertisement; its 16-bit
+	// formats follow it just like SBC's, because it is another way to play them.
+	const bool aptxAvailable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptx) &&
+		(sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecAptx)) != 0;
 	const Ioctl::Preference preference = StoredPreference(ctx);
 	const bool forcedHd = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
 		preference.codec == Ioctl::kCodecAptxHd;
+	const bool forcedAptx = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
+		preference.codec == Ioctl::kCodecAptx;
 
 	ULONG supported = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
@@ -345,12 +353,28 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 			{
 				continue;
 			}
-			// No sink capabilities yet means a provisional list, which is narrowed again once
-			// discovery reports the sink's SBC formats.
-			if (sinkFormats != 0 && !SbcConfig::SupportsFormat(sinkFormats, sampleRate,
-				static_cast<uint8_t>(channels)))
+			const uint8_t rateBit = sampleRate == 44100 ? VendorAptx::kSampleRate44100
+				: VendorAptx::kSampleRate48000;
+			const bool aptxOk = aptxAvailable && channels == 2 && (aptxFormats & rateBit) != 0;
+			if (forcedAptx && aptxAvailable)
 			{
-				continue;
+				// The stream will run classic aptX, so only the formats it can play stay listed.
+				// A forced codec the endpoint cannot serve keeps the fallback list instead.
+				if (!aptxOk)
+				{
+					continue;
+				}
+			}
+			else
+			{
+				// No sink capabilities yet means a provisional list, which is narrowed again
+				// once discovery reports the sink's formats.
+				const bool sbcOk = sinkFormats == 0 ||
+					SbcConfig::SupportsFormat(sinkFormats, sampleRate, static_cast<uint8_t>(channels));
+				if (!sbcOk && !aptxOk)
+				{
+					continue;
+				}
 			}
 		}
 		supported |= 1u << i;
@@ -533,7 +557,8 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		(void)RtlStringCchCatA(formats, ARRAYSIZE(formats), entry);
 	}
 	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (PCM, RAW and DEFAULT modes, %s)", formats,
-		sinkFormats == 0 && InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0) == 0
+		sinkFormats == 0 && InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0) == 0 &&
+			InterlockedCompareExchange(&ctx->SinkAptxCapabilities, 0, 0) == 0
 			? "provisional; sink not discovered"
 			: "sink capabilities");
 	return NT_SUCCESS(status) ? defaultStatus : status;

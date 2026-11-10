@@ -34,7 +34,7 @@ Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
                        [--watch [--interval <ms>]]
   OpenA2dpCtl list
-  OpenA2dpCtl codec [<auto|sbc|aac>] [--bitrate <bps>] [--bitpool <n>]
+  OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd>] [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--device <mac|index>]
   OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
@@ -48,11 +48,11 @@ Commands:
   codec     Set the codec preference, stored for this sink and restored
             when the device starts. If a stream is active it is renegotiated
             immediately; otherwise the preference applies at the next AVDTP
-            negotiation. "auto" prefers AAC while an encoder service is
-            registered, then SBC. --bitrate and --bitpool cap the AAC bitrate
-            and the SBC bitpool; --blocks, --subbands and --allocation pin the
-            SBC frame shape. 0 restores the driver default (--allocation
-            default), and the sink's advertised limits still apply.
+            negotiation. "auto" prefers aptX HD, then aptX, then AAC while an
+            encoder service is registered, then SBC. --bitrate and --bitpool cap
+            the AAC bitrate and the SBC bitpool; --blocks, --subbands and
+            --allocation pin the SBC frame shape. 0 restores the driver default
+            (--allocation default), and the sink's advertised limits still apply.
             Without a codec name the stored selection is kept and only the
             flags given are applied.
             Codec settings never narrow the supported endpoint format list.
@@ -381,9 +381,11 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 				 const PreferenceOverrides& overrides)
 {
 	const bool isAptxHd = codecArg == "aptxhd" || codecArg == "aptx-hd";
-	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac" && !isAptxHd)
+	const bool isAptx = codecArg == "aptx";
+	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac" && !isAptx &&
+		!isAptxHd)
 	{
-		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac or aptxhd\n", codecArg.c_str());
+		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx or aptxhd\n", codecArg.c_str());
 		return 2;
 	}
 
@@ -421,6 +423,15 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 				CodecListText(sink.sinkCodecs).c_str());
 		return 1;
 	}
+	if (isAptx && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecAptx) == 0)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr,
+					 "the sink does not advertise aptX (it offers %s); use `codec auto`. "
+					 "No preference was stored.\n",
+				CodecListText(sink.sinkCodecs).c_str());
+		return 1;
+	}
 	if (isAptxHd && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecAptxHd) == 0)
 	{
 		CloseHandle(handle);
@@ -451,6 +462,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		preference.flags = Ioctl::kPreferenceForceCodec;
 		preference.codec = isAptxHd ? Ioctl::kCodecAptxHd
+			: isAptx ? Ioctl::kCodecAptx
 			: codecArg == "aac"
 			? Ioctl::kCodecAac
 			: Ioctl::kCodecSbc;
@@ -488,18 +500,24 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 
 	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("Preference set to %s on %s.\n",
-			!force ? "auto (aptX HD > AAC > SBC)"
+			!force ? "auto (aptX HD > aptX > AAC > SBC)"
 				   : preference.codec == Ioctl::kCodecAptxHd ? "aptX HD"
+				   : preference.codec == Ioctl::kCodecAptx ? "aptX"
 				   : preference.codec == Ioctl::kCodecAac     ? "AAC"
 																 : "SBC",
 			DeviceLabel(device).c_str());
 	PrintStatus(device, handle, status, preference, false);
 
 	const bool aacRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAac)) != 0;
+	const bool aptxRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAptx)) != 0;
 	const bool hdRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAptxHd)) != 0;
 	if (force && preference.codec == Ioctl::kCodecAac && !aacRegistered)
 	{
 		std::printf("\nnote: no AAC encoder is registered, so AAC is not offered and SBC will be used.\n");
+	}
+	if (force && preference.codec == Ioctl::kCodecAptx && !aptxRegistered)
+	{
+		std::printf("\nnote: no aptX encoder is registered, so aptX is not offered.\n");
 	}
 	if (force && preference.codec == Ioctl::kCodecAptxHd && !hdRegistered)
 	{
@@ -507,9 +525,12 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	}
 	const bool streaming = status.mediaState == Ioctl::MediaState::Streaming;
 	const bool wantsHd = force ? preference.codec == Ioctl::kCodecAptxHd : hdRegistered;
-	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac : aacRegistered && !hdRegistered;
+	const bool wantsAptx = force ? preference.codec == Ioctl::kCodecAptx : aptxRegistered && !hdRegistered;
+	const bool wantsAac =
+		force ? preference.codec == Ioctl::kCodecAac : aacRegistered && !hdRegistered && !aptxRegistered;
 	const bool wantsSbc = force && preference.codec == Ioctl::kCodecSbc;
 	const bool codecChanges = (wantsHd && status.codec != Ioctl::kCodecAptxHd) ||
+							  (wantsAptx && status.codec != Ioctl::kCodecAptx) ||
 							  (wantsAac && status.codec != Ioctl::kCodecAac) ||
 							  (wantsSbc && status.codec != Ioctl::kCodecSbc);
 	if (streaming && (codecChanges || overrides.ParameterChange()))
@@ -664,8 +685,9 @@ int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 	const bool forced = (applied.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("%s: codec preference reset to %s, endpoint format reset to %s.\n",
 			DeviceLabel(device).c_str(),
-			!forced ? "auto (aptX HD > AAC > SBC)"
+			!forced ? "auto (aptX HD > aptX > AAC > SBC)"
 				   : applied.codec == Ioctl::kCodecAptxHd ? "aptX HD"
+				   : applied.codec == Ioctl::kCodecAptx ? "aptX"
 				   : applied.codec == Ioctl::kCodecAac     ? "AAC"
 																	 : "SBC",
 			EndpointFormatText(appliedFormat).c_str());

@@ -15,6 +15,7 @@
 #include <ksmedia.h>
 #include <acx.h>
 
+#include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/Ioctl.h>
@@ -123,9 +124,17 @@ inline const char* CodecName(OpenA2dp::Avdtp::CodecType codec)
 inline const char* CodecLabel(OpenA2dp::Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
 {
 	uint8_t capabilities = 0;
-	if (codec == OpenA2dp::Avdtp::CodecType::Vendor && OpenA2dp::AptxHd::ParseIe(ie, ieLength, capabilities))
+	if (codec != OpenA2dp::Avdtp::CodecType::Vendor)
+	{
+		return CodecName(codec);
+	}
+	if (OpenA2dp::AptxHd::ParseIe(ie, ieLength, capabilities))
 	{
 		return "aptX HD";
+	}
+	if (OpenA2dp::Aptx::ParseIe(ie, ieLength, capabilities))
+	{
+		return "aptX";
 	}
 	return CodecName(codec);
 }
@@ -313,6 +322,8 @@ struct DEVICE_CONTEXT
 	// The sample-rate/channel-mode byte of the aptX HD capabilities the sink advertised in the
 	// last discovery, 0 until one ran. The endpoint's 24-bit formats follow it.
 	volatile LONG SinkHdCapabilities;
+	// The same byte for classic aptX; its 16-bit formats follow it.
+	volatile LONG SinkAptxCapabilities;
 	// Ioctl::kSinkCodec* bits for the codecs the sink advertised in the last discovery,
 	// written by the selector so SET_PREFERENCE and the CLI can refuse a codec the sink
 	// does not offer. Cleared when a new connection starts a fresh discovery.
