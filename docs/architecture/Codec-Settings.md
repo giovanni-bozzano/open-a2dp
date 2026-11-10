@@ -20,10 +20,11 @@ advertises, a pinned rate and channel count is offered alone. The driver still a
 format on its own - Windows opens the listed one and its format reaches the encoder when the
 stream runs.
 
-The driver can publish PCM at 44.1 and 48 kHz, mono and stereo, and lists only the 16-bit
-variants today: the 24-in-32 ones wait for an encoder that takes 24-bit input (aptX HD; see
-[PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)). After discovery it lists
-the intersection with the sink's SBC rate/channel capabilities. The selected format is
+The driver can publish PCM at 44.1 and 48 kHz, mono and stereo. It lists the 16-bit
+variants together with the 24-in-32 ones while aptX HD can run (see [PCM
+depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)); the 16-bit list follows the
+sink's SBC rate/channel capabilities, or its classic aptX ones where SBC cannot play the
+format. The selected format is
 recorded as the device's `PinSampleRate`/`PinChannels`/`PinValidBits`, drives the position
 and packet math and the PCM buffers, and AVDTP then negotiates a configuration that matches
 it.

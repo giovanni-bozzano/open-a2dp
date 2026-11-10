@@ -12,7 +12,7 @@
 - Control-device rundown and an FDO reference protect service handlers; `RingLock` serializes map/unmap ownership. See [AAC lifetime](AAC-Service-Boundary.md#3-shared-memory).
 
 ## ACX audio
-- Render circuit `Speaker0`: PCM stereo at 44.1 or 48 kHz, 16-bit today and 24-in-32 once [aptX HD lists it](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd), whichever format the ACX stream opened with.
+- Render circuit `Speaker0`: PCM stereo at 44.1 or 48 kHz, 16-bit and 24-in-32 while [aptX HD lists it](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd), whichever format the ACX stream opened with.
 - Accept one or two RT packets; page-round and zero buffers. Report a small hardware FIFO (128 bytes), not PCM ring capacity, to avoid audio-engine rejection.
 - Windows software volume/mute remains active; ACX/AVRCP absolute-volume integration is deferred.
 
