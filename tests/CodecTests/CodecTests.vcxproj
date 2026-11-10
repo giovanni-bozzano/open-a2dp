@@ -29,6 +29,7 @@
 	<ClCompile Include="AvdtpSourceTests.cpp" />
 	<ClCompile Include="FrameRecordTests.cpp" />
 	<ClCompile Include="SbcFixedTests.cpp" />
+	<ClCompile Include="SbcFrameTests.cpp" />
 	<ClCompile Include="StatusReportTests.cpp" />
 	<!-- The report the CLI and the settings window share. -->
 	<ClCompile Include="..\..\tools\common\StatusReport.cpp" />
