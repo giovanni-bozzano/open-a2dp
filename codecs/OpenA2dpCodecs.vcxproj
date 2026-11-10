@@ -23,7 +23,24 @@
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixed.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFrame.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFilter.h" />
+	<ClInclude Include="include\OpenA2dp\AptxCodec.h" />
 	<ClInclude Include="include\OpenA2dp\AptxHdCodec.h" />
+	<ClInclude Include="include\OpenA2dp\AptxStreamEncoder.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\Aptx.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\VendorAptx.h" />
+	<ClInclude Include="aptx\classic\include\aptXbtenc.h" />
+	<ClInclude Include="aptx\classic\src\AptxEncoder.h" />
+	<ClInclude Include="aptx\classic\src\AptxParameters.h" />
+	<ClInclude Include="aptx\classic\src\AptxTables.h" />
+	<ClInclude Include="aptx\classic\src\CBStruct.h" />
+	<ClInclude Include="aptx\classic\src\CodewordPacker.h" />
+	<ClInclude Include="aptx\classic\src\DitherGenerator.h" />
+	<ClInclude Include="aptx\classic\src\Quantiser.h" />
+	<ClInclude Include="aptx\classic\src\Qmf.h" />
+	<ClInclude Include="aptx\classic\src\SubbandFunctions.h" />
+	<ClInclude Include="aptx\classic\src\SubbandFunctionsCommon.h" />
+	<ClInclude Include="aptx\classic\src\SyncInserter.h" />
+	<ClInclude Include="aptx\classic\src\swversion.h" />
 	<ClInclude Include="aptx\include\aptXHDbtenc.h" />
 	<ClInclude Include="aptx\src\AptxEncoder.h" />
 	<ClInclude Include="aptx\src\AptxParameters.h" />
@@ -45,8 +62,10 @@
 	<ClCompile Include="aac\AacCodec.cpp" />
 	<ClCompile Include="aac\AacStreamEncoder.cpp" />
 	<ClCompile Include="aac\LatmWriter.cpp" />
+	<ClCompile Include="aptx\AptxCodec.cpp" />
 	<ClCompile Include="aptx\AptxHdCodec.cpp" />
 	<ClCompile Include="aptx\AptxHdStreamEncoder.cpp" />
+	<ClCompile Include="aptx\AptxStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="aptx\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
@@ -60,10 +79,27 @@
 	<ClCompile Include="aptx\src\QuantiseDifference.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
+	<!-- Same base names as the HD drop's sources, so each needs its own object file. -->
+	<ClCompile Include="aptx\classic\src\aptXbtenc.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
+	<ClCompile Include="aptx\classic\src\ProcessSubband.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
+	<ClCompile Include="aptx\classic\src\QmfConv.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
+	<ClCompile Include="aptx\classic\src\QuantiseDifference.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
+	</ClCompile>
   </ItemGroup>
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(ProjectDir)aptx\include;$(ProjectDir)aptx\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(ProjectDir)aptx\include;$(ProjectDir)aptx\src;$(ProjectDir)aptx\classic\include;$(ProjectDir)aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
