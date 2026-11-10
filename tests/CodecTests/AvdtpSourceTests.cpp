@@ -243,6 +243,75 @@ TEST(AvdtpSource_ReconfigureKeepsConfigurationOnReject)
 	CHECK(s.LastReconfigureAccepted());
 }
 
+TEST(AvdtpSource_ReconfigureRejectRestoresTheAcceptedConfiguration)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	const uint8_t accepted[6] = {0x80, 0x00, 0x84, 0x01, 0xF4, 0x00};
+	const uint8_t rejected[6] = {0x80, 0x00, 0x84, 0x01, 0x50, 0x00};
+
+	ConnectToOpen(s);
+	REQUIRE(s.Reconfigure(accepted, 6, cmd, kMaxSignalPacket) != 0);
+	s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	REQUIRE(s.LastReconfigureAccepted());
+	CHECK(std::memcmp(s.SelectedIe(), accepted, 6) == 0);
+
+	// The backup is re-taken on every send, so a rejection now restores what was accepted
+	// rather than the configuration from before it.
+	REQUIRE(s.Reconfigure(rejected, 6, cmd, kMaxSignalPacket) != 0);
+	s.OnPacket(rsp, RejectResponse(cmd, rsp), cmd, kMaxSignalPacket);
+	CHECK(!s.LastReconfigureAccepted());
+	CHECK(s.State() == SessionState::Open);
+	CHECK_EQ(s.SelectedIeLength(), size_t{6});
+	CHECK(std::memcmp(s.SelectedIe(), accepted, 6) == 0);
+}
+
+TEST(AvdtpSource_ReconfigureRejectKeepsTheOriginalAcrossAttempts)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	const uint8_t first[6] = {0x80, 0x00, 0x84, 0x01, 0xF4, 0x00};
+	const uint8_t second[6] = {0x80, 0x00, 0x84, 0x01, 0x50, 0x00};
+
+	ConnectToOpen(s);
+	const size_t original = s.SelectedIeLength();
+	uint8_t saved[kMaxCodecIe] = {};
+	std::memcpy(saved, s.SelectedIe(), original);
+
+	for (const uint8_t* ie : {first, second}) {
+		REQUIRE(s.Reconfigure(ie, 6, cmd, kMaxSignalPacket) != 0);
+		// The request carries the candidate, not the configuration it may restore.
+		CHECK(std::memcmp(cmd + 7, ie, 6) == 0);
+
+		s.OnPacket(rsp, RejectResponse(cmd, rsp), cmd, kMaxSignalPacket);
+		CHECK(s.State() == SessionState::Open);
+		CHECK_EQ(s.SelectedIeLength(), original);
+		CHECK(std::memcmp(s.SelectedIe(), saved, original) == 0);
+	}
+}
+
+TEST(AvdtpSource_ReconfigureWhilePendingIsIgnored)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t second[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	const uint8_t firstIe[6] = {0x80, 0x00, 0x84, 0x01, 0xF4, 0x00};
+	const uint8_t secondIe[6] = {0x80, 0x00, 0x84, 0x01, 0x50, 0x00};
+
+	ConnectToOpen(s);
+	const size_t original = s.SelectedIeLength();
+	REQUIRE(s.Reconfigure(firstIe, 6, cmd, kMaxSignalPacket) != 0);
+	CHECK_EQ(s.Reconfigure(secondIe, 6, second, kMaxSignalPacket), size_t{0});
+
+	// The response resolves the first request against its own backup.
+	s.OnPacket(rsp, RejectResponse(cmd, rsp), cmd, kMaxSignalPacket);
+	CHECK_EQ(s.SelectedIeLength(), original);
+	CHECK(!s.LastReconfigureAccepted());
+}
+
 TEST(AvdtpSource_ReconfigureRejectsMissingInput)
 {
 	SourceSession s = MakeSession();
