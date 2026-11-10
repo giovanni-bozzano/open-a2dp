@@ -212,6 +212,38 @@ TEST(AptxStream_44kClockDoesNotDrift)
 	CHECK_EQ(stream.Stats().samples % 4, uint64_t{0});
 }
 
+// Four spans are 1764 samples at 44.1 kHz, 441 whole frames. The records therefore run
+// 440/440/440/444 samples: the RTP timestamp advances by the encoded count, so any other
+// split would leave the stream drifting against the media clock.
+TEST(AptxStream_RecordSamplesLockToFourSpans)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	AptxStreamParams params;
+	params.sampleRate = 44100;
+	AptxStreamEncoder stream;
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+
+	// The 60 ms preroll is 2646 samples, six spans; four records are enough for one period.
+	WritePcm(pcm, 1, 2646);
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 4));
+
+	const uint32_t expected[4] = {440, 440, 440, 444};
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	uint32_t total = 0;
+	for (uint32_t i = 0; i < 4; ++i) {
+		REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) ==
+				FrameRecord::ReadResult::Record);
+		CHECK_EQ(record.samples, expected[i]);
+		CHECK_EQ(record.payloadLength, expected[i]); // four bytes per four samples
+		total += record.samples;
+	}
+	// Four spans are exactly 1764 samples, so nothing is owed to the clock here.
+	CHECK_EQ(total, uint32_t{1764});
+}
+
 TEST(AptxStream_ShortRingBecomesSilence)
 {
 	TestRing pcm(64 * 1024);

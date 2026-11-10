@@ -100,6 +100,16 @@ TEST(Aptx_SelectConfiguration)
 	REQUIRE(codec.SelectConfiguration(remote, kIeLength, preferred, config));
 	CHECK_EQ(config.ie[6], static_cast<uint8_t>(kSampleRate44100 | kChannelStereo));
 
+	// A 44.1 kHz preference falls back to 48 kHz when that is all the sink offers.
+	BuildRemoteIe(kSampleRate48000 | kChannelStereo, remote);
+	preferred.preferredSampleRate = 44100;
+	REQUIRE(codec.SelectConfiguration(remote, kIeLength, preferred, config));
+	CHECK_EQ(config.ie[6], static_cast<uint8_t>(kSampleRate48000 | kChannelStereo));
+
+	// An IE with no rate bit at all cannot be configured.
+	BuildRemoteIe(kChannelStereo, remote);
+	CHECK(!codec.SelectConfiguration(remote, kIeLength, preferred, config));
+
 	// Mono-only sinks are refused, and so is a truncated IE.
 	BuildRemoteIe(kSampleRate48000 | kChannelMono, remote);
 	CHECK(!codec.SelectConfiguration(remote, kIeLength, preferred, config));
@@ -174,6 +184,42 @@ TEST(Aptx_EncoderFormat)
 	CHECK_EQ(encoder->MaxFrameBytes(), kFrameBytes);
 	CHECK_EQ(encoder->FramesPerPacket(648), size_t{162});
 	CHECK_EQ(encoder->FramesPerPacket(kFrameBytes - 1), size_t{0});
+
+	// The rate is the only thing the configuration changes about the input format.
+	auto at441 = MakeEncoder(kSampleRate44100 | kChannelStereo);
+	REQUIRE(at441 != nullptr);
+	CHECK_EQ(at441->InputFormat().sampleRate, 44100u);
+	CHECK_EQ(at441->SamplesPerFrame(), kSamplesPerFrame);
+}
+
+TEST(Aptx_EncoderRejectsInvalidConfiguration)
+{
+	AptxCodec codec;
+	std::unique_ptr<IA2dpEncoder> encoder;
+
+	// Mono, a truncated IE, two rate bits and an HD IE are all refused before any encoder
+	// state is built.
+	CHECK(codec.CreateEncoder(ConfigWithCapabilities(kSampleRate48000 | kChannelMono), encoder) ==
+		  E_INVALIDARG);
+	CHECK(encoder == nullptr);
+	A2dpCodecConfig truncated = ConfigWithCapabilities(kSampleRate48000 | kChannelStereo);
+	truncated.ieLength = static_cast<uint8_t>(kIeLength - 1);
+	CHECK(codec.CreateEncoder(truncated, encoder) == E_INVALIDARG);
+	CHECK(codec.CreateEncoder(ConfigWithCapabilities(kSampleRate44100 | kSampleRate48000 | kChannelStereo),
+							  encoder) == E_INVALIDARG);
+
+	uint8_t hd[AptxHd::kIeLength] = {};
+	AptxHd::WriteIe(AptxHd::kSampleRate48000, hd);
+	A2dpCodecConfig hdConfig = {};
+	hdConfig.codec = CodecType::Vendor;
+	std::memcpy(hdConfig.ie, hd, sizeof(hd));
+	hdConfig.ieLength = static_cast<uint8_t>(sizeof(hd));
+	CHECK(codec.CreateEncoder(hdConfig, encoder) == E_INVALIDARG);
+	CHECK(encoder == nullptr);
+
+	// A valid configuration still builds an encoder after those refusals.
+	REQUIRE(SUCCEEDED(codec.CreateEncoder(ConfigWithCapabilities(kSampleRate48000 | kChannelStereo), encoder)));
+	CHECK(encoder != nullptr);
 }
 
 TEST(Aptx_EncodeFrame)
