@@ -664,7 +664,10 @@ int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 	const bool forced = (applied.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("%s: codec preference reset to %s, endpoint format reset to %s.\n",
 			DeviceLabel(device).c_str(),
-			!forced ? "auto (AAC > SBC)" : (applied.codec == Ioctl::kCodecAac ? "AAC" : "SBC"),
+			!forced ? "auto (aptX HD > AAC > SBC)"
+				   : applied.codec == Ioctl::kCodecAptxHd ? "aptX HD"
+				   : applied.codec == Ioctl::kCodecAac     ? "AAC"
+																	 : "SBC",
 			EndpointFormatText(appliedFormat).c_str());
 	if (status.mediaState == Ioctl::MediaState::Streaming)
 	{

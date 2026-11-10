@@ -79,7 +79,8 @@ constexpr wchar_t kApplyText[] = L"Apply";
 constexpr wchar_t kSessionGroupText[] = L"Session";
 constexpr wchar_t kCodecGroupText[] = L"Codec";
 constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
-constexpr wchar_t kCodecHintText[] = L"The frame shape and bitpool apply to SBC; the bitrate to AAC.";
+constexpr wchar_t kCodecHintText[] =
+	L"The frame shape and bitpool apply to SBC; the bitrate to AAC. aptX HD has no parameters.";
 constexpr wchar_t kFormatHintText[] = L"Windows plays the first format the endpoint lists and ignores the "
 									 L"Sound-settings pick, so a pinned format is offered alone.";
 // A combo box is created with the height of its drop-down list, which is never resized.
@@ -121,6 +122,7 @@ constexpr uint32_t FormatComboValue(uint32_t sampleRate, uint32_t channels)
 constexpr int kCodecAuto = 0;
 constexpr int kCodecSbcChoice = 1;
 constexpr int kCodecAacChoice = 2;
+constexpr int kCodecAptxHdChoice = 3;
 
 // What a sink is doing as far as the window can tell. The driver keeps a sink's control
 // device only while the link is up, so every listed sink is connected; a running stream is
@@ -755,9 +757,10 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, mono", FormatComboValue(48000, 1));
 	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, stereo", FormatComboValue(48000, 2));
 
-	AddComboItem(hwnd, kCodecCombo, L"Automatic (AAC, then SBC)", kCodecAuto);
+	AddComboItem(hwnd, kCodecCombo, L"Automatic (aptX HD, AAC, then SBC)", kCodecAuto);
 	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);
 	AddComboItem(hwnd, kCodecCombo, L"AAC only", kCodecAacChoice);
+	AddComboItem(hwnd, kCodecCombo, L"aptX HD only", kCodecAptxHdChoice);
 
 	AddComboItem(hwnd, kBitrateCombo, L"Highest the sink accepts", 0);
 	AddComboItem(hwnd, kBitrateCombo, L"96 kbps", 96000);
@@ -808,9 +811,19 @@ void LoadPreferenceIntoControls(HWND hwnd)
 		return;
 	}
 	const Ioctl::Preference& preference = state->preference;
-	const int codec = (preference.flags & Ioctl::kPreferenceForceCodec) == 0
-						  ? kCodecAuto
-						  : (preference.codec == Ioctl::kCodecAac ? kCodecAacChoice : kCodecSbcChoice);
+	int codec = kCodecSbcChoice;
+	if ((preference.flags & Ioctl::kPreferenceForceCodec) == 0)
+	{
+		codec = kCodecAuto;
+	}
+	else if (preference.codec == Ioctl::kCodecAac)
+	{
+		codec = kCodecAacChoice;
+	}
+	else if (preference.codec == Ioctl::kCodecAptxHd)
+	{
+		codec = kCodecAptxHdChoice;
+	}
 	SelectComboValue(hwnd, kCodecCombo, static_cast<uint32_t>(codec));
 	SelectComboValue(hwnd, kBitrateCombo, preference.aacBitrate);
 	SelectComboValue(hwnd, kBlocksCombo, preference.sbcBlocks);
@@ -1182,7 +1195,10 @@ void ApplySettings(HWND hwnd)
 	Ioctl::Preference preference = state->preference;
 	const uint32_t codec = ComboValue(hwnd, kCodecCombo);
 	preference.flags = codec == kCodecAuto ? 0 : Ioctl::kPreferenceForceCodec;
-	preference.codec = codec == kCodecAacChoice ? Ioctl::kCodecAac : (codec == kCodecSbcChoice ? Ioctl::kCodecSbc : 0);
+	preference.codec = codec == kCodecAacChoice     ? Ioctl::kCodecAac
+		: codec == kCodecAptxHdChoice ? Ioctl::kCodecAptxHd
+		: codec == kCodecSbcChoice     ? Ioctl::kCodecSbc
+													: 0;
 	preference.aacBitrate = ComboValue(hwnd, kBitrateCombo);
 	preference.sbcBitpool = ComboValue(hwnd, kBitpoolCombo);
 	preference.sbcBlocks = ComboValue(hwnd, kBlocksCombo);
