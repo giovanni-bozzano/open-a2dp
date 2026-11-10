@@ -124,6 +124,12 @@ constexpr ULONG kIoctlSetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, M
 // is one value here instead of a copy per caller.
 constexpr ULONG kIoctlTimeoutMs = 5000;
 
+// How long a caller waits after cancelling before it stops waiting and closes the handle. Long
+// enough that the driver has finished writing into the caller's buffer, short enough that a
+// wedged driver does not hold a tool request or a service stop. The kernel's transport grace
+// (`SendCancelGraceMs`) is a different layer and much shorter.
+constexpr ULONG kCancelGraceMs = 2000;
+
 struct VersionInfo {
 	uint32_t abiVersion;      // kAbiVersion
 	uint32_t driverVersion;   // 0xMMmmpppp
