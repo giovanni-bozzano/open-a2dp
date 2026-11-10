@@ -243,6 +243,17 @@ TEST(AvdtpSource_ReconfigureKeepsConfigurationOnReject)
 	CHECK(s.LastReconfigureAccepted());
 }
 
+TEST(AvdtpSource_ReconfigureRejectsMissingInput)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+
+	ConnectToOpen(s);
+	CHECK_EQ(s.Reconfigure(nullptr, 6, cmd, kMaxSignalPacket), size_t{0});
+	CHECK_EQ(s.Reconfigure(nullptr, 0, cmd, kMaxSignalPacket), size_t{0});
+	CHECK(s.State() == SessionState::Open);
+}
+
 TEST(AvdtpSource_RefreshConfigurationRebuildsFromSinkCapabilities)
 {
 	BitpoolState state{0x35};

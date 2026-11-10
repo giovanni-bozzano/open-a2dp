@@ -183,7 +183,7 @@ public:
 	// rejected RECONFIGURE keeps the previous configuration.
 	size_t Reconfigure(const uint8_t* ie, size_t ieLength, uint8_t* out, size_t cap) noexcept
 	{
-		if (state_ != SessionState::Open || pending_ || remoteSeid_ == 0 || ieLength == 0 ||
+		if (state_ != SessionState::Open || pending_ || remoteSeid_ == 0 || ie == nullptr || ieLength == 0 ||
 			ieLength > kMaxCodecIe) {
 			return 0;
 		}
