@@ -56,9 +56,14 @@ whatever the VM has installed:
 scripts/deploy-vm.ps1 -Uninstall
 ```
 
-It stops the service and the tools, removes the `opena2dp.inf` package with
-`pnputil /delete-driver oem<N>.inf /uninstall /force`, deletes the `OpenA2dpSvc` service,
-then waits up to 30 s for a node bound to `BthA2dp`. The guest log is streamed as it runs.
+It stops the service and the tools, removes every `opena2dp.inf` package with
+`pnputil /delete-driver oem<N>.inf /uninstall`, then deletes both `OpenA2dpSvc` and the
+kernel `OpenA2dp` service entry - `pnputil` leaves that one behind - and waits up to 30 s
+for a node bound to `BthA2dp`. The guest log is streamed as it runs.
+
+The `BthA2dp` half needs the sink paired **and connected**: a paired but powered-off sink
+has no node, and the check cannot tell that apart from a failed restore, so it fails with
+`pair and connect the sink, then rerun`.
 
 Expect `removing driver package oem<N>.inf` (or `no OpenA2dp package in the driver store`),
 a `BthA2dp: <name> status=...` line, `OpenA2dpCtl list: No OpenA2dp devices found`, then

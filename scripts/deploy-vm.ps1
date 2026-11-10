@@ -461,14 +461,17 @@ function Invoke-Restore {
         [void](Run 'pnputil.exe' "/delete-driver $pkg /uninstall /force" 120)
     }
 
-    # 2. Remove the encoder service; nothing is left for it to attach to.
+    # 2. Remove both services. pnputil uninstalls the device and deletes the package but
+    #    leaves the kernel service entry behind, so the restore deletes it explicitly;
+    #    otherwise a later install would run against a stale ImagePath.
     [void](Run 'sc.exe' 'delete OpenA2dpSvc' 20)
+    [void](Run 'sc.exe' 'delete OpenA2dp' 20)
 
     # 3. Give Windows a moment to rebind the sink, then check the restore from every side:
     #    the device node, both services, the package, the image, the sink's own binding and
     #    the control-device links the CLI enumerates.
     $bthA2dp = { @(Get-CimInstance Win32_PnPEntity -Filter "Service='BthA2dp'" -ErrorAction SilentlyContinue).Count -gt 0 }
-    if (-not (Wait-Until $bthA2dp 30)) { Log 'warning: nothing is bound to BthA2dp yet' }
+    if (-not (Wait-Until $bthA2dp 30)) { Log 'warning: nothing is bound to BthA2dp yet; is a sink paired and connected?' }
 
     if (@(Get-Devices).Count -gt 0) { $problems += 'an OpenA2dp device node is still present' }
     if ((& sc.exe query OpenA2dp 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2dp driver service is still registered' }
@@ -479,7 +482,7 @@ function Invoke-Restore {
 
     $sinks = @(Get-CimInstance Win32_PnPEntity -Filter "Service='BthA2dp'" -ErrorAction SilentlyContinue)
     foreach ($sink in $sinks) { Log "    BthA2dp: $($sink.Name) status=$($sink.Status)" }
-    if ($sinks.Count -eq 0) { $problems += 'no device is bound to BthA2dp; reconnect the sink' }
+    if ($sinks.Count -eq 0) { $problems += 'no device is bound to BthA2dp: pair and connect the sink, then rerun' }
 
     $ctl = Join-Path $dir 'OpenA2dpCtl.exe'
     if (Test-Path $ctl) {
