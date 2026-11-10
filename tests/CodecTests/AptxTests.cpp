@@ -146,6 +146,33 @@ TEST(Aptx_ValidateConfiguration)
 			 static_cast<uint8_t>(Avdtp::ErrorCode::InvalidCodecType));
 }
 
+TEST(Aptx_ValidateConfigurationRejectsUnknownBits)
+{
+	AptxCodec codec;
+	uint8_t ie[kIeLength] = {};
+
+	// A rate byte with no 44.1/48 kHz bit and a channel-mode bit outside mono/stereo are
+	// both well-formed IEs that cannot run.
+	BuildRemoteIe(0x40 | kChannelStereo, ie);
+	CHECK_EQ(codec.ValidateConfiguration(ie, kIeLength),
+			 static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency));
+	BuildRemoteIe(kSampleRate48000 | 0x04, ie);
+	CHECK_EQ(codec.ValidateConfiguration(ie, kIeLength),
+			 static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedChannelMode));
+}
+
+TEST(Aptx_ParseIeRejectsShortInput)
+{
+	uint8_t capabilities = 0;
+	uint8_t ie[kIeLength] = {};
+	WriteIe(kSampleRate48000, ie);
+
+	CHECK(!ParseIe(nullptr, 0, capabilities));
+	CHECK(!ParseIe(ie, kIeLength - 1, capabilities));
+	CHECK(ParseIe(ie, kIeLength, capabilities));
+	CHECK_EQ(capabilities, static_cast<uint8_t>(kSampleRate48000 | kChannelStereo));
+}
+
 TEST(Aptx_HdAndClassicDoNotParseEachOther)
 {
 	// Both codecs share CodecType::Vendor, so only the IDs may decide which one an IE is.

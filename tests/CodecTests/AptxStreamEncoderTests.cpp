@@ -244,6 +244,69 @@ TEST(AptxStream_RecordSamplesLockToFourSpans)
 	CHECK_EQ(total, uint32_t{1764});
 }
 
+// Stop() drops the encoder with the carried samples, so a restarted stream must not prepend
+// audio from before the stop to its first record.
+TEST(AptxStream_StopClearsCarriedSamples)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	AptxStreamParams params;
+	params.sampleRate = 44100;
+	AptxStreamEncoder stream;
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+
+	// Three spans leave three samples carried, which an uncleared carry would report as a
+	// 444-sample first record after the restart.
+	WritePcm(pcm, 1, 441 * 3);
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 3));
+	CHECK_EQ(stream.Stats().records, uint64_t{3});
+
+	stream.Stop();
+	CHECK(!stream.Active());
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	CHECK_EQ(stream.Stats().records, uint64_t{0});
+
+	// A separate frame ring, so the first record read is the restarted stream's own.
+	TestRing restarted(64 * 1024);
+	WritePcm(pcm, 1, 441);
+	REQUIRE(stream.Pump(0, pcm.view, restarted.view, 1));
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(restarted.view, storage, sizeof(storage), record) ==
+			FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.samples, uint32_t{440});
+}
+
+// A frame ring the service cannot keep up with drops records instead of stalling the clock,
+// and the next record that fits is marked so the receiver knows audio is missing.
+TEST(AptxStream_FullFrameRingDropsRecords)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(1024); // two records of four bytes per frame
+
+	AptxStreamParams params;
+	params.sampleRate = 48000;
+	AptxStreamEncoder stream;
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm.view, 0));
+
+	// Six due records of 480 samples into room for two.
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{2});
+	CHECK_EQ(stream.Stats().droppedRecords, uint64_t{4});
+	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
+	CHECK_EQ(stream.Stats().samples, uint64_t{960});
+
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) ==
+			FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.flags, Ioctl::kFrameFlagDiscontinuity);
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) ==
+			FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.flags, uint32_t{0});
+}
+
 TEST(AptxStream_ShortRingBecomesSilence)
 {
 	TestRing pcm(64 * 1024);
