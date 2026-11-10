@@ -86,7 +86,7 @@ private:
 	size_t maxFrames_ = 0;
 	uint32_t carrySamples_ = 0;
 	std::vector<uint8_t> carryPcm_;   // carrySamples_ * sampleBytes_
-	std::vector<uint8_t> pcmRecord_;  // (span + one frame) * sampleBytes_
+	std::vector<uint8_t> pcmRecord_;  // (span + one frame - 1) * sampleBytes_
 	std::vector<uint8_t> frameData_;  // maxFrames_ * maxFrameBytes_
 	std::vector<size_t> frameSizes_;
 	std::vector<uint8_t> payload_;    // Ioctl::kMaxFramePayload

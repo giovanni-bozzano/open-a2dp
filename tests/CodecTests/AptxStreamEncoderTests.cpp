@@ -151,6 +151,30 @@ TEST(AptxStream_CarriesSamplesAt44k)
 	CHECK_EQ(record.payloadLength, uint32_t{440});
 }
 
+// 441 samples per span never divide into four-sample frames, so the carry must absorb the
+// remainder without the encoded total falling further behind the clock on every record.
+TEST(AptxStream_44kClockDoesNotDrift)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	AptxStreamParams params;
+	params.sampleRate = 44100;
+	AptxStreamEncoder stream;
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+
+	// One second plus the 60 ms preroll is 106 spans of 441 samples, all silence. A clock that
+	// advanced by the encoded samples rather than by the span would trail by 26 samples.
+	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 200));
+	CHECK_EQ(stream.Stats().records, uint64_t{106});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{46746});
+	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
+	// Only the 0..3 samples a record cannot encode are still owed to the clock.
+	CHECK(stream.Stats().samples >= 46743);
+	CHECK(stream.Stats().samples <= 46746);
+	CHECK_EQ(stream.Stats().samples % 4, uint64_t{0});
+}
+
 TEST(AptxStream_ShortRingBecomesSilence)
 {
 	TestRing pcm(64 * 1024);
