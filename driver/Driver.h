@@ -448,13 +448,15 @@ struct DEVICE_CONTEXT
 	KSPIN_LOCK PreferenceLock;
 	OpenA2dp::Ioctl::Preference Preference;
 
-	// Active media configuration (GET_STATUS/WAIT_EVENT) and failure counters.
+	// Active media configuration (GET_STATUS/WAIT_EVENT) and failure counters. The media
+	// work item sets the Active* fields under MediaLock; GET_STATUS reads them without it, so
+	// they stay volatile: a status poll must not queue behind a media tick.
 	volatile LONG MediaMode;
-	uint32_t ActiveCodec;
-	uint32_t ActiveSampleRate;
-	uint32_t ActiveChannels;
-	uint32_t ActiveBitrate;
-	uint32_t ActiveObjectType;
+	volatile uint32_t ActiveCodec;
+	volatile uint32_t ActiveSampleRate;
+	volatile uint32_t ActiveChannels;
+	volatile uint32_t ActiveBitrate;
+	volatile uint32_t ActiveObjectType;
 	volatile LONG StreamFault;
 	volatile LONG FramesDropped;
 	volatile LONG Underruns;
