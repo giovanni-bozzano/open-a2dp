@@ -427,7 +427,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		CloseHandle(handle);
 		std::fprintf(stderr,
-					 "the sink does not advertise aptX (it offers %s); use `codec auto`. "
+					 "the sink does not advertise aptX (it offers %s); use `codec auto` or `codec sbc`. "
 					 "No preference was stored.\n",
 				CodecListText(sink.sinkCodecs).c_str());
 		return 1;
@@ -436,7 +436,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		CloseHandle(handle);
 		std::fprintf(stderr,
-					 "the sink does not advertise aptX HD (it offers %s); use `codec auto`. "
+					 "the sink does not advertise aptX HD (it offers %s); use `codec auto` or `codec sbc`. "
 					 "No preference was stored.\n",
 				CodecListText(sink.sinkCodecs).c_str());
 		return 1;
