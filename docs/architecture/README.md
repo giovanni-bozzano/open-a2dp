@@ -5,6 +5,7 @@
 | [Overview](Overview.md) | Component boundaries, stack and audio data flow |
 | [Driver lifecycle](Driver-Lifecycle.md) | PnP, transport ownership, locking and ACX constraints |
 | [Event model](Event-Model.md) | Allowed timers, event-driven migration phases and deadlock rules |
+| [Latency](Latency.md) | Where the audio waits, what was bounded, and the remaining latency plan |
 | [Protocol and codecs](Protocol-and-Codecs.md) | AVDTP policy, packet formats, codec references and the PCM depth contract |
 | [AAC service boundary](AAC-Service-Boundary.md) | Shared rings, IOCTLs, lifetime, encoder pacing and why the encoder is Windows' |
 | [Codec configuration](Codec-Configuration.md) | Stored codec/endpoint settings, how a change applies, and the settings window |
