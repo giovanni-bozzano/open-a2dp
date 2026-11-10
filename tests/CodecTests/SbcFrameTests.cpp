@@ -1,4 +1,5 @@
 #include "TestFramework.h"
+#include "SbcReferenceDecoder.h"
 
 #include <OpenA2dp/SbcCodec.h>
 #include <OpenA2dp/SbcFixed.h>
@@ -118,6 +119,16 @@ void CheckFrameCrc(const Config& c, const std::vector<uint8_t>& frame)
 		CHECK(!CrcMatches(copy.data(), crcBits));
 	}
 
+	// The whole joint-stereo mask sits inside the range, RFA bit included: the mask is
+	// subbands bits wide, of which only the first subbands-1 are join flags.
+	if (h.mode == 3) {
+		for (size_t bit = 32; bit < 32 + static_cast<size_t>(h.subbands); ++bit) {
+			std::vector<uint8_t> copy = frame;
+			FlipBit(copy.data(), bit);
+			CHECK(!CrcMatches(copy.data(), crcBits));
+		}
+	}
+
 	// The audio bits sit after the scale factors and are not covered.
 	{
 		std::vector<uint8_t> copy = frame;
@@ -184,7 +195,87 @@ std::vector<uint8_t> EncodeWithCodec(const Config& c)
 	return frame;
 }
 
+void PutBits(std::vector<uint8_t>& frame, size_t& bitPos, uint32_t value, unsigned count)
+{
+	for (unsigned i = 0; i < count; ++i) {
+		if (((value >> (count - 1 - i)) & 1u) != 0) {
+			frame[bitPos >> 3] |= static_cast<uint8_t>(0x80u >> (bitPos & 7));
+		}
+		++bitPos;
+	}
+}
+
+// A joint-stereo frame built from the spec layout instead of by an encoder, so the mask can
+// take patterns the encoders may never emit. The CRC byte is correct for the bits written.
+std::vector<uint8_t> SyntheticJointFrame(int nsb, uint8_t join, uint8_t bitpool, int blocks)
+{
+	const int nch = 2;
+	const size_t scaleFactorBits = 4u * static_cast<size_t>(nsb) * static_cast<size_t>(nch);
+	const size_t frameLength = 4 + (4u * static_cast<size_t>(nsb) * static_cast<size_t>(nch)) / 8 +
+			(static_cast<size_t>(nsb) + static_cast<size_t>(blocks) * bitpool + 7) / 8;
+	std::vector<uint8_t> frame(frameLength, 0);
+
+	size_t pos = 0;
+	PutBits(frame, pos, SbcFrame::kSyncWord, 8);
+	PutBits(frame, pos, 2, 2); // 44.1 kHz
+	PutBits(frame, pos, static_cast<uint32_t>(blocks / 4 - 1), 2);
+	PutBits(frame, pos, 3, 2); // joint stereo
+	PutBits(frame, pos, 0, 1); // loudness
+	PutBits(frame, pos, nsb == 8 ? 1u : 0u, 1);
+	PutBits(frame, pos, bitpool, 8);
+	PutBits(frame, pos, 0, 8); // CRC placeholder
+	PutBits(frame, pos, join, static_cast<unsigned>(nsb)); // join flags, then the RFA bit
+	for (size_t i = 0; i < scaleFactorBits / 4; ++i) {
+		PutBits(frame, pos, static_cast<uint32_t>((i * 5) & 0xF), 4);
+	}
+
+	const size_t crcBits = CrcBitCount(ReadHeader(frame.data()));
+	frame[3] = ReferenceCrc8(CoveredBits(frame.data(), crcBits));
+	return frame;
+}
+
+// Mask patterns at the edges: no subband joined, only the first, only the last joinable one,
+// and all of them. Every mask bit, the RFA bit included, must be covered.
+void CheckJointMaskBoundaries(int nsb)
+{
+	const uint8_t allJoined = static_cast<uint8_t>(((1u << (nsb - 1)) - 1u) << 1);
+	const uint8_t patterns[] = {0x00, static_cast<uint8_t>(1u << (nsb - 1)), 0x02, allJoined};
+	for (const uint8_t join : patterns) {
+		const std::vector<uint8_t> frame = SyntheticJointFrame(nsb, join, 53, 16);
+		const size_t crcBits = CrcBitCount(ReadHeader(frame.data()));
+		CHECK(CrcMatches(frame.data(), crcBits));
+
+		// The whole mask, RFA included, plus the first scale-factor bit right after it.
+		for (size_t bit = 32; bit < 32 + static_cast<size_t>(nsb) + 1; ++bit) {
+			std::vector<uint8_t> copy = frame;
+			FlipBit(copy.data(), bit);
+			CHECK(!CrcMatches(copy.data(), crcBits));
+		}
+
+		// The spec decoder parses its own coverage out of the frame, so it can disagree with
+		// the model above: accept the mask, and reject the same frame with RFA flipped.
+		TestSupport::SbcReferenceDecoder decoder;
+		std::vector<int16_t> pcm;
+		TestSupport::SbcReferenceDecoder::FrameInfo info;
+		CHECK(decoder.DecodeFrame(frame.data(), frame.size(), pcm, info));
+		CHECK(info.crcOk);
+
+		std::vector<uint8_t> rfa = frame;
+		FlipBit(rfa.data(), 32 + static_cast<size_t>(nsb) - 1);
+		CHECK(decoder.DecodeFrame(rfa.data(), rfa.size(), pcm, info));
+		CHECK(!info.crcOk);
+
+		std::printf("    joint nsb=%d mask=0x%02X: accepted, %zu covered bits\n", nsb, join, crcBits);
+	}
+}
+
 } // namespace
+
+TEST(SbcFrame_JointStereoMaskCoverage)
+{
+	CheckJointMaskBoundaries(8);
+	CheckJointMaskBoundaries(4);
+}
 
 TEST(SbcFrame_CrcCoverage)
 {
