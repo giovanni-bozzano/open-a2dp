@@ -32,9 +32,12 @@ bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const Apt
 	const PcmFormat format = encoder->InputFormat();
 	const uint32_t samplesPerFrame = encoder->SamplesPerFrame();
 	const size_t maxFrameBytes = encoder->MaxFrameBytes();
+	// The frame layout below is the codec's fixed four samples to six bytes; an encoder with
+	// another shape would read past the record or write past the frame stride.
 	if (format.sampleRate != params.sampleRate || format.channels != params.channels ||
-		format.bitsPerSample != AptxHd::kBitsPerSample || params.channels != 2 || samplesPerFrame == 0 ||
-		maxFrameBytes == 0 || encoder->FramesPerPacket(Ioctl::kMaxFramePayload) == 0)
+		format.bitsPerSample != AptxHd::kBitsPerSample || params.channels != 2 ||
+		samplesPerFrame != AptxHd::kSamplesPerFrame || maxFrameBytes != AptxHd::kFrameBytes ||
+		encoder->FramesPerPacket(Ioctl::kMaxFramePayload) == 0)
 	{
 		return false;
 	}

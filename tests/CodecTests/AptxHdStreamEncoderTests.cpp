@@ -51,6 +51,39 @@ std::unique_ptr<IA2dpEncoder> MakeEncoder(uint8_t capabilities)
 	return encoder;
 }
 
+// A 24-in-32 stereo encoder whose frame shape is not the aptX HD one. The stream frames with
+// AptxHd::kSamplesPerFrame and AptxHd::kFrameBytes, so another shape would read past the PCM
+// record or write past the frame stride.
+class OddShapeEncoder final : public IA2dpEncoder
+{
+public:
+	OddShapeEncoder(uint32_t samplesPerFrame, size_t frameBytes)
+		: samplesPerFrame_(samplesPerFrame), frameBytes_(frameBytes)
+	{
+	}
+
+	PcmFormat InputFormat() const noexcept override { return PcmFormat{48000, 2, AptxHd::kBitsPerSample}; }
+	uint32_t SamplesPerFrame() const noexcept override { return samplesPerFrame_; }
+	size_t MaxFrameBytes() const noexcept override { return frameBytes_; }
+	HRESULT Encode(const uint8_t*, uint8_t*, size_t, size_t& written) noexcept override
+	{
+		written = 0;
+		return E_FAIL;
+	}
+	size_t FramesPerPacket(size_t payloadCapacity) const noexcept override
+	{
+		return frameBytes_ != 0 ? payloadCapacity / frameBytes_ : 0;
+	}
+	size_t BuildMediaPayload(const uint8_t*, const size_t*, size_t, uint8_t*, size_t) noexcept override
+	{
+		return 0;
+	}
+
+private:
+	uint32_t samplesPerFrame_;
+	size_t frameBytes_;
+};
+
 } // namespace
 
 TEST(AptxHdStream_StartRejectsUnusableEncoder)
@@ -65,6 +98,10 @@ TEST(AptxHdStream_StartRejectsUnusableEncoder)
 	params.sampleRate = 48000;
 	CHECK(!stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, pcm.view, 0));
 	CHECK(!stream.Active());
+
+	// The record layout is four samples to six bytes; another shape would overrun a buffer.
+	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(2, AptxHd::kFrameBytes), params, pcm.view, 0));
+	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(AptxHd::kSamplesPerFrame, 2), params, pcm.view, 0));
 }
 
 TEST(AptxHdStream_PacesTenMillisecondRecords)
