@@ -12,9 +12,11 @@ v1 assumptions:
   Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at 44.1 kHz and
   320 kbps at 48 kHz);
 - one LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
-- the ACX endpoint offers 16-bit stereo at 44.1 and 48 kHz; the encoder follows the rate
-  Windows opened the stream with. 16-bit is also the encoder's only input depth: Media
-  Foundation rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`).
+- the ACX endpoint lists 16-bit stereo at 44.1 and 48 kHz for this path; the encoder follows
+  the rate Windows opened the stream with. 16-bit is also the encoder's only input depth:
+  Media Foundation rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`), so a 24-in-32 stream
+  would have to be converted before it reaches the encoder
+  ([PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)).
 
 Invariants:
 

@@ -20,10 +20,13 @@ advertises, a pinned rate and channel count is offered alone. The driver still a
 format on its own - Windows opens the listed one and its format reaches the encoder when the
 stream runs.
 
-The driver can publish 16-bit PCM at 44.1 and 48 kHz, mono and stereo. After discovery it
-lists the intersection with the sink's SBC rate/channel capabilities. The selected format is
-recorded as the device's `PinSampleRate`/`PinChannels`, drives the position and packet math
-and the PCM buffers, and AVDTP then negotiates a configuration that matches it.
+The driver can publish PCM at 44.1 and 48 kHz, mono and stereo, and lists only the 16-bit
+variants today: the 24-in-32 ones wait for an encoder that takes 24-bit input (aptX HD; see
+[PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)). After discovery it lists
+the intersection with the sink's SBC rate/channel capabilities. The selected format is
+recorded as the device's `PinSampleRate`/`PinChannels`/`PinValidBits`, drives the position
+and packet math and the PCM buffers, and AVDTP then negotiates a configuration that matches
+it.
 
 Codec settings never narrow this list; only the endpoint format setting does. The old
 `--rate`/`--channels` flags are gone (use `format`), and the registry values they wrote are
@@ -82,23 +85,25 @@ logged. The same property also arrives as a
 device start, not per request, and the stream processing mode is logged once per stream.
 `EvtAcxPinSetDataFormat` is not a Sound-settings callback:
 [ACX supports it only on non-software-streaming pins](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/acx-data-formats).
-The actual stream format arrives at `OnCreateStream`, is validated as supported 16-bit PCM,
-and triggers AVDTP renegotiation when it differs. Missing/invalid formats are refused, not
-reported as a fabricated 44100 stereo fallback.
+The actual stream format arrives at `OnCreateStream`, is validated as PCM the endpoint lists
+(16-bit, or 24-in-32 when such a format is listed), and triggers AVDTP renegotiation when it
+differs. Missing/invalid formats are refused, not reported as a fabricated 44100 stereo
+fallback.
 
-Logs report `endpoint formats` (what is listed, 16-bit, provisional before discovery or the
-sink's SBC capabilities after) and `endpoint format ... (actual stream)` (the format the
-encoder follows). The media/AVDTP logs report the negotiated codec format, not the Windows
-mix format. The list line is printed only when the list actually changes, and ACX's own
-format-change notification is not duplicated explicitly. The property traffic Windows uses to
-build the graph is not logged: it is hundreds of requests per graph and none of them can
-decide the format.
+Logs report `endpoint formats` (what is listed with its rate, channels and depth,
+provisional before discovery or the sink's SBC capabilities after) and
+`endpoint format ... (actual stream)` (the format the encoder follows). The media/AVDTP logs
+report the negotiated codec format, not the Windows mix format. The list line is printed only
+when the list actually changes, and ACX's own format-change notification is not duplicated
+explicitly. The property traffic Windows uses to build the graph is not logged: it is
+hundreds of requests per graph and none of them can decide the format.
 
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
 would leave both codecs without an encoder (the native Windows A2DP endpoint stops at the
-same two rates). 16-bit is the sample format both encoders consume; wider formats would
-need a sample-format conversion stage on the PCM path.
+same two rates). 16-bit is the sample format both encoders consume; 24-in-32 exists only for
+aptX HD, and SBC or AAC fed from such a stream would need a downconversion stage on the PCM
+path.
 
 ## Stored preference
 

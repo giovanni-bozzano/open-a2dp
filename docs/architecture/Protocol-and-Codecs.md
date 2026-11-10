@@ -17,9 +17,9 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 
 ## PCM depth and 24-bit aptX HD
 
-Depth is 16-bit everywhere today: the endpoint publishes 16-bit formats, `PcmFormat` has no
-depth and `IA2dpEncoder::Encode` takes `int16_t*`. That is SBC's and the Windows AAC
-encoder's own input, not what aptX HD should be given.
+The endpoint lists 16-bit formats today, `PcmFormat` has no depth and `IA2dpEncoder::Encode`
+takes `int16_t*`. That is SBC's and the Windows AAC encoder's own input, not what aptX HD
+should be given.
 
 **Decision: 24-bit is native end to end.** No 16->24 expansion adapter goes into a codec
 wrapper. The HD encoder already consumes 24-bit samples, so a pad would feed zeroed low

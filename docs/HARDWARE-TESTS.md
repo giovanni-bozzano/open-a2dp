@@ -284,7 +284,7 @@ it), reattach.
    Pick another one there and play: the stream still runs at the first listed format
    (`endpoint format ... (actual stream)`), because the picker does not reach the driver.
 2. While streaming, `OpenA2dpCtl format 48000 2`.
-- Expect `endpoint format set to 48000 Hz 2 ch`, `endpoint formats 48000 Hz 2 ch`,
+- Expect `endpoint format set to 48000 Hz 2 ch`, `endpoint formats 48000 Hz 2 ch 16-bit`,
   `jack unplugged for 80 ms so Windows rebuilds the endpoint`, then within a second
   `status` reporting `codec SBC, 48000 Hz, 2 ch`. No `rediscovering`, no sink reconnect;
   the sink's own display follows to 48 kHz. Audio pauses for the length of the flap and
@@ -292,9 +292,9 @@ it), reattach.
 3. *Advanced* now offers that one format only. Choose `16 bit, 44100 Hz` there and play:
    the stream keeps running at 48 kHz.
 4. Reconnect the sink: `Config: endpoint format 48000 Hz 2 ch restored from the registry`
-   and `endpoint formats 48000 Hz 2 ch` appear before Windows opens anything.
+   and `endpoint formats 48000 Hz 2 ch 16-bit` appear before Windows opens anything.
 5. `format 48000 1`, play (S).
-- Expect `endpoint format 48000 Hz 1 ch`, `configured codec SBC` with `mode 0` and audible
+- Expect `endpoint format 48000 Hz 1 ch 16-bit`, `configured codec SBC` with `mode 0` and audible
   mono audio; `status` shows one channel. Repeat on A: AAC negotiates mono.
 6. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 1 ch`, `status`
    reports the 48 kHz bitrate, audio is audible.
