@@ -12,7 +12,8 @@ v1 assumptions:
   Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at 44.1 kHz and
   320 kbps at 48 kHz);
 - aptX HD at 44.1/48 kHz stereo, 24-in-32 input, one record of ten milliseconds per RTP
-  packet (110 frames at 44.1 kHz, 120 at 48 kHz, six bytes each);
+  packet (110 or 111 six-byte frames at 44.1 kHz, 120 at 48 kHz; the samples a frame cannot
+  hold are carried into the next record, as for classic aptX);
 - classic aptX at 44.1/48 kHz stereo, 16-bit input, one record of ten milliseconds per RTP
   packet (110 or 111 four-byte frames at 44.1 kHz, 120 at 48 kHz; the odd sample per span is
   carried into the next record so the clock does not drift);
