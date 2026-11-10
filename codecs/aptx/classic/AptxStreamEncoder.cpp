@@ -32,10 +32,12 @@ bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxS
 	const PcmFormat format = encoder->InputFormat();
 	const uint32_t samplesPerFrame = encoder->SamplesPerFrame();
 	const size_t maxFrameBytes = encoder->MaxFrameBytes();
+	// The record layout below is the codec's fixed four samples to four bytes; an encoder
+	// with another shape would read past the record or write past the frame stride.
 	if (format.sampleRate != params.sampleRate || format.channels != params.channels ||
-		format.bitsPerSample != Aptx::kBitsPerSample || params.channels != 2 || samplesPerFrame == 0 ||
-		maxFrameBytes == 0 || params.sampleRate % 100 != 0 ||
-		encoder->FramesPerPacket(Ioctl::kMaxFramePayload) == 0)
+		format.bitsPerSample != Aptx::kBitsPerSample || params.channels != 2 ||
+		samplesPerFrame != Aptx::kSamplesPerFrame || maxFrameBytes != Aptx::kFrameBytes ||
+		params.sampleRate % 100 != 0 || encoder->FramesPerPacket(Ioctl::kMaxFramePayload) == 0)
 	{
 		return false;
 	}
