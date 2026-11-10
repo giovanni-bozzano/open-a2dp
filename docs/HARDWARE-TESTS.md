@@ -396,7 +396,9 @@ classic aptX but not aptX HD.
    codecs` and reports `codec aptX, <rate> Hz, 2 ch, 384000 bps` (352800 at 44.1 kHz).
 2. Driver log shows `sink offers aptX`, `configured codec aptX IE 4F 00 00 00`, and `aptX
    <rate> Hz stereo 16-bit, ... frames from service`; after a minute `send failures` and
-   `underruns` stay at 0, which also proves the 44.1 kHz sample carry does not drift.
+   `underruns` stay at 0. At 44.1 kHz also let it play for several minutes and check the
+   sink stays in sync against the PC: that is what the sample carry protects, and underruns
+   alone would not show it.
 3. A sink advertising both aptX codecs selects aptX HD; forcing `codec aptx` moves the same
    connection to classic aptX and back.
 4. `OpenA2dpCtl codec aptx` on a sink that does not advertise it: refused, stored
