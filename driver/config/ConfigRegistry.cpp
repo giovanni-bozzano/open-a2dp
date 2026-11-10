@@ -32,7 +32,7 @@ const char* PreferenceName(const Ioctl::Preference& preference)
 	{
 		return "auto";
 	}
-	return preference.codec == Ioctl::kCodecSbc ? "SBC" : "AAC";
+	return CodecValueName(preference.codec);
 }
 
 bool OpenParametersKey(ACCESS_MASK access, WDFKEY* key)
