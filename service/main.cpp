@@ -333,9 +333,13 @@ void DeviceLoop(const std::wstring& linkName)
 			aptxStreamEncoder.Stop();
 
 			if (ev.codec == Ioctl::kCodecAptxHd) {
-				Log("[svc] aptX HD stream start: %u Hz, %u ch", ev.sampleRate, ev.channels);
-				if (ev.channels != 2) {
-					Log("[svc] aptX HD needs stereo, got %u ch", ev.channels);
+				Log("[svc] aptX HD stream start: %u Hz, %u ch, %u-bit", ev.sampleRate, ev.channels,
+					ev.pcmValidBits);
+				// The HD encoder reads 24-in-32 words; a narrower pin would hand it pairs of
+				// samples as one word. Refuse instead of encoding noise.
+				if (ev.channels != 2 || ev.pcmValidBits != AptxHd::kBitsPerSample) {
+					Log("[svc] aptX HD needs 24-bit stereo, got %u ch %u-bit", ev.channels,
+						ev.pcmValidBits);
 					continue;
 				}
 
