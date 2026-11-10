@@ -48,7 +48,33 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 5. Turn it off when finished: `verifier /reset`, delete the `Parameters\Wdf` values,
    reboot.
 
-### 1.3 Baseline before each session
+### 1.3 Restore check (M6 exit gate)
+The deploy script doubles as the restore check and needs no package, so it can run against
+whatever the VM has installed:
+
+```
+scripts/deploy-vm.ps1 -Uninstall
+```
+
+It stops the service and the tools, removes the `opena2dp.inf` package with
+`pnputil /delete-driver oem<N>.inf /uninstall /force`, deletes the `OpenA2dpSvc` service,
+then waits up to 30 s for a node bound to `BthA2dp`. The guest log is streamed as it runs.
+
+Expect `removing driver package oem<N>.inf` (or `no OpenA2dp package in the driver store`),
+a `BthA2dp: <name> status=...` line, `OpenA2dpCtl list: No OpenA2dp devices found`, then
+`RESTORED` and `Restore check passed` on the host.
+
+The check fails while any of these is still true: an `OpenA2dp` device node exists;
+`sc query OpenA2dp` or `sc query OpenA2dpSvc` does not answer 1060; `Win32_SystemDriver`
+lists `OpenA2dp`; `pnputil /enum-drivers` still shows `opena2dp.inf`;
+`C:\Windows\System32\drivers\OpenA2dp.sys` exists; nothing is bound to `BthA2dp`;
+`OpenA2dpCtl list` still finds a control device. Rerunning it on an already restored VM
+repeats the checks without removing anything.
+
+Then play audio to the sink: the Microsoft A2DP path must work again, without a reboot. If
+the sink has not reconnected yet, the script says so - reconnect it and rerun.
+
+### 1.4 Baseline before each session
 1. Deploy the build under test and note the commit (`git log -n 1 --oneline`).
 2. Pair the sink; `OpenA2dpCtl list` (elevated) shows it.
 3. `sc query OpenA2dpSvc` is `RUNNING` unless the test says otherwise.

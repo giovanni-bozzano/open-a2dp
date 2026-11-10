@@ -24,6 +24,11 @@
     The script never reboots or hard-stops the VM, except for the explicit -Snapshot revert.
 
 .PARAMETER Configuration  Debug (default) or Release.
+.PARAMETER Uninstall      Restore check instead of a deploy: remove the OpenA2dp driver package,
+                          the encoder service and the per-sink device node, then verify that the
+                          driver, its service, its control links and its package are gone and
+                          that a sink is bound to BthA2dp again. Leaves the copied binaries in
+                          C:\OpenA2dp so a redeploy needs no rebuild.
 .PARAMETER Snapshot       Snapshot to revert to before deploying (a running VM is stopped first).
 .PARAMETER Build          Build the solution and run CodecTests first.
 .PARAMETER Start          Start the VM if it is not running.
@@ -44,6 +49,7 @@ param(
     [switch]$NoRestart,
     [switch]$SkipTests,
     [switch]$KeepAudio,
+    [switch]$Uninstall,
     [int]$InstallTimeoutSec = 240,
     [string]$VmConfig,
     [string]$VmRun
@@ -178,31 +184,34 @@ if ($Build) {
 }
 
 # ---------- locate artifacts ----------
-$out = Join-Path $root "out\x64\$Configuration"
-$package = Join-Path $out 'OpenA2dp'
-$sys = Join-Path $package 'OpenA2dp.sys'
-$inf = Join-Path $package 'OpenA2dp.inf'
-$ctl = Join-Path $out 'OpenA2dpCtl.exe'
-$svc = Join-Path $out 'OpenA2dpSvc.exe'
-$ui = Join-Path $out 'OpenA2dpConfig.exe'
-foreach ($p in $sys, $inf, $ctl, $svc, $ui) {
-    if (-not (Test-Path $p)) { throw "Missing $p; build first." }
-}
-$catalog = Get-ChildItem $package -Filter '*.cat' | Select-Object -First 1
-if (-not $catalog) { throw "No catalog in $package; build first." }
+# The restore check only removes what an earlier deploy installed, so it needs no package.
+if (-not $Uninstall) {
+    $out = Join-Path $root "out\x64\$Configuration"
+    $package = Join-Path $out 'OpenA2dp'
+    $sys = Join-Path $package 'OpenA2dp.sys'
+    $inf = Join-Path $package 'OpenA2dp.inf'
+    $ctl = Join-Path $out 'OpenA2dpCtl.exe'
+    $svc = Join-Path $out 'OpenA2dpSvc.exe'
+    $ui = Join-Path $out 'OpenA2dpConfig.exe'
+    foreach ($p in $sys, $inf, $ctl, $svc, $ui) {
+        if (-not (Test-Path $p)) { throw "Missing $p; build first." }
+    }
+    $catalog = Get-ChildItem $package -Filter '*.cat' | Select-Object -First 1
+    if (-not $catalog) { throw "No catalog in $package; build first." }
 
-$driverVer = (Select-String -Path $inf -Pattern '^DriverVer\s*=' | Select-Object -First 1).Line
-Write-Host "Package: $package"
-if ($driverVer) { Write-Host $driverVer.Trim() }
+    $driverVer = (Select-String -Path $inf -Pattern '^DriverVer\s*=' | Select-Object -First 1).Line
+    Write-Host "Package: $package"
+    if ($driverVer) { Write-Host $driverVer.Trim() }
 
-# Export the test certificate that signed the driver (plain .NET: avoids PS module issues).
-try {
-    $signer = [System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($sys)
-} catch {
-    throw "Package is not signed or its signature could not be read: $($_.Exception.Message)"
+    # Export the test certificate that signed the driver (plain .NET: avoids PS module issues).
+    try {
+        $signer = [System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($sys)
+    } catch {
+        throw "Package is not signed or its signature could not be read: $($_.Exception.Message)"
+    }
+    $cer = Join-Path $local 'OpenA2dpTest.cer'
+    [System.IO.File]::WriteAllBytes($cer, $signer.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
 }
-$cer = Join-Path $local 'OpenA2dpTest.cer'
-[System.IO.File]::WriteAllBytes($cer, $signer.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
 
 # ---------- VM power state ----------
 if ($Snapshot) {
@@ -246,27 +255,29 @@ function Stop-GuestBinaries {
     [void](Try-VmRun ($auth + @('runProgramInGuest', $vmx, "$sys32\taskkill.exe", '/F', '/IM', 'OpenA2dpConfig.exe')))
     Start-Sleep -Seconds 2
 }
-Stop-GuestBinaries
+if (-not $Uninstall) {
+    Stop-GuestBinaries
 
-$files = @(Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) +
-    (Get-Item $cer) + (Get-Item $ctl) + (Get-Item $svc) + (Get-Item $ui)
-foreach ($file in $files) {
-    Write-Host "Copying $($file.Name)"
-    $dest = "C:\OpenA2dp\$($file.Name)"
-    $copied = $false
-    foreach ($attempt in 1..3) {
-        $code = Try-VmRun ($auth + @('CopyFileFromHostToGuest', $vmx, $file.FullName, $dest))
-        if ($code -eq 0) { $copied = $true; break }
-        Write-Warning "Copy of $($file.Name) failed (exit $code), attempt $attempt/3; the file is probably locked. Stopping guest processes and retrying."
-        Stop-GuestBinaries
-        [void](Try-VmRun ($auth + @('deleteFileInGuest', $vmx, $dest)))
+    $files = @(Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) +
+        (Get-Item $cer) + (Get-Item $ctl) + (Get-Item $svc) + (Get-Item $ui)
+    foreach ($file in $files) {
+        Write-Host "Copying $($file.Name)"
+        $dest = "C:\OpenA2dp\$($file.Name)"
+        $copied = $false
+        foreach ($attempt in 1..3) {
+            $code = Try-VmRun ($auth + @('CopyFileFromHostToGuest', $vmx, $file.FullName, $dest))
+            if ($code -eq 0) { $copied = $true; break }
+            Write-Warning "Copy of $($file.Name) failed (exit $code), attempt $attempt/3; the file is probably locked. Stopping guest processes and retrying."
+            Stop-GuestBinaries
+            [void](Try-VmRun ($auth + @('deleteFileInGuest', $vmx, $dest)))
+        }
+        if (-not $copied) { throw "Copying $($file.Name) failed after 3 attempts. Is the file open in the guest?" }
     }
-    if (-not $copied) { throw "Copying $($file.Name) failed after 3 attempts. Is the file open in the guest?" }
 }
 
 # ---------- guest installer ----------
 $guestScript = @'
-param([switch]$NoRestart, [switch]$KeepAudio)
+param([switch]$NoRestart, [switch]$KeepAudio, [switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
 $dir = 'C:\OpenA2dp'
 $log = "$dir\install.log"
@@ -334,6 +345,28 @@ function Wait-Until([scriptblock]$Condition, [int]$TimeoutSec) {
         Start-Sleep -Milliseconds 500
     }
     return [bool](& $Condition)
+}
+
+# Ends every process that holds a handle on the driver. Restart-on-failure is disabled first,
+# so a forced kill cannot relaunch the service while the caller works on the device.
+function Stop-OpenA2dpProcesses {
+    [void](Run 'sc.exe' 'failure OpenA2dpSvc reset= 0 actions= ""' 20)
+    [void](Run 'sc.exe' 'stop OpenA2dpSvc' 20)
+    [void](Run 'taskkill.exe' '/F /IM OpenA2dpSvc.exe' 20)
+    [void](Run 'taskkill.exe' '/F /IM OpenA2dpCtl.exe' 20)
+    [void](Run 'taskkill.exe' '/F /IM OpenA2dpConfig.exe' 20)
+    [void](Wait-Until { (& sc.exe query OpenA2dpSvc 2>&1 | Out-String) -notmatch 'RUNNING|STOP_PENDING' } 15)
+}
+
+# Published atomically so the host never reads a half-written file.
+function Publish-Result([string]$Text) {
+    foreach ($try in 1..20) {
+        try {
+            Set-Content -Path "$resultFile.tmp" -Value $Text -Encoding Ascii -ErrorAction Stop
+            Move-Item -Path "$resultFile.tmp" -Destination $resultFile -Force -ErrorAction Stop
+            return
+        } catch { Start-Sleep -Milliseconds 200 }
+    }
 }
 
 # A PnP call that times out is stuck in the kernel (the driver is not completing a stop or
@@ -409,6 +442,75 @@ function Enable-All($Ids) {
     }
 }
 
+# Removes the deployed package and service, then proves the sink is back on Microsoft's A2DP
+# source service. Returns 'RESTORED', or 'FAIL: <problems>'.
+function Invoke-Restore {
+    $problems = @()
+
+    # 1. Remove the package whose INF is ours. /uninstall also removes the device nodes using
+    #    it, which hands the sink back to the Bluetooth stack.
+    $published = $null
+    $packages = @()
+    foreach ($line in ((& pnputil.exe /enum-drivers 2>&1 | Out-String) -split "`r?`n")) {
+        if ($line -match 'Published Name:\s+(\S+)') { $published = $Matches[1] }
+        elseif ($published -and $line -match 'Original Name:\s+opena2dp\.inf') { $packages += $published }
+    }
+    if ($packages.Count -eq 0) { Log 'no OpenA2dp package in the driver store' }
+    foreach ($pkg in $packages) {
+        Log "removing driver package $pkg"
+        [void](Run 'pnputil.exe' "/delete-driver $pkg /uninstall /force" 120)
+    }
+
+    # 2. Remove the encoder service; nothing is left for it to attach to.
+    [void](Run 'sc.exe' 'delete OpenA2dpSvc' 20)
+
+    # 3. Give Windows a moment to rebind the sink, then check the restore from every side:
+    #    the device node, both services, the package, the image, the sink's own binding and
+    #    the control-device links the CLI enumerates.
+    $bthA2dp = { @(Get-CimInstance Win32_PnPEntity -Filter "Service='BthA2dp'" -ErrorAction SilentlyContinue).Count -gt 0 }
+    if (-not (Wait-Until $bthA2dp 30)) { Log 'warning: nothing is bound to BthA2dp yet' }
+
+    if (@(Get-Devices).Count -gt 0) { $problems += 'an OpenA2dp device node is still present' }
+    if ((& sc.exe query OpenA2dp 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2dp driver service is still registered' }
+    if ((& sc.exe query OpenA2dpSvc 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2dp encoder service is still registered' }
+    if (Get-CimInstance Win32_SystemDriver -Filter "Name='OpenA2dp'" -ErrorAction SilentlyContinue) { $problems += 'Win32_SystemDriver still lists OpenA2dp' }
+    if ((& pnputil.exe /enum-drivers 2>&1 | Out-String) -match 'opena2dp\.inf') { $problems += 'the OpenA2dp package is still in the driver store' }
+    if (Test-Path (Join-Path $env:SystemRoot 'System32\drivers\OpenA2dp.sys')) { $problems += 'OpenA2dp.sys is still in System32\drivers' }
+
+    $sinks = @(Get-CimInstance Win32_PnPEntity -Filter "Service='BthA2dp'" -ErrorAction SilentlyContinue)
+    foreach ($sink in $sinks) { Log "    BthA2dp: $($sink.Name) status=$($sink.Status)" }
+    if ($sinks.Count -eq 0) { $problems += 'no device is bound to BthA2dp; reconnect the sink' }
+
+    $ctl = Join-Path $dir 'OpenA2dpCtl.exe'
+    if (Test-Path $ctl) {
+        $listing = (& $ctl list 2>&1 | Out-String)
+        Log ('    OpenA2dpCtl list: ' + (($listing.Trim() -split "`r?`n") -join ' | '))
+        if ($listing -notmatch 'No OpenA2dp devices found') { $problems += 'OpenA2dpCtl still finds a control device' }
+    }
+
+    if ($problems.Count -eq 0) { return 'RESTORED' }
+    foreach ($problem in $problems) { Log "    problem: $problem" }
+    return "FAIL: $($problems -join '; ')"
+}
+
+# ---------- restore check ----------
+# Runs alone: remove what a deploy installed, then verify the sink is back on BthA2dp.
+if ($Uninstall) {
+    try {
+        Set-Location $dir
+        Log "restore check pid $PID"
+        Stop-OpenA2dpProcesses
+        $resultText = Invoke-Restore
+    } catch {
+        Log "ERROR: $($_.Exception.Message)"
+        $resultText = "FAIL: $($_.Exception.Message)"
+    }
+    if ($resultText -ne 'RESTORED') { $exitCode = 1 }
+    Log $resultText
+    Publish-Result $resultText
+    exit $exitCode
+}
+
 try {
     Set-Location $dir
     Log "installer pid $PID, NoRestart=$NoRestart"
@@ -416,14 +518,7 @@ try {
     Log "os: $($os.Caption) build $($os.BuildNumber)"
 
     # 1. Release handles held by the encoder service and the CLI.
-    # Disable restart-on-failure first, so a forced kill cannot relaunch the service (and its
-    # handle on the driver) while we unload; step 8 restores the recovery actions.
-    [void](Run 'sc.exe' 'failure OpenA2dpSvc reset= 0 actions= ""' 20)
-    [void](Run 'sc.exe' 'stop OpenA2dpSvc' 20)
-    [void](Run 'taskkill.exe' '/F /IM OpenA2dpSvc.exe' 20)
-    [void](Run 'taskkill.exe' '/F /IM OpenA2dpCtl.exe' 20)
-    [void](Run 'taskkill.exe' '/F /IM OpenA2dpConfig.exe' 20)
-    [void](Wait-Until { (& sc.exe query OpenA2dpSvc 2>&1 | Out-String) -notmatch 'RUNNING|STOP_PENDING' } 15)
+    Stop-OpenA2dpProcesses
 
     # 2. Trust the test certificate.
     if ((Run 'certutil.exe' '-f -addstore Root OpenA2dpTest.cer' 30) -ne 0) { throw 'certutil Root failed' }
@@ -575,14 +670,7 @@ try {
 if ($audioStopped) {
     [void](Run 'net.exe' 'start audiosrv' 60)
 }
-# Publish the result atomically so the host never reads a half-written file.
-foreach ($try in 1..20) {
-    try {
-        Set-Content -Path "$resultFile.tmp" -Value $resultText -Encoding Ascii -ErrorAction Stop
-        Move-Item -Path "$resultFile.tmp" -Destination $resultFile -Force -ErrorAction Stop
-        break
-    } catch { Start-Sleep -Milliseconds 200 }
-}
+Publish-Result $resultText
 exit $exitCode
 '@
 
@@ -594,6 +682,7 @@ Invoke-VmRun 'Copying the guest installer' ($auth + @('CopyFileFromHostToGuest',
 $psCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OpenA2dp\install.ps1'
 if ($NoRestart) { $psCmd += ' -NoRestart' }
 if ($KeepAudio) { $psCmd += ' -KeepAudio' }
+if ($Uninstall) { $psCmd += ' -Uninstall' }
 $cmdPath = Join-Path $local 'install.cmd'
 Set-Content -Path $cmdPath -Encoding ascii -Value @('@echo off', $psCmd, 'exit /b %errorlevel%')
 Invoke-VmRun 'Copying the guest launcher' ($auth + @('CopyFileFromHostToGuest', $vmx, $cmdPath, 'C:\OpenA2dp\install.cmd'))
@@ -631,11 +720,15 @@ if (-not $finished) {
 }
 
 $result = (Get-Content $resultPath -Raw).Trim()
-if ($result -ne 'OK') {
-    throw "Guest installation failed: $result  (log: $logPath)"
+$expected = if ($Uninstall) { 'RESTORED' } else { 'OK' }
+if ($result -ne $expected) {
+    $what = if ($Uninstall) { 'restore check' } else { 'installation' }
+    throw "Guest $what failed: $result  (log: $logPath)"
 }
 
-if ($NoRestart) {
+if ($Uninstall) {
+    Write-Host "`nRestore check passed. The sink is back on BthA2dp; play audio to it to confirm the Microsoft path works."
+} elseif ($NoRestart) {
     Write-Host "`nDeployment complete. The package is installed; the device was not restarted (-NoRestart)."
 } else {
     Write-Host "`nDeployment complete. The driver was reloaded without a reboot and verified."
