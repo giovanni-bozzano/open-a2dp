@@ -147,9 +147,11 @@ silent instead of retried. The MTU the channel reported is kept for the rest of 
 connection, so a codec switch - which rediscovers and negotiates again with no channel open
 - is already capped by it, and it is dropped when the connection ends.
 
-PCM depth is 16-bit everywhere: the endpoint publishes 16-bit formats, SBC carries 16-bit
-samples by definition, and the Media Foundation AAC encoder rejects 24-bit, 32-bit and
-float input (`0xC00D36B4`), so a 24-bit endpoint would only add a truncation step.
+PCM depth is 16-bit today: the endpoint lists 16-bit formats and `PcmFormat` has no depth.
+That is SBC's and the Media Foundation encoder's own input (24-bit, 32-bit and float PCM
+are rejected with `0xC00D36B4`), so depth is not a setting and has no preference field:
+the 24-bit path is tied to aptX HD, which lists 24-in-32 when it is the codec in use. The
+decision and its sequencing are in [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd).
 
 A value the sink does not advertise falls back to the selector's own order instead of
 failing the negotiation; a bitpool is lifted to the sink's minimum and capped at its
