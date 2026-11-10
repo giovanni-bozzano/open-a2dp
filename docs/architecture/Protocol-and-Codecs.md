@@ -4,9 +4,9 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 
 ## Negotiation
 - Source flow: DISCOVER -> GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START; SUSPEND, CLOSE and ABORT release stream state. The state machine also accepts sink-initiated configuration.
-- Local SEID 1 (SBC), SEID 2 (AAC) and SEID 3 (aptX HD) are always advertised. AAC and aptX HD are selected/accepted only while their encoder provider is registered; a late registration closes a streaming lower-quality session and rediscovers (initiator role only).
-- Prefer a forced codec when available, otherwise aptX HD > AAC > SBC. Keep scored sink candidates and fall back after rejected configuration rather than requiring reconnect.
-- aptX HD is a vendor codec: SEP 3 carries vendor `0x000000D7` / codec `0x0024`, and a sink capability is matched to it by those IDs in its IE, because AVDTP has one codec type for every vendor codec. HD is selectable only as 24-bit stereo, at 44.1 or 48 kHz, and only when the endpoint pin is 24-in-32 stereo (a 16-bit pin falls back to AAC/SBC instead of expanding).
+- Local SEID 1 (SBC), SEID 2 (AAC), SEID 3 (aptX HD) and SEID 4 (classic aptX) are always advertised. AAC and the aptX codecs are selected/accepted only while their encoder provider is registered; a late registration closes a streaming lower-quality session and rediscovers (initiator role only).
+- Prefer a forced codec when available, otherwise aptX HD > aptX > AAC > SBC. Keep scored sink candidates and fall back after rejected configuration rather than requiring reconnect.
+- Both aptX codecs are vendor codecs: SEP 3 carries vendor `0x000000D7` / codec `0x0024`, SEP 4 carries vendor `0x0000004F` / codec `0x0001`, and a sink capability is matched to a SEP by those IDs in its IE, because AVDTP has one codec type for every vendor codec. HD is selectable only as 24-bit stereo and classic only as 16-bit stereo, at 44.1 or 48 kHz, and only when the endpoint pin carries that depth in stereo (a pin at the other depth falls back to a codec that fits instead of converting). Their IEs share the layout in `VendorAptx.h`: four-byte vendor ID, two-byte codec ID and the rate/mode byte; HD appends four reserved bytes.
 - Driver SBC capabilities match ACX: 44.1/48 kHz stereo-family modes. Default selection uses 16 blocks, 8 subbands, joint stereo/loudness and bitpool capped at 53, subject to sink support.
 - AAC format/payload limits: [service boundary](AAC-Service-Boundary.md). Broader rates and parameter overrides are [planned](Codec-Configuration.md), not current capabilities.
 
@@ -14,8 +14,8 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 - RTP: 12-byte header, version 2, payload type 96; sequence advances per packet and timestamps in PCM samples.
 - SBC adds a one-byte payload header with frame count; pack whole frames within media MTU. Example: 44.1 kHz joint stereo, 16 blocks, 8 subbands, bitpool 53 yields 119-byte frames.
 - AAC uses one LATM AudioMuxElement per record/RTP packet with inline stream configuration. No oversized-frame fragmentation; the negotiated bitrate is capped to what one packet carries (256 kbps at 44.1 kHz, 320 kbps at 48 kHz for the 895-byte MTU).
-- aptX HD keeps the RTP header (12 bytes, payload type 96) and carries concatenated 6-byte frames with no codec-specific payload header: each frame is three bytes per channel for four samples. The service writes one 10 ms record per packet (120 frames at 48 kHz, 110 at 44.1 kHz, i.e. 576 kbps at 48 kHz); the driver sends a record whole, as it does an AAC access unit.
-- Kernel SBC uses integer-only `SbcFixed`; it and the codec library's floating-point `SbcEncoder` allocate bits with the shared `SbcAllocation` solver and write the same `SbcFrame` header, CRC and tail padding; only the filterbank, scale-factor search and quantizer stay per-encoder. No production path selects the codec library's SBC encoder (the driver encodes SBC in the kernel, the service encodes AAC and aptX HD): it is the reference implementation the tests pin frame layout against. The independent test decoder is a sanity reference, not external interoperability proof; synthesis gain is `-M`, with 73/37-sample delay for 8/4 subbands.
+- Both aptX codecs keep the RTP header (12 bytes, payload type 96) and carry concatenated frames with no codec-specific payload header. HD frames are six bytes (three per channel) for four samples, so a 10 ms record is 120 frames at 48 kHz and 110 at 44.1 kHz, 576 kbps at 48 kHz. Classic frames are four bytes (two per channel) for four samples, 384 kbps at 48 kHz and 352.8 kbps at 44.1 kHz; 10 ms of 44.1 kHz is 441 samples, so the service carries 0..3 samples into the next record and a record holds 110 or 111 frames. The driver sends a record whole, as it does an AAC access unit.
+- Kernel SBC uses integer-only `SbcFixed`; it and the codec library's floating-point `SbcEncoder` allocate bits with the shared `SbcAllocation` solver and write the same `SbcFrame` header, CRC and tail padding; only the filterbank, scale-factor search and quantizer stay per-encoder. No production path selects the codec library's SBC encoder (the driver encodes SBC in the kernel, the service encodes AAC, aptX and aptX HD): it is the reference implementation the tests pin frame layout against. The independent test decoder is a sanity reference, not external interoperability proof; synthesis gain is `-M`, with 73/37-sample delay for 8/4 subbands.
 
 ## PCM depth and 24-bit aptX HD
 
@@ -43,8 +43,9 @@ carries (`RegisterEncoderOut`/`WaitEventOut.pcmValidBits`).
   codec, because the Windows stream format is an input to `SelectConfig`, not its result.
   24-in-32 is listed only while aptX HD can actually run: its provider is registered, the
   current discovery found the codec, the user has not forced another codec, and the sink
-  advertises that rate. SBC, AAC and the provisional pre-discovery list stay 16-bit. A
-  forced HD pins the list to 24-bit.
+  advertises that rate. A forced HD pins the list to 24-bit. Otherwise 16-bit entries stay,
+  and they follow either the sink's SBC formats or its classic aptX formats, because either
+  codec can play them; forcing classic aptX narrows them to the formats it can run.
 
 Sequencing, together with the aptX HD milestone rather than before it:
 

@@ -304,7 +304,7 @@ it), reattach.
    to that one.
 8. `format 48000 2` on a 44.1-only sink is refused with the advertised masks, nothing is
    stored, and the endpoint keeps its previous list.
-9. `OpenA2dpCtl reset`: `codec preference reset to auto (aptX HD > AAC > SBC), endpoint format reset
+9. `OpenA2dpCtl reset`: `codec preference reset to auto (aptX HD > aptX > AAC > SBC), endpoint format reset
    to automatic (every format the sink supports)`, and both settings stay there after a
    reconnect.
 10. A sink that configures the stream itself with another rate or channel count
@@ -388,6 +388,18 @@ real player and a real sink; the scripted helpers in `.local/` cannot stand in f
 3. `OpenA2dpCtl codec sbc` while streaming: it renegotiates in the same connection and the
    endpoint keeps playing (no silence) through the rounded 24->16 downconvert.
 4. `OpenA2dpCtl codec aptxhd` on a sink that does not advertise it: refused, stored
+   preference unchanged.
+
+**T28 classic aptX negotiation and 16-bit path (S/A)** — service running, sink advertises
+classic aptX but not aptX HD.
+1. `OpenA2dpCtl codec auto`, connect and play. `OpenA2dpCtl status` lists aptX under `sink
+   codecs` and reports `codec aptX, <rate> Hz, 2 ch, 384000 bps` (352800 at 44.1 kHz).
+2. Driver log shows `sink offers aptX`, `configured codec aptX IE 4F 00 00 00`, and `aptX
+   <rate> Hz stereo 16-bit, ... frames from service`; after a minute `send failures` and
+   `underruns` stay at 0, which also proves the 44.1 kHz sample carry does not drift.
+3. A sink advertising both aptX codecs selects aptX HD; forcing `codec aptx` moves the same
+   connection to classic aptX and back.
+4. `OpenA2dpCtl codec aptx` on a sink that does not advertise it: refused, stored
    preference unchanged.
 
 ### Soak

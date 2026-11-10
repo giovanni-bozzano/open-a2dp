@@ -1,6 +1,6 @@
 # OpenA2dp
 
-Open-source A2DP source driver for Windows 11, built to replace `BthA2dp.sys` on a per-device basis. SBC is encoded in the kernel; AAC-LC and aptX HD are encoded in a user-mode service, the latter from native 24-bit PCM.
+Open-source A2DP source driver for Windows 11, built to replace `BthA2dp.sys` on a per-device basis. SBC is encoded in the kernel; AAC-LC, classic aptX and aptX HD are encoded in a user-mode service, the last from native 24-bit PCM.
 
 ## Status
 
@@ -8,15 +8,15 @@ The live milestone table and validation backlog are maintained only in [docs/STA
 
 Current implementation:
 
-- `OpenA2dp.sys`: KMDF profile driver above `bthport`. L2CAP PSM 0x19 signaling and media channels, AVDTP source (plus acceptor groundwork; SBC/AAC/aptX HD SEPs with provider-gated selection, aptX HD > AAC > SBC), ACX render endpoint with 16-bit and 24-in-32 formats, kernel fixed-point SBC encoder and RTP send.
+- `OpenA2dp.sys`: KMDF profile driver above `bthport`. L2CAP PSM 0x19 signaling and media channels, AVDTP source (plus acceptor groundwork; SBC/AAC/aptX/aptX HD SEPs with provider-gated selection, aptX HD > aptX > AAC > SBC), ACX render endpoint with 16-bit and 24-in-32 formats, kernel fixed-point SBC encoder and RTP send.
 - The audio endpoint is named `<sink> [OpenA2DP]` and typed as headphones or speakers from the sink's Class of Device.
 - `common/include/OpenA2dp`: kernel-safe AVDTP/RTP/ring-buffer/codec-selection headers, including `SbcConfig.h`, `AacConfig.h` and the driver/service ABI `Ioctl.h`.
 - `driver/service/`: driver side of the AAC boundary: per-device control device with a SYSTEM/Administrators SDDL, IOCTL queue, shared PCM/frame rings mapped into the service process, `WAIT_EVENT` ticked by the media timer. See the [driver map](driver/README.md) for all subsystems.
 - [Architecture references](docs/architecture/README.md): system overview, lifecycle, protocols and [AAC service boundary](docs/architecture/AAC-Service-Boundary.md).
-- `service/main.cpp`: encoder Windows service (`OpenA2dpSvc.exe`) for AAC-LC and aptX HD.
-- `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and Media Foundation/LATM encoder, plus the vendored AOSP aptX HD encoder behind the same seam.
+- `service/main.cpp`: encoder Windows service (`OpenA2dpSvc.exe`) for AAC-LC, classic aptX and aptX HD.
+- `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and Media Foundation/LATM encoder, plus the vendored AOSP aptX and aptX HD encoders behind the same seam.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.
-- `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC/aptX HD; deployed to the test VM by `scripts/deploy-vm.ps1`.
+- `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC/aptX/aptX HD; deployed to the test VM by `scripts/deploy-vm.ps1`.
 - `tools/OpenA2dpConfig`: desktop settings window (`OpenA2dpConfig.exe`) over the same IOCTLs: sink list, live status, and the codec and endpoint preference.
 - `tools/common`: the status report both tools print (`StatusReport`), so the window, its **Copy** button and `OpenA2dpCtl status` never show different fields; the window's **Details** box and `status --verbose` add every field with its hex value.
 
