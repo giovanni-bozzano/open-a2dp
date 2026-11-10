@@ -402,34 +402,53 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 	return 0;
 }
 
+bool SelectedCodecValue(DEVICE_CONTEXT* ctx, uint32_t& codecValue)
+{
+	if (ctx->Session.SelectedIeLength() == 0)
+	{
+		return false;
+	}
+	switch (ctx->Session.SelectedCodec())
+	{
+	case Avdtp::CodecType::Sbc:
+		codecValue = Ioctl::kCodecSbc;
+		return true;
+	case Avdtp::CodecType::Aac:
+		codecValue = Ioctl::kCodecAac;
+		return true;
+	case Avdtp::CodecType::Vendor:
+		break;
+	default:
+		return false;
+	}
+	uint8_t capabilities = 0;
+	if (AptxHd::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
+	{
+		codecValue = Ioctl::kCodecAptxHd;
+		return true;
+	}
+	if (Aptx::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
+	{
+		codecValue = Ioctl::kCodecAptx;
+		return true;
+	}
+	return false;
+}
+
 // Refreshes the snapshot GET_STATUS reads without taking SessionLock. Caller holds SessionLock.
 void PublishStatus(DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->AvdtpStateSnapshot, static_cast<LONG>(ctx->Session.State()));
 	LONG codec = 0;
-	if (ctx->Session.SelectedIeLength() != 0)
+	uint32_t value = 0;
+	if (SelectedCodecValue(ctx, value))
 	{
-		const Avdtp::CodecType selected = ctx->Session.SelectedCodec();
-		if (selected != Avdtp::CodecType::Vendor)
-		{
-			codec = static_cast<LONG>(selected);
-		}
-		else
-		{
-			uint8_t capabilities = 0;
-			if (AptxHd::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
-			{
-				codec = static_cast<LONG>(Ioctl::kCodecAptxHd);
-			}
-			else if (Aptx::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
-			{
-				codec = static_cast<LONG>(Ioctl::kCodecAptx);
-			}
-			else
-			{
-				codec = static_cast<LONG>(selected);
-			}
-		}
+		codec = static_cast<LONG>(value);
+	}
+	else if (ctx->Session.SelectedIeLength() != 0)
+	{
+		// A vendor IE the driver does not implement: report its AVDTP type as before.
+		codec = static_cast<LONG>(ctx->Session.SelectedCodec());
 	}
 	InterlockedExchange(&ctx->NegotiatedCodecSnapshot, codec);
 }

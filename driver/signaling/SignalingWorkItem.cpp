@@ -440,7 +440,12 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		return;
 	}
-	const bool codecDiffers = ctx->Session.SelectedCodec() != desired;
+	// The two aptX codecs share Avdtp::CodecType::Vendor, so the negotiated value is the
+	// only thing that can tell them apart; an HD-to-aptX change is a codec change too.
+	uint32_t selectedValue = 0;
+	const bool codecDiffers = SelectedCodecValue(ctx, selectedValue)
+		? selectedValue != desiredValue
+		: ctx->Session.SelectedCodec() != desired;
 	const bool formatDiffers = !SelectedFormatMatchesPin(ctx);
 	// Set by the media path when the stream started without audio because the AAC bitrate
 	// the negotiation picked does not fit the MTU the media channel reports.

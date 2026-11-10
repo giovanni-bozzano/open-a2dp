@@ -35,6 +35,10 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 // False when Windows opened the endpoint at another format than the stream was configured
 // with, which is what a changed endpoint format looks like once the stream is settled.
 bool SelectedFormatMatchesPin(DEVICE_CONTEXT* ctx);
+// The Ioctl::kCodec* value of the configured stream, derived from its IE because the two
+// aptX codecs share Avdtp::CodecType::Vendor. False when nothing is configured or the
+// vendor IE is not one of ours.
+bool SelectedCodecValue(DEVICE_CONTEXT* ctx, uint32_t& codecValue);
 // The selected AAC configuration rewritten at the highest bitrate the media channel's MTU
 // carries. False when the stream is not AAC or the configuration already fits.
 bool BuildMtuCappedConfiguration(DEVICE_CONTEXT* ctx, uint8_t* ie, size_t& ieLength);
