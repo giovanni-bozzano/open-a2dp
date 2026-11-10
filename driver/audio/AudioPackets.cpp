@@ -121,7 +121,13 @@ NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG posit
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const USHORT bytesPerFrame = ctx->PinBytesPerFrame;
-	*positionInBlocks = bytesPerFrame == 0 ? 0 : CurrentPositionLocked(ctx, qpcPosition) / bytesPerFrame;
+	ULONGLONG position = CurrentPositionLocked(ctx, qpcPosition);
+	// The stream is sent Ioctl::kPrerollMs ahead of the media clock, so the listener is that far
+	// behind the position the driver has consumed. Report what is being heard, or an app that
+	// syncs to the position leads the audio by the preroll.
+	const ULONGLONG lead = static_cast<ULONGLONG>(ctx->PinSampleRate) * Ioctl::kPrerollMs / 1000 * bytesPerFrame;
+	position = position > lead ? position - lead : 0;
+	*positionInBlocks = bytesPerFrame == 0 ? 0 : position / bytesPerFrame;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return STATUS_SUCCESS;
 }
