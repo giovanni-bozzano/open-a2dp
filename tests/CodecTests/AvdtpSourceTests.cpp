@@ -649,6 +649,27 @@ TEST(AvdtpSource_FailsWithoutUsableSink)
 	CHECK(s.LastDiscoveryFailure() == DiscoveryFailure::NoUsableSink);
 }
 
+TEST(AvdtpSource_FailsWhenSinkOffersOnlyAProprietaryCodec)
+{
+	// aptX and its variants are vendor-specific codecs (Media Codec Type 0xFF). Nothing may
+	// be guessed about their payload, so such a sink has no usable candidate and the session
+	// fails instead of configuring a stream we cannot encode.
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+	const uint8_t vendorIe[4] = {0x00, 0x00, 0x00, 0x01};
+
+	REQUIRE(s.Connect(cmd, sizeof(cmd)) == 2);
+	uint8_t seps[2];
+	WriteSepInfo({3, false, MediaType::Audio, SepType::Sink}, seps);
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, seps, sizeof(seps), rsp), cmd, sizeof(cmd)) == 3);
+	CHECK_EQ(s.OnPacket(rsp,
+		Accept(cmd, payload, CodecCaps(CodecType::Vendor, vendorIe, sizeof(vendorIe), payload), rsp),
+		cmd, sizeof(cmd)), size_t{0});
+	CHECK(s.State() == SessionState::Failed);
+}
+
 TEST(AvdtpSource_DiscoverListsBothSeps)
 {
 	SourceSession s = MakeSession();
