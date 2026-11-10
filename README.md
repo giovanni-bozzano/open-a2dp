@@ -22,10 +22,11 @@ Current implementation:
 
 ## License
 
-Apache-2.0, see [LICENSE](LICENSE). Its patent grant covers contributors only: the in-tree AAC-LC encoder
-still needs a Via LA AAC patent licence before a product that ships it is distributed, and
-the aptX family is Qualcomm proprietary and deliberately not implemented here. Publishing
-this source needs neither licence; distributing binaries is what they govern. Details in
+Apache-2.0, see [LICENSE](LICENSE). Its patent grant covers contributors only. AAC encoding goes through
+the Windows Media Foundation encoder, so no AAC encoder implementation is distributed
+here, but a product that encodes AAC may still owe a Via LA pool licence; the aptX family
+is Qualcomm proprietary, needs their software licence and is deliberately not implemented.
+Publishing this source needs neither licence. Details in
 [docs/architecture/Codec-Licensing.md](docs/architecture/Codec-Licensing.md).
 
 ## Build
