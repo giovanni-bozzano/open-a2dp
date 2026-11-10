@@ -229,6 +229,12 @@ struct Status {
 	uint32_t pcmCapacity;
 	uint32_t frameBufferedBytes;
 	uint32_t frameCapacity;
+	// Buffered media in milliseconds: how far the stream is behind live audio, derived from
+	// the ring fills. `pcmTrimmedBytes` counts audio already discarded to keep that bounded,
+	// so a non-zero value means the stream recovered from a stall instead of playing late.
+	uint32_t pcmBufferedMs;
+	uint32_t frameBufferedMs;
+	uint32_t pcmTrimmedBytes;
 	uint32_t packetsSent;
 	uint32_t framesDropped;
 	uint32_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
@@ -331,7 +337,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 240, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 252, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

@@ -180,6 +180,9 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.pcmCapacity", status.pcmCapacity);
 	AppendField(text, "status.frameBufferedBytes", status.frameBufferedBytes);
 	AppendField(text, "status.frameCapacity", status.frameCapacity);
+	AppendField(text, "status.pcmBufferedMs", status.pcmBufferedMs);
+	AppendField(text, "status.frameBufferedMs", status.frameBufferedMs);
+	AppendField(text, "status.pcmTrimmedBytes", status.pcmTrimmedBytes);
 	AppendField(text, "status.packetsSent", status.packetsSent);
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
@@ -366,12 +369,17 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendEndpointFormat(text, status);
 	AppendPreference(text, preference);
 	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
-	AppendLine(text, "rings",
-			   Format("PCM %u/%u B, frames %u/%u B", status.pcmBufferedBytes, status.pcmCapacity,
-					  status.frameBufferedBytes, status.frameCapacity));
+	// Buffered milliseconds are what matters for latency: the bytes alone do not say how far
+	// behind live the stream runs at a given format or bitrate.
+	AppendLine(text, "buffered",
+			   Format("PCM %u ms of %u B, frames %u ms of %u B", status.pcmBufferedMs,
+					  status.pcmBufferedBytes, status.frameBufferedMs, status.frameBufferedBytes));
+	AppendLine(text, "capacity",
+			   Format("PCM %u B, frames %u B", status.pcmCapacity, status.frameCapacity));
 	AppendLine(text, "counters",
-			   Format("packets %u, dropped %u, underruns %u, send failures %u", status.packetsSent,
-					  status.framesDropped, status.underruns, status.sendFailures));
+			   Format("packets %u, dropped %u, underruns %u, send failures %u, trimmed %u B",
+					  status.packetsSent, status.framesDropped, status.underruns, status.sendFailures,
+					  status.pcmTrimmedBytes));
 	AppendLine(text, "last error", status.lastError != 0 ? Format("0x%08X", status.lastError) : "none");
 	if (input.version != nullptr)
 	{

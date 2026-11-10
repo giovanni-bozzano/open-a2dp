@@ -271,7 +271,24 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		KIRQL irql;
 		KeAcquireSpinLock(&ctx->AudioLock, &irql);
 		const ULONG sampleRate = ctx->PinSampleRate;
+		const USHORT pinChannels = ctx->PinChannels;
+		const USHORT pinValidBits = ctx->PinValidBits;
 		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		// Buffered media in milliseconds: what the stream is behind live audio. The PCM ring
+		// follows the depth it carries, and the frame ring the codec bitrate, which AAC and
+		// aptX hold constant.
+		const ULONG pcmFrameBytes = pinChannels * AudioRenderSampleBytes(pinValidBits);
+		if (pcmFrameBytes != 0 && sampleRate != 0)
+		{
+			out->pcmBufferedMs = static_cast<uint32_t>(static_cast<uint64_t>(out->pcmBufferedBytes) * 1000 /
+				(static_cast<uint64_t>(sampleRate) * pcmFrameBytes));
+		}
+		if (out->bitrate != 0)
+		{
+			out->frameBufferedMs =
+				static_cast<uint32_t>(static_cast<uint64_t>(out->frameBufferedBytes) * 8000 / out->bitrate);
+		}
+		out->pcmTrimmedBytes = static_cast<uint32_t>(ctx->AudioTrimmedBytes);
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
 		out->bitrateLimit = AacConfig::MaxBitrateForMtu(out->mediaMtu - Rtp::kHeaderSize, sampleRate);
 		// SBC PCM capabilities are the baseline, not the AAC capability set or Windows mix format.
