@@ -86,7 +86,7 @@ the sink has not reconnected yet, the script says so - reconnect it and rerun.
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
 ## 2. Tools used in the steps
-- `OpenA2dpCtl status|list|codec <auto|sbc|aac> [--bitpool n] [--bitrate bps]
+- `OpenA2dpCtl status|list|codec <auto|sbc|aac|aptx|aptxhd> [--bitpool n] [--bitrate bps]
   [--blocks n] [--subbands n] [--allocation loudness|snr]` (elevated). `status` shows
   AVDTP state, media state, codec, encoder registration and counters.
 - `OpenA2dpConfig` (elevated): the settings window over the same IOCTLs. It lists the
