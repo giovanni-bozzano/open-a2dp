@@ -265,6 +265,15 @@ struct DEVICE_CONTEXT
 	// Set when the registered providers changed in a context that must not touch ACX; the
 	// work item rebuilds the endpoint format listing before it reconsiders the codec.
 	volatile LONG FormatsPending;
+	// Set by the encoder service's cleanup. The work item arms ProviderLossTimer when the
+	// configured stream really was served by the provider that left, so the stream is rebuilt
+	// around a codec the driver encodes itself only when the service stays away.
+	volatile LONG ProviderLossCheck;
+	// Set when that timer expired: DesiredCodec may then override a forced codec, because the
+	// provider's absence, not a change of mind, is what makes it unusable. Cleared by a
+	// registration or a new preference, which switch back to it.
+	volatile LONG ProviderFallback;
+	WDFTIMER ProviderLossTimer;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;

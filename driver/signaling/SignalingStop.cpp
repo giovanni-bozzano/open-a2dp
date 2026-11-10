@@ -82,6 +82,9 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_WARN(ctx, "Signaling", "stop: read did not complete within 1 s");
 	}
 	WdfTimerStop(ctx->ResponseTimer, TRUE);
+	// A fallback armed for this link must not fire into a teardown that already stopped media.
+	WdfTimerStop(ctx->ProviderLossTimer, TRUE);
+	InterlockedExchange(&ctx->ProviderLossCheck, 0);
 	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
 	{
 		WdfWorkItemFlush(ctx->SignalingWorkItem);

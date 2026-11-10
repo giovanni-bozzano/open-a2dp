@@ -35,6 +35,16 @@ NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
+	// One shot: armed while a provider is missing, disarmed again by its registration, so a
+	// service restart never reaches the renegotiation.
+	WDF_TIMER_CONFIG lossConfig;
+	WDF_TIMER_CONFIG_INIT(&lossConfig, OnProviderLossTimeout);
+	status = WdfTimerCreate(&lossConfig, &attrs, &ctx->ProviderLossTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
 	status = WdfRequestCreate(&attrs, ctx->IoTarget, &ctx->ReadRequest);
 	if (!NT_SUCCESS(status))
 	{
@@ -79,8 +89,26 @@ static void RequestCodecSwitch(DEVICE_CONTEXT* ctx)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+namespace OpenA2dpDriver::Signaling
+{
+void OnProviderLossTimeout(_In_ WDFTIMER timer)
+{
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
+	// The provider did not come back: the codec it served can no longer run, so let the work
+	// item rebuild the stream around one the driver encodes itself. No log here; the codec
+	// switch that follows reports what it negotiated.
+	InterlockedExchange(&ctx->ProviderFallback, 1);
+	InterlockedExchange(&ctx->CodecSwitchPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+} // namespace OpenA2dpDriver::Signaling
+
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx)
 {
+	// A provider that came back cancels a pending fallback: a service restart must not cost a
+	// renegotiation, and the stored preference applies again.
+	WdfTimerStop(ctx->ProviderLossTimer, FALSE);
+	InterlockedExchange(&ctx->ProviderFallback, 0);
 	// The endpoint's 24-bit formats exist only while an aptX HD provider is registered, so the
 	// listing is rebuilt before the work item considers which codec to negotiate.
 	const NTSTATUS status = AudioApplyEndpointFormats(ctx);
@@ -96,11 +124,17 @@ void SignalingOnEncoderUnregistered(_In_ DEVICE_CONTEXT* ctx)
 {
 	// The 24-bit formats are listed only while an aptX HD provider is registered; without the
 	// rebuild the endpoint keeps offering a depth nothing can encode after the service exits.
+	// The work item also checks whether the configured stream was served by the provider that
+	// left, and arms the fallback for it.
+	InterlockedExchange(&ctx->ProviderLossCheck, 1);
 	RequestFormatRebuild(ctx);
 }
 
 void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx)
 {
+	// A new selection replaces the fallback decision the old one produced.
+	WdfTimerStop(ctx->ProviderLossTimer, FALSE);
+	InterlockedExchange(&ctx->ProviderFallback, 0);
 	// The listed formats follow the preference: a forced 16-bit codec drops the 24-bit
 	// entries, and forcing aptX HD restores them. Without this the stale listing keeps the
 	// pin at its old depth and the work item refuses the requested codec.

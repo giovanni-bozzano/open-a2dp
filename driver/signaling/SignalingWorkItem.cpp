@@ -100,6 +100,14 @@ static bool AudioRunActive(DEVICE_CONTEXT* ctx)
 // the previous discovery's view; after a reconnect the new discovery decides.
 // `codecValue` is the Ioctl::kCodec* value, which is the only way to tell the two aptX
 // codecs apart once they share Avdtp::CodecType::Vendor.
+// True for the codecs an encoder provider supplies; the kernel encodes SBC itself, so a
+// missing provider can never make it unusable.
+static bool ProviderCodec(uint32_t codecValue) noexcept
+{
+	return codecValue == Ioctl::kCodecAac || codecValue == Ioctl::kCodecAptx ||
+		codecValue == Ioctl::kCodecAptxHd;
+}
+
 static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t& codecValue)
 {
 	Ioctl::Preference preference;
@@ -118,43 +126,51 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 	// Classic aptX takes 16-bit PCM and narrows a 24-in-32 pin in the service, in stereo.
 	const bool aptxUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptx) && offers(Ioctl::kSinkCodecAptx) &&
 		AptxPinDepthUsable(ctx->PinValidBits, Aptx::kBitsPerSample) && ctx->PinChannels == 2;
+	// A forced codec that cannot run keeps the stream silent, which is what the preference
+	// asks for - except while a provider that served the configured stream is missing: the
+	// fallback then takes a codec the driver encodes itself, and the provider's return
+	// switches back to the stored preference.
+	const bool fallback = InterlockedCompareExchange(&ctx->ProviderFallback, 0, 0) != 0;
 	const bool forceCodec = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	if (forceCodec)
 	{
-		if (preference.codec == Ioctl::kCodecSbc)
+		switch (preference.codec)
 		{
+		case Ioctl::kCodecSbc:
 			codec = Avdtp::CodecType::Sbc;
 			codecValue = Ioctl::kCodecSbc;
 			return true;
-		}
-		if (preference.codec == Ioctl::kCodecAptxHd)
-		{
-			if (!hdUsable)
+		case Ioctl::kCodecAptxHd:
+			if (hdUsable)
 			{
-				return false;
+				codec = Avdtp::CodecType::Vendor;
+				codecValue = Ioctl::kCodecAptxHd;
+				return true;
 			}
-			codec = Avdtp::CodecType::Vendor;
-			codecValue = Ioctl::kCodecAptxHd;
-			return true;
-		}
-		if (preference.codec == Ioctl::kCodecAptx)
-		{
-			if (!aptxUsable)
+			break;
+		case Ioctl::kCodecAptx:
+			if (aptxUsable)
 			{
-				return false;
+				codec = Avdtp::CodecType::Vendor;
+				codecValue = Ioctl::kCodecAptx;
+				return true;
 			}
-			codec = Avdtp::CodecType::Vendor;
-			codecValue = Ioctl::kCodecAptx;
-			return true;
+			break;
+		case Ioctl::kCodecAac:
+			if (ServiceCodecRegistered(ctx, Ioctl::kCodecAac) && offers(Ioctl::kSinkCodecAac))
+			{
+				codec = Avdtp::CodecType::Aac;
+				codecValue = Ioctl::kCodecAac;
+				return true;
+			}
+			break;
+		default:
+			return false;
 		}
-		if (preference.codec != Ioctl::kCodecAac || !ServiceCodecRegistered(ctx, Ioctl::kCodecAac) ||
-			!offers(Ioctl::kSinkCodecAac))
+		if (!fallback)
 		{
 			return false;
 		}
-		codec = Avdtp::CodecType::Aac;
-		codecValue = Ioctl::kCodecAac;
-		return true;
 	}
 	// Automatic order is quality order: aptX HD, classic aptX, AAC, then the mandatory SBC
 	// fallback.
@@ -661,6 +677,23 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	if (ctx->MediaOpenRetry && ctx->SignalingState == ChannelOpen)
 	{
 		ContinueMediaOpenRetry(ctx);
+	}
+
+	if (InterlockedExchange(&ctx->ProviderLossCheck, 0) != 0)
+	{
+		// The encoder service closed while this stream was configured. Wait out the grace
+		// period before rebuilding it: its registration disarms this, so a restart costs no
+		// renegotiation and only a service that stays away changes the stream.
+		uint32_t selectedValue = 0;
+		if (SelectedCodecValue(ctx, selectedValue) && ProviderCodec(selectedValue) &&
+			!ServiceCodecRegistered(ctx, selectedValue))
+		{
+			OA2DP_WARN(ctx, "Signaling",
+				"the encoder service left while %s was configured; falling back in %u ms unless it returns",
+				CodecValueName(selectedValue), static_cast<unsigned>(ProviderLossGraceMs));
+			WdfTimerStart(ctx->ProviderLossTimer,
+				-static_cast<LONGLONG>(WDF_REL_TIMEOUT_IN_MS(ProviderLossGraceMs)));
+		}
 	}
 
 	if (InterlockedExchange(&ctx->CodecSwitchPending, 0) != 0)

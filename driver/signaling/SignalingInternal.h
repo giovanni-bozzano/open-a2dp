@@ -12,6 +12,10 @@ using namespace OpenA2dp;
 namespace OpenA2dpDriver::Signaling
 {
 constexpr LONGLONG ResponseTimeoutMs = 3000;
+// How long a stream keeps its provider-supplied codec after that provider left, before the
+// driver rebuilds it around one it encodes itself. Long enough that a service restart costs
+// no renegotiation, short enough that playback resumes on its own.
+constexpr LONGLONG ProviderLossGraceMs = 2000;
 constexpr uint8_t SbcMaxBitpool = 53;
 // What the driver can actually play. The endpoint serves 16-bit PCM at 44.1 or 48 kHz,
 // mono or stereo, and MediaStart refuses any other rate or channel count, so 16/32 kHz is
@@ -26,6 +30,7 @@ constexpr ULONG kMediaOpenAttempts = 3;
 
 EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;
+EVT_WDF_TIMER OnProviderLossTimeout;
 EVT_WDF_REQUEST_COMPLETION_ROUTINE OnReadComplete;
 
 const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason);
