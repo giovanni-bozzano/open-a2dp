@@ -167,6 +167,12 @@ USHORT PcmValidBits(const KSDATAFORMAT_WAVEFORMATEX& wave)
 	return pcm.wBitsPerSample;
 }
 
+namespace
+{
+// Defined with the endpoint listing below; the validator asks it which formats are offered.
+ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx);
+} // namespace
+
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
 	if (format == nullptr)
@@ -210,17 +216,16 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	{
 		pcmFormat = pcmFormat && pcm.wFormatTag == WAVE_FORMAT_PCM;
 	}
-	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	const ULONG desired = DesiredFormats(ctx);
 	const ULONG listed = ctx->FormatsListed;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		// Listed, not merely supported: a pinned endpoint format is offered alone, and a stream
-		// at any other format would move the pin away from the setting Windows kept using.
-		if (pcmFormat && (listed & (1u << i)) != 0 &&
+		// Offered, not merely supported: a pinned endpoint format is offered alone, and a stream
+		// at any other format would move the pin away from the setting Windows kept using. The
+		// depth is part of the check, because 24-in-32 follows aptX HD rather than SBC.
+		if (pcmFormat && (listed & (1u << i)) != 0 && (desired & (1u << i)) != 0 &&
 			pcm.nSamplesPerSec == AudioRenderRateAt(i) && pcm.nChannels == AudioRenderChannelsAt(i) &&
-			validBits == AudioRenderValidBitsAt(i) &&
-			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
-				static_cast<uint8_t>(pcm.nChannels))))
+			validBits == AudioRenderValidBitsAt(i))
 		{
 			status = STATUS_SUCCESS;
 			break;
