@@ -30,9 +30,9 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 		file->Registered = FALSE;
 		InterlockedExchange(&ctx->EncoderRegistered, 0);
 		if (InterlockedCompareExchange(&ctx->ServiceActive, 0, 0) != 0 &&
-			InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeAac)
+			InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeService)
 		{
-			OA2DP_WARN(ctx, "Service", "encoder lost while streaming AAC; suspending");
+			OA2DP_WARN(ctx, "Service", "encoder service lost while streaming; suspending");
 			MediaStop(ctx);
 			SignalingRequestSuspend(ctx);
 		}

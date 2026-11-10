@@ -380,9 +380,10 @@ struct PreferenceOverrides {
 int CommandCodec(const std::vector<Device>& devices, const std::string& spec, const std::string& codecArg,
 				 const PreferenceOverrides& overrides)
 {
-	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac")
+	const bool isAptxHd = codecArg == "aptxhd" || codecArg == "aptx-hd";
+	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac" && !isAptxHd)
 	{
-		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc or aac\n", codecArg.c_str());
+		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac or aptxhd\n", codecArg.c_str());
 		return 2;
 	}
 
@@ -420,6 +421,15 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 				CodecListText(sink.sinkCodecs).c_str());
 		return 1;
 	}
+	if (isAptxHd && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecAptxHd) == 0)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr,
+					 "the sink does not advertise aptX HD (it offers %s); use `codec auto`. "
+					 "No preference was stored.\n",
+				CodecListText(sink.sinkCodecs).c_str());
+		return 1;
+	}
 
 	// Start from the stored preference so a codec change keeps the parameters that
 	// the command does not name.
@@ -440,7 +450,10 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	else if (!codecArg.empty())
 	{
 		preference.flags = Ioctl::kPreferenceForceCodec;
-		preference.codec = codecArg == "aac" ? Ioctl::kCodecAac : Ioctl::kCodecSbc;
+		preference.codec = isAptxHd ? Ioctl::kCodecAptxHd
+			: codecArg == "aac"
+			? Ioctl::kCodecAac
+			: Ioctl::kCodecSbc;
 	}
 	if (overrides.hasBitrate)
 	{
@@ -475,19 +488,30 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 
 	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("Preference set to %s on %s.\n",
-			!force ? "auto (AAC > SBC)" : (preference.codec == Ioctl::kCodecAac ? "AAC" : "SBC"),
+			!force ? "auto (aptX HD > AAC > SBC)"
+				   : preference.codec == Ioctl::kCodecAptxHd ? "aptX HD"
+				   : preference.codec == Ioctl::kCodecAac     ? "AAC"
+																 : "SBC",
 			DeviceLabel(device).c_str());
 	PrintStatus(device, handle, status, preference, false);
 
-	if (force && preference.codec == Ioctl::kCodecAac && status.encoderRegistered == 0)
+	const bool aacRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAac)) != 0;
+	const bool hdRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAptxHd)) != 0;
+	if (force && preference.codec == Ioctl::kCodecAac && !aacRegistered)
 	{
-		std::printf("\nnote: no encoder service is registered, so AAC is not offered and SBC will be used.\n");
+		std::printf("\nnote: no AAC encoder is registered, so AAC is not offered and SBC will be used.\n");
+	}
+	if (force && preference.codec == Ioctl::kCodecAptxHd && !hdRegistered)
+	{
+		std::printf("\nnote: no aptX HD encoder is registered, so aptX HD is not offered.\n");
 	}
 	const bool streaming = status.mediaState == Ioctl::MediaState::Streaming;
-	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac : status.encoderRegistered != 0;
-	const bool wantsSbc = force ? preference.codec == Ioctl::kCodecSbc : status.encoderRegistered == 0;
-	const bool codecChanges = (wantsAac && status.codec != Ioctl::kCodecAac) ||
-							  (wantsSbc && status.codec == Ioctl::kCodecAac);
+	const bool wantsHd = force ? preference.codec == Ioctl::kCodecAptxHd : hdRegistered;
+	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac : aacRegistered && !hdRegistered;
+	const bool wantsSbc = force && preference.codec == Ioctl::kCodecSbc;
+	const bool codecChanges = (wantsHd && status.codec != Ioctl::kCodecAptxHd) ||
+							  (wantsAac && status.codec != Ioctl::kCodecAac) ||
+							  (wantsSbc && status.codec != Ioctl::kCodecSbc);
 	if (streaming && (codecChanges || overrides.ParameterChange()))
 	{
 		std::printf("\nnote: the active stream renegotiates to apply the preference "

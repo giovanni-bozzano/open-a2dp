@@ -44,6 +44,11 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		StartAac(ctx, ie, ieLength);
 		return;
 	}
+	if (codec == Avdtp::CodecType::Vendor)
+	{
+		StartAptxHd(ctx, ie, ieLength);
+		return;
+	}
 
 	SbcFixed::Params params;
 	if (!SbcFixed::ParseIe(ie, ieLength, params))
@@ -116,7 +121,7 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 	WdfWorkItemFlush(ctx->MediaWorkItem);
 
 	InterlockedExchange(&ctx->StreamFault, 0);
-	if (mode == MediaModeAac)
+	if (mode == MediaModeService)
 	{
 		// The driver consumes the frame ring, so it can discard what is left.
 		ServiceFlushRings(ctx);

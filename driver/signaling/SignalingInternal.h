@@ -29,6 +29,11 @@ EVT_WDF_TIMER OnResponseTimeout;
 EVT_WDF_REQUEST_COMPLETION_ROUTINE OnReadComplete;
 
 const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason);
+// Name of a codec this driver negotiates; a vendor type is the one aptX HD it can run.
+inline const char* NegotiableCodecName(Avdtp::CodecType codec)
+{
+	return codec == Avdtp::CodecType::Vendor ? "aptX HD" : CodecName(codec);
+}
 uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 	uint8_t* configIe, size_t& configIeLength);
 uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength);

@@ -2,26 +2,28 @@
 
 ## 1. Scope
 
-`OpenA2dpSvc.exe` encodes AAC-LC only. SBC stays in the kernel and must keep working
-with no service installed, running or reachable.
+`OpenA2dpSvc.exe` encodes the service-side codecs: AAC-LC and aptX HD. SBC stays in the
+kernel and must keep working with no service installed, running or reachable.
 
 v1 assumptions:
 
-- one service process per machine, one registration per sink device instance;
+- one service process per machine, one registration per codec per sink device instance;
 - AAC-LC, MPEG-2/4, 44.1/48 kHz, stereo, CBR at 96/128/160/192/256/320 kbps (the set the
   Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at 44.1 kHz and
   320 kbps at 48 kHz);
-- one LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
-- the ACX endpoint lists 16-bit stereo at 44.1 and 48 kHz for this path; the encoder follows
-  the rate Windows opened the stream with. 16-bit is also the encoder's only input depth:
-  Media Foundation rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`), so a 24-in-32 stream
-  would have to be converted before it reaches the encoder
-  ([PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)).
+- aptX HD at 44.1/48 kHz stereo, 24-in-32 input, one record of ten milliseconds per RTP
+  packet (110 frames at 44.1 kHz, 120 at 48 kHz, six bytes each);
+- one AAC LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
+- the ACX endpoint lists 16-bit formats, and 24-in-32 while aptX HD can run; the encoders
+  follow the rate Windows opened the stream with. AAC keeps 16-bit input: Media Foundation
+  rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`), so a 24-in-32 ring is narrowed with
+  the rounded downconvert first ([PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)).
 
 Invariants:
 
-1. SBC never depends on the service. Both local SEPs remain advertised; AAC selection
-   is refused while the service is absent, so negotiation falls back to SBC.
+1. SBC never depends on the service. All three local SEPs remain advertised; AAC and HD
+   selection is refused while their provider is absent, so negotiation falls back to a
+   codec that can run.
 2. The service never receives kernel pointers. The driver allocates the rings and maps
    them into the caller; the service only sees one user-mode base address.
 3. Losing the service (crash, kill, hang) must not hang the driver, leak a mapping or
@@ -35,7 +37,7 @@ Invariants:
 |---|---|---|
 | Signaling work item (`driver/signaling/`) | PASSIVE | SEP list, selection, stream lifecycle, AAC fallback |
 | ACX audio timer (`driver/audio/`) | DISPATCH | Produces PCM into the PCM ring |
-| Media work item (`driver/media/`) | PASSIVE | SBC encoding or AAC frame drain, RTP send, `WAIT_EVENT` ticks |
+| Media work item (`driver/media/`) | PASSIVE | SBC encoding or service frame drain (AAC, aptX HD), RTP send, `WAIT_EVENT` ticks |
 | Control device (`driver/service/`) | PASSIVE | Parallel IOCTL queue; one parked `WAIT_EVENT`; separate registration/mapping protection |
 | Service main loop | user mode | `WAIT_EVENT` -> pull PCM -> encode -> write frames |
 
@@ -134,12 +136,12 @@ struct.
 | IOCTL | In | Out | Notes |
 |---|---|---|---|
 | `GET_VERSION` | – | `VersionInfo` | Works without registration; used by the service and the config UI |
-| `REGISTER_ENCODER` | `RegisterEncoderIn` | `RegisterEncoderOut` | One registration per device; `STATUS_DEVICE_BUSY` if taken, `STATUS_REVISION_MISMATCH` on ABI mismatch |
+| `REGISTER_ENCODER` | `RegisterEncoderIn` | `RegisterEncoderOut` | One registration per codec (`kCodecAac`, `kCodecAptxHd`) per device; `STATUS_DEVICE_BUSY` if that codec is taken, `STATUS_REVISION_MISMATCH` on ABI mismatch |
 | `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
-| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC or AAC; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. Forced AAC is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks AAC. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
+| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC, AAC or aptX HD; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. Forced AAC or aptX HD is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks it. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
 | `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format the endpoint offers Windows. 0/0 is automatic (every sink format), otherwise the one pinned rate and channel count |
 | `SET_ENDPOINT_FORMAT` | `EndpointFormat` | – | Stored per sink (`SelectedSampleRate`/`SelectedChannels`) and applied by rebuilding the listed formats in place, which makes Windows re-query the endpoint. Automatic (`0`/`0`) or 44100/48000 Hz with 1 or 2 channels; a format the discovered sink does not advertise is refused with `STATUS_NOT_SUPPORTED`. Windows plays the first listed format and ignores the Sound-settings pick, so a pinned format is listed alone |
 
@@ -154,28 +156,31 @@ sink's SBC PCM capabilities, `sinkCodecs` its advertised codecs, and
 `endpointRate`/`endpointChannels` the endpoint format setting. A forced codec the sink does
 not advertise is refused. Negotiation follows the actual Windows stream format.
 
-ABI 1 is the current development baseline, not compatibility with the original ABI 1.
+ABI 2 is the current development baseline, not compatibility with an earlier layout.
 Obsolete format preferences and fallback fields are removed, not reserved: `Preference`
-is 36 bytes, `EndpointFormat` 16 bytes and `Status` 112 bytes. The endpoint format is its
-own setting, not a preference field. Always rebuild and install the driver, tools and
-service together; older development layouts are incompatible even when their version
-number matches.
+is 36 bytes, `EndpointFormat` 16 bytes, `Status` 240 bytes, `RegisterEncoderOut` 32 bytes
+and `WaitEventOut` 36 bytes. The endpoint format is its own setting, not a preference
+field. Always rebuild and install the driver, tools and service together; older
+development layouts are incompatible even when their version number matches.
 
-`REGISTER_ENCODER` enables AAC selection, not SEP advertisement. `MAP_RINGS` is a
-separate call; if mapping fails, the service must close its handle to clear registration.
+`REGISTER_ENCODER` enables selection of that codec, not SEP advertisement. `MAP_RINGS` is
+a separate call; if mapping fails, the service must close its handle to clear registration.
 
-The registration returns the authoritative `maxFramePayload` (883 bytes) and the PCM
-format the service must request from Media Foundation. The service must reject a
-bitrate whose frames do not fit and reduce it, or report the failure to the user.
+The registration returns the authoritative `maxFramePayload` (883 bytes), the PCM rate
+and channel count, and `pcmValidBits` (16, or 24 for 24-in-32). `WAIT_EVENT` repeats the
+depth, because the endpoint format can change between registration and stream start. The
+service must reject a bitrate whose frames do not fit and reduce it, or report the failure
+to the user.
 
 `WAIT_EVENT` semantics:
 
 - latched events are returned immediately; otherwise the request is parked;
-- the media timer completes it with `kEventTick` while AAC is streaming, which is the
-  service's clock (no polling, no shared event handle);
-- `kEventStreamStart`/`kEventStreamStop` carry the negotiated AAC parameters in the
-  same struct, so the service reconfigures MF before the first tick (a reconfigure while
-  streaming stops and starts the media path, so it arrives as this pair);
+- the media timer completes it with `kEventTick` while a service-encoded codec streams,
+  which is the service's clock (no polling, no shared event handle);
+- `kEventStreamStart`/`kEventStreamStop` carry the negotiated parameters in the same
+  struct (`codec`, rate, channels, bitrate, object type, `pcmValidBits`), so the service
+  configures its encoder before the first tick (a reconfigure while streaming stops and
+  starts the media path, so it arrives as this pair);
 - `kEventDeviceGone` is delivered from `EvtFileCleanup`/device removal; the service then
   closes the handle and retries;
 - the service waits with a 500 ms timeout and re-checks `GET_STATUS`, so a lost event
@@ -193,7 +198,8 @@ symbolic link `\DosDevices\OpenA2dpCtl-<address>`):
    exists) and when a worker ends. There is no polling.
 2. `CreateFile` on `\\.\OpenA2dpCtl-<address>`.
 3. `GET_VERSION`; refuse to continue on an ABI mismatch.
-4. `REGISTER_ENCODER` (codec AAC, service frame limit).
+4. `REGISTER_ENCODER` once per codec the service provides (AAC, aptX HD), with the
+   service frame limit.
 5. `MAP_RINGS`; build the two `RingBufferView`s.
 6. `WAIT_EVENT` loop.
 
@@ -213,12 +219,13 @@ ring, and leaves the PCM ring to the ACX endpoint.
 
 Service crash or `CloseHandle` while streaming: the file cleanup clears the registration
 and mapping, stops media, requests AVDTP SUSPEND, and closes the stream. The next
-connection selects SBC if no encoder is registered (both SEPs remain advertised).
+connection selects a codec whose provider is registered, down to SBC (all SEPs remain
+advertised).
 No driver wait depends on the service.
 
 ## 7. Pacing and timestamps
 
-The service owns the media clock for AAC. `elapsed * rate + preroll` (the formula the SBC
+The service owns the media clock for AAC and aptX HD. `elapsed * rate + preroll` (the formula the SBC
 path uses today) says how much audio must have been encoded by now; whenever it exceeds
 what has been produced, a whole 1024-sample block is encoded and a full block of PCM is
 pulled from the ring, zero-filling only what the ring does not hold. A record always
@@ -241,29 +248,34 @@ Consequences:
 `Avdtp::SourceSession` now holds a small array of local SEPs:
 
 - SEID 1: SBC, always present (mandatory fallback);
-- SEID 2: AAC, always advertised; selectable only while an encoder is registered.
+- SEID 2: AAC, always advertised; selectable only while its provider is registered;
+- SEID 3: aptX HD (vendor `0x000000D7` / codec `0x0024`), always advertised; selectable
+  only while its provider is registered, in 24-bit stereo at the endpoint's rate.
 
 The session answers DISCOVER with every local SEP, answers GET_CAPABILITIES per SEID,
 validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
-`SET_CONFIGURATION` check working for either codec (SBC is checked inside the session,
-other codecs through the `ConfigValidator` callback).
+`SET_CONFIGURATION` check working for every codec (vendor capabilities are matched to a
+local SEP by their vendor and codec IDs; SBC is checked inside the session, other codecs
+through the `ConfigValidator` callback).
 
-Policy: forced codec (if available) > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s `SelectConfig` has
-the AAC branch (`AacConfig::Select`, the endpoint rate, highest bitrate the sink accepts) and
-scores AAC 2 / SBC 1. Every scored sink SEP is kept as a candidate in descending order;
-when the sink rejects a `SET_CONFIGURATION`, the session configures the next candidate
-for the same sink SEP, so an AAC-capable sink that refuses AAC falls back to SBC in the
-same connection. `AvdtpSourceTests` covers the fallback and the all-rejected failure.
+Policy: forced codec (if available) > aptX HD > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s
+`SelectConfig` has the AAC branch (`AacConfig::Select`, the endpoint rate, highest bitrate the
+sink accepts) and the aptX HD branch (endpoint rate, stereo, 24-bit pin), scoring HD 3, AAC 2
+and SBC 1. Every scored sink SEP is kept as a candidate in descending order; when the sink
+rejects a `SET_CONFIGURATION`, the session configures the next candidate for the same sink
+SEP, so a capable sink that refuses the best codec falls back without a reconnect.
+`AvdtpSourceTests` covers the fallback, the vendor SEP selection and the all-rejected failure.
 
-`MediaStart` dispatches on `SelectedCodec()`: SBC keeps the current kernel encoder;
-AAC validates the IE with `AacConfig::ParseConfiguredIe`, rejects a bitrate whose frames
-exceed `kMaxFramePayload`, and enters the service path.
+`MediaStart` dispatches on `SelectedCodec()`: SBC keeps the current kernel encoder; AAC
+validates the IE with `AacConfig::ParseConfiguredIe` and enters the service path; aptX HD
+validates its IE and the 24-bit stereo pin, then enters the same service path with
+`ActiveCodec = kCodecAptxHd`, so `WAIT_EVENT` names the codec the service must encode.
 
 ## 9. Failure handling and counters
 
 | Failure | Driver action |
 |---|---|
-| No service registered at negotiation | Refuse AAC selection; retain SBC fallback |
+| No service registered at negotiation | Refuse AAC/aptX HD selection; retain SBC fallback |
 | Service closes the handle while streaming | Stop media, request SUSPEND, close the stream |
 | No frame for 200 ms while streaming | Count `underruns`, log once per second; no state change (encoder loss is the file-cleanup event) |
 | Oversize record | Skip and count `framesDropped`; suspend after 100 consecutive |

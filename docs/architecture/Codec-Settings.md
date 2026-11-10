@@ -100,10 +100,10 @@ hundreds of requests per graph and none of them can decide the format.
 
 It goes no further than that on purpose. A2DP SBC defines no rate above 48 kHz, and the
 Media Foundation AAC encoder this driver feeds is limited to 44.1/48 kHz, so 88.2/96/192 kHz
-would leave both codecs without an encoder (the native Windows A2DP endpoint stops at the
-same two rates). 16-bit is the sample format both encoders consume; 24-in-32 exists only for
-aptX HD, and SBC or AAC fed from such a stream would need a downconversion stage on the PCM
-path.
+would leave SBC and AAC without an encoder (the native Windows A2DP endpoint stops at the
+same two rates). 16-bit is the sample format both encoders consume; 24-in-32 is listed when
+aptX HD can run, and SBC or AAC fed from such a stream narrow to 16-bit through
+`Pcm::Narrow24To16` (rounded, saturating) on the PCM path.
 
 ## Stored preference
 
@@ -115,16 +115,18 @@ One preference per sink, kept in the registry and restored when the device start
 All values are `REG_DWORD`, `0` means "driver default", `OpenA2dpCtl codec` writes the codec
 fields through `SET_PREFERENCE` and `OpenA2dpCtl format` writes the endpoint format through
 `SET_ENDPOINT_FORMAT`. Deleting the sink subkey returns it to auto. The driver reads it in
-`OnDeviceAdd`, before the endpoint exists. The development ABI baseline removes the obsolete
-format preference and fallback fields: `Preference` is 36 bytes, `EndpointFormat` 16 bytes
-and `Status` 112 bytes. Rebuild the tools and AAC service with the driver; earlier
-development layouts are incompatible, even if they also reported ABI 1.
+`OnDeviceAdd`, before the endpoint exists. The development ABI baseline (2) removes the
+obsolete format preference and fallback fields: `Preference` is 36 bytes, `EndpointFormat`
+16 bytes, `Status` 240 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
+Rebuild the tools, driver and service together; earlier development layouts are
+incompatible, even if they reported the same version.
 `status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows
-mix-format query. `codec aac` is refused on a sink that does not advertise AAC.
+mix-format query. `codec aac` and `codec aptxhd` are refused on a sink that does not
+advertise them.
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|
-| Codec choice | `CodecPreferenceFlags`, `CodecPreferenceCodec` | `codec auto\|sbc\|aac` | auto, SBC, AAC | auto (AAC when an encoder service is registered, else SBC) |
+| Codec choice | `CodecPreferenceFlags`, `CodecPreferenceCodec` | `codec auto\|sbc\|aac\|aptxhd` | auto, SBC, AAC, aptX HD | auto (aptX HD, then AAC, as far as registered encoders and the sink allow, else SBC) |
 | SBC bitpool | `CodecPreferenceSbcBitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
 | SBC block length | `CodecPreferenceSbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
@@ -152,11 +154,12 @@ silent instead of retried. The MTU the channel reported is kept for the rest of 
 connection, so a codec switch - which rediscovers and negotiates again with no channel open
 - is already capped by it, and it is dropped when the connection ends.
 
-PCM depth is 16-bit today: the endpoint lists 16-bit formats and `PcmFormat` has no depth.
-That is SBC's and the Media Foundation encoder's own input (24-bit, 32-bit and float PCM
-are rejected with `0xC00D36B4`), so depth is not a setting and has no preference field:
-the 24-bit path is tied to aptX HD, which lists 24-in-32 when it is the codec in use. The
-decision and its sequencing are in [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd).
+PCM depth is not a setting and has no preference field: `PcmFormat` carries it and the
+endpoint lists 24-in-32 only while aptX HD can run, because the depth follows the codec.
+SBC and the Media Foundation encoder take 16-bit input (24-bit, 32-bit and float PCM are
+rejected with `0xC00D36B4`), so a 24-bit endpoint stream that negotiates SBC or AAC is
+narrowed with the rounded downconvert. The decision and its sequencing are in
+[PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd).
 
 A value the sink does not advertise falls back to the selector's own order instead of
 failing the negotiation; a bitpool is lifted to the sink's minimum and capped at its

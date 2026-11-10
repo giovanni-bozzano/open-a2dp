@@ -102,9 +102,10 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	return static_cast<ULONG>(offset);
 }
 
-// Builds one RTP + AAC/LATM media packet from the frame ring. Caller holds MediaLock.
-// One record is one packet: the service already wrote a complete AudioMuxElement.
-ULONG BuildAacPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
+// Builds one RTP packet from the frame ring. Caller holds MediaLock. One record is one
+// packet: the service already wrote the codec's media payload (a LATM AudioMuxElement, or
+// the concatenated aptX HD frames) with the sample count it covers.
+ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 {
 	const UCHAR* payload = nullptr;
 	uint32_t frameSamples = 0;

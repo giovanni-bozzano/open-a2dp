@@ -15,6 +15,7 @@
 #include <ksmedia.h>
 #include <acx.h>
 
+#include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/RingBuffer.h>
@@ -81,10 +82,11 @@ constexpr USHORT AudioRenderSampleBytes(USHORT validBits)
 // encoder service (defined in OpenA2dp/Ioctl.h).
 inline constexpr ULONG PcmRingBytes = OpenA2dp::Ioctl::kPcmRingBytes;
 
-// Media modes (ctx->MediaMode).
+// Media modes (ctx->MediaMode). Service mode means the user-mode service encodes the codec
+// (AAC or aptX HD) into the frame ring and the driver only packetizes it.
 inline constexpr LONG MediaModeNone = 0;
 inline constexpr LONG MediaModeSbc = 1;
-inline constexpr LONG MediaModeAac = 2;
+inline constexpr LONG MediaModeService = 2;
 
 // Signaling-channel reopens allowed when a sink answers a codec-switch CLOSE by
 // dropping the A2DP connection; zeroed whenever a new switch sends its CLOSE.
@@ -114,6 +116,18 @@ inline const char* CodecName(OpenA2dp::Avdtp::CodecType codec)
 {
 	const char* const name = OpenA2dp::Avdtp::CodecTypeName(codec);
 	return name != nullptr ? name : "other";
+}
+
+// The name for a selected codec and its configuration IE: a vendor type alone says nothing,
+// because every vendor codec shares it.
+inline const char* CodecLabel(OpenA2dp::Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
+{
+	uint8_t capabilities = 0;
+	if (codec == OpenA2dp::Avdtp::CodecType::Vendor && OpenA2dp::AptxHd::ParseIe(ie, ieLength, capabilities))
+	{
+		return "aptX HD";
+	}
+	return CodecName(codec);
 }
 
 // Bounds on how long a thread of ours may wait for the Bluetooth transport. The
@@ -296,6 +310,9 @@ struct DEVICE_CONTEXT
 	// Byte 0 of the SBC capabilities the sink advertised in the last discovery (rates and
 	// channel modes), 0 until one ran. Determines PCM availability independently of preferences.
 	volatile LONG SinkSbcCapabilities;
+	// The sample-rate/channel-mode byte of the aptX HD capabilities the sink advertised in the
+	// last discovery, 0 until one ran. The endpoint's 24-bit formats follow it.
+	volatile LONG SinkHdCapabilities;
 	// Ioctl::kSinkCodec* bits for the codecs the sink advertised in the last discovery,
 	// written by the selector so SET_PREFERENCE and the CLI can refuse a codec the sink
 	// does not offer. Cleared when a new connection starts a fresh discovery.
@@ -417,9 +434,10 @@ struct DEVICE_CONTEXT
 	volatile LONG Underruns;
 	volatile LONG SendFailures;
 	volatile LONG LastMediaError;
-	// AAC pacing: interrupt time of the last sent frame and of the last underrun log.
-	ULONGLONG AacLastFrameTime;
-	ULONGLONG AacLastUnderrunLog;
+	// Service-encoded pacing: interrupt time of the last sent frame and of the last underrun
+	// log.
+	ULONGLONG ServiceLastFrameTime;
+	ULONGLONG ServiceLastUnderrunLog;
 	UCHAR FrameRecord[OpenA2dp::Ioctl::kMaxFrameRecordBytes];
 
 	WDFREQUEST ReadRequest;

@@ -12,13 +12,14 @@ namespace OpenA2dp::Avdtp {
 constexpr size_t kMaxSignalPacket = 128;
 constexpr size_t kMaxSinkSeps = 8;
 constexpr size_t kMaxCodecIe = 32;
-constexpr size_t kMaxLocalSeps = 2;
-// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC. Both are always
-// advertised: whether AAC may actually be selected is decided per negotiation by
-// the selector, because the encoder service can register after the session was
-// created (and can disappear again).
+constexpr size_t kMaxLocalSeps = 3;
+// SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC; SEID 3 is aptX HD. All are
+// always advertised: whether a codec may actually be selected is decided per negotiation
+// by the selector, because the encoder service can register after the session was created
+// (and can disappear again).
 constexpr uint8_t kLocalSeid = 1;
 constexpr uint8_t kLocalAacSeid = 2;
+constexpr uint8_t kLocalAptxHdSeid = 3;
 
 enum class SessionState : uint8_t {
 	Idle,
@@ -94,7 +95,7 @@ public:
 		localSepCount_ = 1;
 	}
 
-	// Adds or replaces an extra local SEP (SEID 2 = AAC). Ignored for SEID 1.
+	// Adds or replaces an extra local SEP (SEID 2 = AAC, SEID 3 = aptX HD). Ignored for SEID 1.
 	void SetLocalSep(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
 	{
 		if (seid == kLocalSeid || ieLength > kMaxCodecIe) {
@@ -403,13 +404,41 @@ private:
 			}
 		}
 		return nullptr;
+	}	uint8_t LocalSeidForCodec(CodecType codec) const noexcept
+	{
+		for (size_t i = 0; i < localSepCount_; ++i)
+		{
+			if (localSeps_[i].codec == codec)
+			{
+				return localSeps_[i].seid;
+			}
+		}
+		return 0;
 	}
 
-	uint8_t LocalSeidForCodec(CodecType codec) const noexcept
+	// A2DP has one codec type for every vendor codec, so a vendor configuration only belongs to
+	// the local SEP whose own IE carries the same vendor and codec IDs (the first six bytes).
+	uint8_t LocalSeidForVendor(const uint8_t* ie, size_t ieLength) const noexcept
 	{
-		for (size_t i = 0; i < localSepCount_; ++i) {
-			if (localSeps_[i].codec == codec) {
-				return localSeps_[i].seid;
+		if (ie == nullptr || ieLength < 6)
+		{
+			return 0;
+		}
+		for (size_t i = 0; i < localSepCount_; ++i)
+		{
+			const LocalSep& sep = localSeps_[i];
+			if (sep.codec != CodecType::Vendor || sep.ieLength < 6)
+			{
+				continue;
+			}
+			bool match = true;
+			for (size_t b = 0; b < 6; ++b)
+			{
+				match = match && sep.ie[b] == ie[b];
+			}
+			if (match)
+			{
+				return sep.seid;
 			}
 		}
 		return 0;
@@ -624,7 +653,8 @@ private:
 		if (ie == nullptr || selector_ == nullptr) {
 			return;
 		}
-		const uint8_t localSeid = LocalSeidForCodec(codec);
+		const uint8_t localSeid =
+			codec == CodecType::Vendor ? LocalSeidForVendor(ie, ieLength) : LocalSeidForCodec(codec);
 		if (localSeid == 0) {
 			return;
 		}

@@ -1,5 +1,7 @@
 #include "AudioInternal.h"
 
+#include "../Service.h"
+
 #include <ntstrsafe.h>
 
 #include <OpenA2dp/SbcConfig.h>
@@ -245,10 +247,30 @@ void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channe
 
 namespace
 {
-// Depth the endpoint lists. No in-tree encoder takes more than 16-bit input yet (SBC, AAC
-// and the Windows AAC encoder cannot, and aptX Classic is 16-bit); aptX HD will list its
-// 24-in-32 entries from here instead of truncating a 24-bit stream.
-constexpr USHORT ListedValidBits = 16;
+// The stored preference, read without holding AudioLock: the format list depends on it.
+Ioctl::Preference StoredPreference(_In_ DEVICE_CONTEXT* ctx)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+	const Ioctl::Preference preference = ctx->Preference;
+	KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+	return preference;
+}
+
+// True while the 24-in-32 formats can be offered: an aptX HD provider is registered, this
+// connection's discovery found the codec, and the user has not pinned another codec.
+bool HdFormatsAvailable(_In_ DEVICE_CONTEXT* ctx)
+{
+	const LONG sinkCodecs = InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0);
+	if ((sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecAptxHd)) == 0 ||
+		!ServiceCodecRegistered(ctx, Ioctl::kCodecAptxHd))
+	{
+		return false;
+	}
+	const Ioctl::Preference preference = StoredPreference(ctx);
+	return (preference.flags & Ioctl::kPreferenceForceCodec) == 0 ||
+		   preference.codec == Ioctl::kCodecAptxHd;
+}
 
 // Index of the first listed format, used as the endpoint default.
 ULONG FirstListed(_In_ ULONG listed)
@@ -286,22 +308,47 @@ bool CommitPinDefault(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
 	return changed;
 }
 
-ULONG DesiredFormats(_In_ uint8_t sinkFormats)
+// 16-bit entries follow the sink's SBC formats; 24-in-32 entries follow aptX HD, which runs
+// 44.1 or 48 kHz stereo only. Forcing a 16-bit codec removes the 24-bit entries, and forcing
+// aptX HD removes the 16-bit ones when HD can actually run - a forced codec the endpoint cannot
+// serve must not leave it with no format at all, so the fallback list stays in that case.
+ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 {
+	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	const uint8_t hdFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0));
+	const bool hdAvailable = HdFormatsAvailable(ctx);
+	const Ioctl::Preference preference = StoredPreference(ctx);
+	const bool forcedHd = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
+		preference.codec == Ioctl::kCodecAptxHd;
+
 	ULONG supported = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (AudioRenderValidBitsAt(i) != ListedValidBits)
+		const ULONG sampleRate = AudioRenderRateAt(i);
+		const USHORT channels = AudioRenderChannelsAt(i);
+		if (AudioRenderValidBitsAt(i) == AptxHd::kBitsPerSample)
 		{
-			continue;
+			const uint8_t rateBit = sampleRate == 44100 ? AptxHd::kSampleRate44100 : AptxHd::kSampleRate48000;
+			if (!hdAvailable || channels != 2 || (hdFormats & rateBit) == 0)
+			{
+				continue;
+			}
 		}
-		// No sink capabilities yet means a provisional list, which is narrowed again once
-		// discovery reports the sink's SBC formats.
-		if (sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, AudioRenderRateAt(i),
-			static_cast<uint8_t>(AudioRenderChannelsAt(i))))
+		else
 		{
-			supported |= 1u << i;
+			if (forcedHd && hdAvailable)
+			{
+				continue;
+			}
+			// No sink capabilities yet means a provisional list, which is narrowed again once
+			// discovery reports the sink's SBC formats.
+			if (sinkFormats != 0 && !SbcConfig::SupportsFormat(sinkFormats, sampleRate,
+				static_cast<uint8_t>(channels)))
+			{
+				continue;
+			}
 		}
+		supported |= 1u << i;
 	}
 	return supported;
 }
@@ -365,7 +412,7 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	NTSTATUS status = STATUS_SUCCESS;
 	WdfWaitLockAcquire(ctx->FormatLock, nullptr);
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
-	ULONG desired = DesiredFormats(sinkFormats);
+	ULONG desired = DesiredFormats(ctx);
 	if (desired == 0)
 	{
 		WdfWaitLockRelease(ctx->FormatLock);
@@ -384,7 +431,8 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	ULONG startIndex = FirstListed(desired);
 	if (selectedRate != 0)
 	{
-		const ULONG index = RenderFormatIndex(selectedRate, selectedChannels, ListedValidBits);
+		const USHORT listedDepth = HdFormatsAvailable(ctx) ? AptxHd::kBitsPerSample : 16;
+		const ULONG index = RenderFormatIndex(selectedRate, selectedChannels, listedDepth);
 		if (index < AudioRenderFormatCount && (desired & (1u << index)) != 0)
 		{
 			desired = 1u << index;
@@ -480,13 +528,17 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		(void)RtlStringCchCatA(formats, ARRAYSIZE(formats), entry);
 	}
 	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (PCM, RAW and DEFAULT modes, %s)", formats,
-		sinkFormats == 0 ? "provisional; sink not discovered" : "sink SBC capabilities");
+		sinkFormats == 0 && InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0) == 0
+			? "provisional; sink not discovered"
+			: "sink capabilities");
 	return NT_SUCCESS(status) ? defaultStatus : status;
 }
 
 bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
 {
-	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
-	const ULONG index = RenderFormatIndex(sampleRate, channels, ListedValidBits);
-	return index < AudioRenderFormatCount && (DesiredFormats(sinkFormats) & (1u << index)) != 0;
+	const ULONG desired = DesiredFormats(ctx);
+	const ULONG bits16 = RenderFormatIndex(sampleRate, channels, 16);
+	const ULONG bits24 = RenderFormatIndex(sampleRate, channels, AptxHd::kBitsPerSample);
+	return (bits16 < AudioRenderFormatCount && (desired & (1u << bits16)) != 0) ||
+		   (bits24 < AudioRenderFormatCount && (desired & (1u << bits24)) != 0);
 }

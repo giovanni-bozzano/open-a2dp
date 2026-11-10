@@ -55,12 +55,12 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaStartTime = KeQueryInterruptTime();
-	ctx->AacLastFrameTime = ctx->MediaStartTime;
-	ctx->AacLastUnderrunLog = 0;
+	ctx->ServiceLastFrameTime = ctx->MediaStartTime;
+	ctx->ServiceLastUnderrunLog = 0;
 	InterlockedExchange(&ctx->StreamFault, 0);
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);
-	InterlockedExchange(&ctx->MediaMode, MediaModeAac);
+	InterlockedExchange(&ctx->MediaMode, MediaModeService);
 	ctx->MediaActive = TRUE;
 	WdfWaitLockRelease(ctx->MediaLock);
 

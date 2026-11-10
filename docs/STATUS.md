@@ -10,6 +10,7 @@
 | M4 ACX endpoint + rings | Done | — |
 | M5 Encoder service + streaming | Done | - |
 | M5b Codec configuration | Done | — |
+| M5c aptX HD | In progress | Vendor AOSP HD is advertised and negotiated (SEID 3), service-encoded from 24-in-32 PCM, and the endpoint lists 24-in-32 while HD can run; remaining: sink interop on hardware (T27) and a reference codeword vector |
 | M6 Config UI + install/uninstall | In progress | The `OpenA2dpConfig` window covers device selection, status and the codec/endpoint settings; the sink list names every sink `name (address)` like `OpenA2dpCtl list`, with its state refreshed every second, and the layout is measured from the strings with the session panel scrolling itself. The clean restore of `BthA2dp.sys` runs in the VM (`deploy-vm.ps1 -Uninstall`): the packages, both services and the control device are gone and `OpenA2dpCtl list` is empty; the sink's return to `BthA2dp` still needs it paired and connected |
 | M7 System testing | Not started | System test matrix and long-run validation, starting with the two checks M5b handed over: a real player resumes after the endpoint flap (T25) and a pinned format survives a sink reconnect (T26) |
 | M8 Signing + release | Not started | Signed release package |

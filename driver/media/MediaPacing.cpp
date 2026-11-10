@@ -34,15 +34,16 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	}
 }
 
-// AAC: drain the frame ring, one packet per run. The service owns the media clock, so
-// there is no target; clock ticks wake it and account underruns. Caller holds MediaLock.
-void TickAac(DEVICE_CONTEXT* ctx, bool tick)
+// Service-encoded codecs (AAC, aptX HD): drain the frame ring, one packet per run. The
+// service owns the media clock, so there is no target; clock ticks wake it and account
+// underruns. Caller holds MediaLock.
+void TickService(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const ULONGLONG now = KeQueryInterruptTime();
 	if (MediaSendReady(ctx, tick))
 	{
 		uint32_t samples = 0;
-		const ULONG length = BuildAacPacket(ctx, samples);
+		const ULONG length = BuildServicePacket(ctx, samples);
 		if (length != 0)
 		{
 			if (!SubmitPacket(ctx, length))
@@ -50,7 +51,7 @@ void TickAac(DEVICE_CONTEXT* ctx, bool tick)
 				return;
 			}
 			ctx->MediaSamplesSent += samples;
-			ctx->AacLastFrameTime = now;
+			ctx->ServiceLastFrameTime = now;
 		}
 	}
 
@@ -61,7 +62,7 @@ void TickAac(DEVICE_CONTEXT* ctx, bool tick)
 
 	if (InterlockedCompareExchange(&ctx->StreamFault, 0, 0) != 0)
 	{
-		OA2DP_ERROR(ctx, "Media", "AAC frame ring fault, suspending");
+		OA2DP_ERROR(ctx, "Media", "frame ring fault, suspending");
 		ctx->MediaActive = FALSE;
 		SignalingRequestSuspend(ctx);
 		return;
@@ -71,15 +72,16 @@ void TickAac(DEVICE_CONTEXT* ctx, bool tick)
 	{
 		return;
 	}
-	// Wake the service on every clock tick: for AAC it is the media clock.
+	// Wake the service on every clock tick: it is the media clock for these codecs.
 	ServiceTick(ctx);
 
-	const ULONGLONG idle = now - ctx->AacLastFrameTime;
-	if (idle >= UnderrunTimeout && now - ctx->AacLastUnderrunLog >= UnderrunLogInterval)
+	const ULONGLONG idle = now - ctx->ServiceLastFrameTime;
+	if (idle >= UnderrunTimeout && now - ctx->ServiceLastUnderrunLog >= UnderrunLogInterval)
 	{
-		ctx->AacLastUnderrunLog = now;
+		ctx->ServiceLastUnderrunLog = now;
 		InterlockedIncrement(&ctx->Underruns);
-		OA2DP_WARN(ctx, "Media", "AAC underrun (%I64u ms without a frame)", idle / 10000ull);
+		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)",
+			ctx->ActiveCodec == Ioctl::kCodecAptxHd ? "aptX HD" : "AAC", idle / 10000ull);
 	}
 }
 
@@ -100,9 +102,9 @@ void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 	const bool tick = InterlockedExchange(&ctx->MediaTickPending, 0) != 0;
 	if (ctx->MediaActive && ctx->MediaChannel != nullptr)
 	{
-		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeAac)
+		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeService)
 		{
-			TickAac(ctx, tick);
+			TickService(ctx, tick);
 		}
 		else
 		{

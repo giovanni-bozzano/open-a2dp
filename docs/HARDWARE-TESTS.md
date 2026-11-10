@@ -304,7 +304,7 @@ it), reattach.
    to that one.
 8. `format 48000 2` on a 44.1-only sink is refused with the advertised masks, nothing is
    stored, and the endpoint keeps its previous list.
-9. `OpenA2dpCtl reset`: `codec preference reset to auto (AAC > SBC), endpoint format reset
+9. `OpenA2dpCtl reset`: `codec preference reset to auto (aptX HD > AAC > SBC), endpoint format reset
    to automatic (every format the sink supports)`, and both settings stay there after a
    reconnect.
 10. A sink that configures the stream itself with another rate or channel count
@@ -365,8 +365,8 @@ it), reattach.
 
 ### Release gate
 
-The two checks the codec configuration work handed to system testing. Both need a real
-player and a real sink; the scripted helpers in `.local/` cannot stand in for either.
+The checks the codec configuration and aptX HD work handed to system testing. All need a
+real player and a real sink; the scripted helpers in `.local/` cannot stand in for either.
 
 **T25 Player resumes after the endpoint flap (S/A)** — while a media player streams, change
 `PCM format`.
@@ -378,6 +378,17 @@ player and a real sink; the scripted helpers in `.local/` cannot stand in for ei
 - Expect: `Config: endpoint format <rate> Hz <ch> ch restored from the registry` and
   `endpoint formats ...` appear before Windows opens anything, and the stream runs at the
   pinned format with no Apply and no format change from the window.
+
+**T27 aptX HD negotiation and 24-bit path (S/A)** — service running, sink advertises aptX HD.
+1. `OpenA2dpCtl codec auto`, connect and play. `OpenA2dpCtl status` lists aptX HD under
+   `sink codecs` and reports `codec aptX HD, <rate> Hz, 2 ch, 576000 bps` (529200 at 44.1 kHz).
+2. Driver log shows `sink offers aptX HD`, `endpoint formats ... 24-bit`,
+   `configured codec aptX HD IE D7 00 00 00` and `aptX HD <rate> Hz stereo 24-bit, ... frames
+   from service`; after a minute `send failures` and `underruns` stay at 0.
+3. `OpenA2dpCtl codec sbc` while streaming: it renegotiates in the same connection and the
+   endpoint keeps playing (no silence) through the rounded 24->16 downconvert.
+4. `OpenA2dpCtl codec aptxhd` on a sink that does not advertise it: refused, stored
+   preference unchanged.
 
 ### Soak
 

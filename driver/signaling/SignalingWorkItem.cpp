@@ -107,6 +107,12 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec)
 		preference = ctx->Preference;
 		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 	}
+	const LONG sinkCodecs = InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0);
+	const auto offers = [sinkCodecs](uint32_t bit) { return sinkCodecs != 0 && (sinkCodecs & static_cast<LONG>(bit)) != 0; };
+	// aptX HD runs only on the 24-bit endpoint format and in stereo; anything else has to use
+	// a codec that consumes 16-bit PCM.
+	const bool hdUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptxHd) && offers(Ioctl::kSinkCodecAptxHd) &&
+		ctx->PinValidBits == AptxHd::kBitsPerSample && ctx->PinChannels == 2;
 	const bool forceCodec = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	if (forceCodec)
 	{
@@ -115,15 +121,30 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec)
 			codec = Avdtp::CodecType::Sbc;
 			return true;
 		}
-		if (preference.codec != Ioctl::kCodecAac || !ServiceRegistered(ctx) || !ctx->Session.RemoteOffers(Avdtp::CodecType::Aac))
+		if (preference.codec == Ioctl::kCodecAptxHd)
+		{
+			if (!hdUsable)
+			{
+				return false;
+			}
+			codec = Avdtp::CodecType::Vendor;
+			return true;
+		}
+		if (preference.codec != Ioctl::kCodecAac || !ServiceCodecRegistered(ctx, Ioctl::kCodecAac) ||
+			!offers(Ioctl::kSinkCodecAac))
 		{
 			return false;
 		}
 		codec = Avdtp::CodecType::Aac;
 		return true;
 	}
-	// Automatic order: AAC when the sink offers it and an encoder service is up.
-	codec = ServiceRegistered(ctx) && ctx->Session.RemoteOffers(Avdtp::CodecType::Aac)
+	// Automatic order is quality order: aptX HD, then AAC, then the mandatory SBC fallback.
+	if (hdUsable)
+	{
+		codec = Avdtp::CodecType::Vendor;
+		return true;
+	}
+	codec = ServiceCodecRegistered(ctx, Ioctl::kCodecAac) && offers(Ioctl::kSinkCodecAac)
 		? Avdtp::CodecType::Aac
 		: Avdtp::CodecType::Sbc;
 	return true;
@@ -350,7 +371,8 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 			Avdtp::CodecType desired;
 			if (DesiredCodec(ctx, desired))
 			{
-				OA2DP_INFO(ctx, "Signaling", "stream closed; rediscovering to negotiate %s", CodecName(desired));
+				OA2DP_INFO(ctx, "Signaling", "stream closed; rediscovering to negotiate %s",
+					NegotiableCodecName(desired));
 				Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 			}
 		}
@@ -411,7 +433,8 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		ctx->AppliedPreferenceParameters = parameters; // the rediscovery renegotiates from it
 		OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
-			CodecName(ctx->Session.SelectedCodec()), CodecName(desired));
+			CodecLabel(ctx->Session.SelectedCodec(), ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength()),
+			NegotiableCodecName(desired));
 		BeginCodecSwitchClose(ctx);
 		return;
 	}
@@ -437,7 +460,8 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	{
 		if (parametersDiffer)
 		{
-			OA2DP_INFO(ctx, "Signaling", "%s parameters changed; suspending to reconfigure", CodecName(desired));
+			OA2DP_INFO(ctx, "Signaling", "%s parameters changed; suspending to reconfigure",
+				NegotiableCodecName(desired));
 		}
 		// Stop the encoder before the sink suspends so no packet describes the old
 		// configuration once the new one is negotiated.

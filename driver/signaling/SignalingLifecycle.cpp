@@ -73,6 +73,14 @@ static void RequestCodecSwitch(DEVICE_CONTEXT* ctx)
 
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx)
 {
+	// The endpoint's 24-bit formats exist only while an aptX HD provider is registered, so the
+	// listing is rebuilt before the work item considers which codec to negotiate.
+	const NTSTATUS status = AudioApplyEndpointFormats(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_WARN(ctx, "Signaling", "applying the endpoint formats after registration failed 0x%08X",
+			status);
+	}
 	RequestCodecSwitch(ctx);
 }
 

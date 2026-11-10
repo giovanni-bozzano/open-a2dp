@@ -39,6 +39,15 @@ void ConfigFormat(Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength, ui
 			channels = params.channels;
 		}
 	}
+	else if (codec == Avdtp::CodecType::Vendor)
+	{
+		uint8_t capabilities = 0;
+		if (AptxHd::ParseIe(ie, ieLength, capabilities))
+		{
+			sampleRate = (capabilities & AptxHd::kSampleRate44100) != 0 ? 44100u : 48000u;
+			channels = (capabilities & AptxHd::kChannelStereo) != 0 ? 2u : 1u;
+		}
+	}
 }
 
 // True while the configuration the stream was negotiated with still runs at the endpoint
@@ -110,8 +119,8 @@ uint32_t AcceptSelected(void* context, Avdtp::CodecType codec, const uint8_t* co
 	return 0;
 }
 
-// Scores each sink SEP: SBC 1, AAC 2, so AAC wins when both sides support it.
-// Returns 0 for a codec we cannot configure (or that the user forced away from).
+// Scores each sink SEP: SBC 1, AAC 2, aptX HD 3. Quality order, so the best codec both sides
+// can run wins; registration and a format the endpoint cannot serve still return 0.
 uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 	uint8_t* configIe, size_t& configIeLength)
 {
@@ -127,7 +136,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 
 	// Which codecs the sink actually advertises is otherwise invisible in the log,
 	// and "AAC never wins" looks the same whether the sink lacks it or we skipped it.
-	OA2DP_INFO(ctx, "AVDTP", "sink offers codec %s (%u IE bytes)", CodecName(codec),
+	OA2DP_INFO(ctx, "AVDTP", "sink offers codec %s (%u IE bytes)", CodecLabel(codec, remoteIe, remoteIeLength),
 		static_cast<unsigned>(remoteIeLength));
 
 	if (codec == Avdtp::CodecType::Sbc)
@@ -191,8 +200,9 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 	{
 		// Reaching this branch means the sink advertises an AAC SEP.
 		InterlockedOr(&ctx->SinkCodecs, static_cast<LONG>(Ioctl::kSinkCodecAac));
-		// AAC exists only while an encoder service is registered for this device.
-		if (!ServiceRegistered(ctx) || (forceCodec && preference.codec != Ioctl::kCodecAac))
+		// AAC exists only while its encoder provider is registered for this device.
+		if (!ServiceCodecRegistered(ctx, Ioctl::kCodecAac) ||
+			(forceCodec && preference.codec != Ioctl::kCodecAac))
 		{
 			return 0;
 		}
@@ -208,6 +218,64 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		}
 		configIeLength = AacConfig::kIeLength;
 		return AcceptSelected(ctx, codec, configIe, configIeLength, 2);
+	}
+
+	if (codec == Avdtp::CodecType::Vendor)
+	{
+		uint8_t capabilities = 0;
+		if (!AptxHd::ParseIe(remoteIe, remoteIeLength, capabilities))
+		{
+			// A vendor codec this driver does not implement.
+			return 0;
+		}
+		// Record the advertisement whether or not HD can be selected now: the endpoint's
+		// 24-bit formats depend on it, and an encoder registered later must be able to use
+		// the discovery that already ran.
+		const bool offered = (InterlockedOr(&ctx->SinkCodecs, static_cast<LONG>(Ioctl::kSinkCodecAptxHd)) &
+							  static_cast<LONG>(Ioctl::kSinkCodecAptxHd)) != 0;
+		InterlockedExchange(&ctx->SinkHdCapabilities, capabilities);
+		if (!offered)
+		{
+			OA2DP_INFO(ctx, "AVDTP", "sink offers aptX HD (rates 0x%02X, modes 0x%02X)",
+				static_cast<unsigned>(capabilities & AptxHd::kSampleRateMask),
+				static_cast<unsigned>(capabilities & AptxHd::kChannelMask));
+			const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+			if (!NT_SUCCESS(formatStatus))
+			{
+				OA2DP_WARN(ctx, "AVDTP", "applying the sink's formats to the endpoint failed 0x%08X",
+					formatStatus);
+			}
+		}
+		if (!ServiceCodecRegistered(ctx, Ioctl::kCodecAptxHd))
+		{
+			return 0;
+		}
+		if (forceCodec && preference.codec != Ioctl::kCodecAptxHd)
+		{
+			return 0;
+		}
+		// The encoder is stereo and 24-bit, and the endpoint format is what the PCM ring
+		// carries; a mono or 16-bit pin would need a downmix or an expansion this codec does
+		// not do, so the stream falls back to a 16-bit codec instead.
+		if (ctx->PinChannels != 2 || ctx->PinValidBits != AptxHd::kBitsPerSample)
+		{
+			OA2DP_WARN(ctx, "AVDTP", "aptX HD needs 24-bit stereo, the endpoint format is %u ch %u-bit",
+				static_cast<unsigned>(ctx->PinChannels), static_cast<unsigned>(ctx->PinValidBits));
+			return 0;
+		}
+		const uint8_t rate = ctx->PinSampleRate == 44100 ? AptxHd::kSampleRate44100
+			: ctx->PinSampleRate == 48000
+			? AptxHd::kSampleRate48000
+			: 0;
+		if (rate == 0 || (capabilities & rate) == 0)
+		{
+			OA2DP_WARN(ctx, "AVDTP", "the sink cannot serve the endpoint's %u Hz with aptX HD",
+				ctx->PinSampleRate);
+			return 0;
+		}
+		AptxHd::WriteIe(rate, configIe);
+		configIeLength = AptxHd::kIeLength;
+		return AcceptSelected(ctx, codec, configIe, configIeLength, 3);
 	}
 
 	return 0;
@@ -236,14 +304,43 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 		}
 		return 0;
 	}
+	if (codec == Avdtp::CodecType::Vendor)
+	{
+		// The HD SEP is always advertised, so a sink can propose an HD configuration even
+		// while no encoder exists. Refusing it here keeps the stream from opening into a
+		// codec the driver has nothing to encode with.
+		if (!ServiceCodecRegistered(ctx, Ioctl::kCodecAptxHd))
+		{
+			return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
+		}
+		const uint8_t error = AptxHd::ValidateIe(ie, ieLength);
+		if (error != 0)
+		{
+			return error;
+		}
+		uint8_t capabilities = 0;
+		(void)AptxHd::ParseIe(ie, ieLength, capabilities);
+		// aptX HD is stereo-only, and the driver reads 24-in-32 PCM from the endpoint.
+		if (ctx->PinChannels != 2 || ctx->PinValidBits != AptxHd::kBitsPerSample)
+		{
+			return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
+		}
+		const uint8_t rate = ctx->PinSampleRate == 44100 ? AptxHd::kSampleRate44100
+			: ctx->PinSampleRate == 48000
+			? AptxHd::kSampleRate48000
+			: 0;
+		if (rate == 0 || (capabilities & rate) == 0)
+		{
+			return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
+		}
+		return 0;
+	}
 	if (codec != Avdtp::CodecType::Aac)
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
 	}
-	// The AAC SEP is always advertised, so a sink can propose an AAC configuration
-	// even while no encoder exists. Refusing it here keeps the stream from opening
-	// into a codec the driver has nothing to encode with.
-	if (!ServiceRegistered(ctx))
+	// Like AAC, the SEP is always advertised; the provider decides whether it can run.
+	if (!ServiceCodecRegistered(ctx, Ioctl::kCodecAac))
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
 	}
@@ -279,22 +376,39 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 void PublishStatus(DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->AvdtpStateSnapshot, static_cast<LONG>(ctx->Session.State()));
-	InterlockedExchange(&ctx->NegotiatedCodecSnapshot,
-		ctx->Session.SelectedIeLength() != 0 ? static_cast<LONG>(ctx->Session.SelectedCodec()) : 0);
+	LONG codec = 0;
+	if (ctx->Session.SelectedIeLength() != 0)
+	{
+		const Avdtp::CodecType selected = ctx->Session.SelectedCodec();
+		if (selected != Avdtp::CodecType::Vendor)
+		{
+			codec = static_cast<LONG>(selected);
+		}
+		else
+		{
+			uint8_t capabilities = 0;
+			codec = AptxHd::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities)
+				? static_cast<LONG>(Ioctl::kCodecAptxHd)
+				: static_cast<LONG>(selected);
+		}
+	}
+	InterlockedExchange(&ctx->NegotiatedCodecSnapshot, codec);
 }
 
 void ResetSession(DEVICE_CONTEXT* ctx)
 {
 	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, kSbcDriverCapabilities,
 		SbcConfig::kIeLength, &SelectConfig, ctx, &ValidateConfig);
-	// Always advertise AAC. Registering the SEP only when the service happens to be
-	// up already loses a race it usually loses: the sink opens the signaling
-	// channel first, ResetSession runs with EncoderRegistered == 0, and the codec
-	// would then be missing for the whole connection. Whether AAC may be selected is
-	// decided per negotiation in SelectConfig, which is the state that actually
-	// matters at that moment.
+	// Always advertise AAC and aptX HD. Registering a SEP only when a provider happens to be
+	// up already loses a race it usually loses: the sink opens the signaling channel first,
+	// ResetSession runs with no provider registered, and the codec would then be missing for
+	// the whole connection. Whether either may be selected is decided per negotiation in
+	// SelectConfig, which is the state that actually matters at that moment.
 	ctx->Session.SetLocalSep(Avdtp::kLocalAacSeid, Avdtp::CodecType::Aac, AacConfig::kLocalCapabilities,
 		AacConfig::kIeLength);
+	uint8_t hdIe[AptxHd::kIeLength] = {};
+	AptxHd::WriteIe(static_cast<uint8_t>(AptxHd::kSampleRate44100 | AptxHd::kSampleRate48000), hdIe);
+	ctx->Session.SetLocalSep(Avdtp::kLocalAptxHdSeid, Avdtp::CodecType::Vendor, hdIe, sizeof(hdIe));
 	ctx->LoggedState = Avdtp::SessionState::Idle;
 	ctx->ResponseDeadline = 0;
 	InterlockedExchange(&ctx->MediaOpenPending, 0);
@@ -315,6 +429,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->MtuRenegotiationAttempts, 0);
 	// The codecs are re-learned by this connection's discovery.
 	InterlockedExchange(&ctx->SinkCodecs, 0);
+	InterlockedExchange(&ctx->SinkHdCapabilities, 0);
 	ctx->AppliedPreferenceParameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	// Packets queued for the previous session must not reach the next one.
 	ctx->SignalQueueHead = 0;

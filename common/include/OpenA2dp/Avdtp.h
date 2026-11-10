@@ -65,14 +65,15 @@ enum class CodecType : uint8_t {
 };
 
 // The codec name in logs and in the tools' report. nullptr for the codecs this stack never
-// negotiates (the tools print "none", the driver "other"); SBC and AAC are the only two it
-// advertises, so the table stays at that.
+// negotiates (the tools print "none", the driver "other"); SBC, AAC and the vendor type are
+// the ones it advertises. A vendor codec is named by its own IE rather than by the type.
 constexpr const char* CodecTypeName(CodecType codec) noexcept
 {
 	switch (codec)
 	{
 	case CodecType::Sbc: return "SBC";
 	case CodecType::Aac: return "AAC";
+	case CodecType::Vendor: return "vendor";
 	default: return nullptr;
 	}
 }

@@ -1,6 +1,7 @@
 #include "TestFramework.h"
 
 #include <OpenA2dp/AacConfig.h>
+#include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/SbcCodec.h>
 #include <OpenA2dp/SbcFixed.h>
@@ -970,4 +971,62 @@ TEST(AvdtpSource_RejectsInvalidAacConfiguration)
 	CHECK_EQ(out[2], uint8_t{static_cast<uint8_t>(ServiceCategory::MediaCodec)});
 	CHECK_EQ(out[3], uint8_t{static_cast<uint8_t>(ErrorCode::InvalidObjectType)});
 	CHECK(s.State() == SessionState::Idle);
+}
+
+namespace {
+
+// Scores aptX HD above SBC; the configuration it writes is the local IE.
+uint32_t HdSelector(void*, CodecType codec, const uint8_t*, size_t, uint8_t* config, size_t& configLength)
+{
+	if (codec == CodecType::Sbc) {
+		std::memcpy(config, kSbcConfig, sizeof(kSbcConfig));
+		configLength = sizeof(kSbcConfig);
+		return 1;
+	}
+	if (codec == CodecType::Vendor) {
+		AptxHd::WriteIe(AptxHd::kSampleRate48000, config);
+		configLength = AptxHd::kIeLength;
+		return 3;
+	}
+	return 0;
+}
+
+} // namespace
+
+TEST(AvdtpSource_SelectsAptxHdVendorSep)
+{
+	uint8_t hdIe[AptxHd::kIeLength] = {};
+	AptxHd::WriteIe(static_cast<uint8_t>(AptxHd::kSampleRate44100 | AptxHd::kSampleRate48000), hdIe);
+	SourceSession s(CodecType::Sbc, kSbcLocalIe, sizeof(kSbcLocalIe), HdSelector, nullptr);
+	s.SetLocalSep(kLocalAptxHdSeid, CodecType::Vendor, hdIe, sizeof(hdIe));
+
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	uint8_t payload[64];
+
+	REQUIRE(s.Connect(cmd, kMaxSignalPacket) == 2);
+	uint8_t seps[2];
+	WriteSepInfo({3, false, MediaType::Audio, SepType::Sink}, seps);
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, seps, sizeof(seps), rsp), cmd, kMaxSignalPacket) == 3);
+
+	// One sink SEP advertising SBC first and the vendor codec second: the vendor IE has
+	// to be matched to SEID 3 by its vendor and codec IDs, not by the shared codec type.
+	uint8_t hdCaps[AptxHd::kIeLength] = {};
+	AptxHd::WriteIe(static_cast<uint8_t>(AptxHd::kSampleRate44100 | AptxHd::kSampleRate48000), hdCaps);
+	const CodecType codecs[2] = {CodecType::Sbc, CodecType::Vendor};
+	const uint8_t* ies[2] = {kSbcRemoteCaps, hdCaps};
+	const size_t lengths[2] = {sizeof(kSbcRemoteCaps), sizeof(hdCaps)};
+	const size_t capsLength = MultiCodecCaps(payload, codecs, ies, lengths, 2);
+
+	REQUIRE(s.OnPacket(rsp, Accept(cmd, payload, capsLength, rsp), cmd, kMaxSignalPacket) != 0);
+	REQUIRE(Header(cmd).signal == Signal::SetConfiguration);
+	CHECK_EQ(cmd[2], uint8_t{3 << 2});
+	CHECK_EQ(cmd[3], uint8_t{kLocalAptxHdSeid << 2});
+	CHECK_EQ(cmd[9], uint8_t{static_cast<uint8_t>(CodecType::Vendor)});
+	CHECK_EQ(cmd[10 + 6], uint8_t{AptxHd::kSampleRate48000 | AptxHd::kChannelStereo});
+	CHECK_EQ(cmd[10], uint8_t{AptxHd::kVendorId & 0xFF});
+	CHECK_EQ(cmd[10 + 7], uint8_t{0}); // reserved bytes stay zero
+	CHECK(s.SelectedCodec() == CodecType::Vendor);
+	CHECK_EQ(s.SelectedIeLength(), AptxHd::kIeLength);
+	CHECK_EQ(s.LocalSeid(), uint8_t{kLocalAptxHdSeid});
 }
