@@ -14,6 +14,10 @@
 | M7 System testing | Not started | System test matrix and long-run validation, starting with the two checks M5b handed over: a real player resumes after the endpoint flap (T25) and a pinned format survives a sink reconnect (T26) |
 | M8 Signing + release | Not started | Signed release package |
 
+## Codec licensing
+- aptX, aptX HD and aptX LL are Qualcomm proprietary and need their software licence and SDK, so nothing is implemented in-tree and the family stays out of the codec preference until a licensed provider exists. AAC needs a Via LA pool licence per shipped product; see [codec licensing](architecture/Codec-Licensing.md).
+- The repository has no `LICENSE` file; choose one before publishing.
+
 ## Codec audit
 - SBC spec math is single-sourced: `SbcConfig` (IE masks, selector, configured-IE parser), `SbcAllocation` (12.6.3 bit allocation), `SbcFrame` (frame length, header and CRC emission, tail padding, payload header, frames per packet), `SbcFilter` (Q30 prototypes, Q14 cosines, sine). The driver and the codec library only adapt their own parameter types.
 - Still duplicated by design: the two encoder front-ends, Q12 in the kernel against `double` in the codec library. The service selects the codec library's SBC encoder nowhere, so only the tests exercise it (see [Protocol and codecs](architecture/Protocol-and-Codecs.md)).

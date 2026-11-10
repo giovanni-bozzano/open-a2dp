@@ -20,6 +20,13 @@ Current implementation:
 - `tools/OpenA2dpConfig`: desktop settings window (`OpenA2dpConfig.exe`) over the same IOCTLs: sink list, live status, and the codec and endpoint preference.
 - `tools/common`: the status report both tools print (`StatusReport`), so the window, its **Copy** button and `OpenA2dpCtl status` never show different fields; the window's **Details** box and `status --verbose` add every field with its hex value.
 
+## Licensing
+
+SBC is unencumbered. The in-tree AAC-LC encoder needs a Via LA AAC patent licence for any
+product that ships an encoder, whether or not it uses this code. The aptX family is
+Qualcomm proprietary and is deliberately not implemented here. Details in
+[docs/architecture/Codec-Licensing.md](docs/architecture/Codec-Licensing.md).
+
 ## Build
 
 Requires Visual Studio 2026 (v145 toolset) and the WDK NuGet packages pinned in `Directory.Packages.props`. Use the 64-bit MSBuild.
