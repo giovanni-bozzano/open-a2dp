@@ -47,6 +47,9 @@ struct CodecPreference {
 struct PcmFormat {
 	uint32_t sampleRate = 0;
 	uint16_t channels = 0;
+	// Valid bits per sample. 16 is interleaved int16_t; 24 is 24-in-32, an int32 with the
+	// valid bits left-justified and the low byte zero, so one sample occupies 4 bytes.
+	uint16_t bitsPerSample = 16;
 };
 
 class IA2dpEncoder {
@@ -61,9 +64,10 @@ public:
 	// Upper bound of the encoded size of one frame.
 	virtual size_t MaxFrameBytes() const noexcept = 0;
 
-	// Encodes exactly SamplesPerFrame() interleaved 16-bit samples per channel.
+	// Encodes exactly SamplesPerFrame() interleaved samples per channel, laid out as
+	// InputFormat() describes: 2 bytes per sample for 16 bits, 4 for 24-in-32.
 	// `written` may be 0 when the encoder is still priming (AAC).
-	virtual HRESULT Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept = 0;
+	virtual HRESULT Encode(const uint8_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept = 0;
 
 	// How many encoded frames fit into one media packet whose payload
 	// (after the RTP header) is limited to `payloadCapacity` bytes.

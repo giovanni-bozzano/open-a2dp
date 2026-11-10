@@ -261,7 +261,7 @@ TEST(Aac_MediaFoundation_EncodeSine)
 			pcm[i * 2 + 1] = static_cast<int16_t>(-s);
 		}
 		size_t written = 0;
-		REQUIRE(SUCCEEDED(encoder->Encode(pcm.data(), au.data(), au.size(), written)));
+		REQUIRE(SUCCEEDED(encoder->Encode(reinterpret_cast<const uint8_t*>(pcm.data()), au.data(), au.size(), written)));
 		if (written == 0) {
 			continue;
 		}
@@ -327,7 +327,7 @@ TEST(Aac_MediaFoundation_EncodedFramesFitMediaPayload)
 				pcm[i * 2 + 1] = static_cast<int16_t>(-s);
 			}
 			size_t written = 0;
-			REQUIRE(SUCCEEDED(encoder->Encode(pcm.data(), au.data(), au.size(), written)));
+			REQUIRE(SUCCEEDED(encoder->Encode(reinterpret_cast<const uint8_t*>(pcm.data()), au.data(), au.size(), written)));
 			if (written == 0) {
 				continue;
 			}

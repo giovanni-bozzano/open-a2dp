@@ -115,8 +115,8 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 	stats_.silenceSamples += samplesPerFrame_ - availableSamples;
 
 	size_t written = 0;
-	const HRESULT hr = encoder_->Encode(reinterpret_cast<const int16_t*>(pcmBlock_.data()),
-										accessUnit_.data(), accessUnit_.size(), written);
+	const HRESULT hr = encoder_->Encode(pcmBlock_.data(), accessUnit_.data(), accessUnit_.size(),
+										written);
 	if (FAILED(hr) || written > accessUnit_.size()) {
 		++stats_.encodeErrors;
 		return false;

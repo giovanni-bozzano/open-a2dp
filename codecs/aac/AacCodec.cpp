@@ -242,7 +242,7 @@ size_t AacEncoder::MaxFrameBytes() const noexcept
 	return 768u * params_.channels;
 }
 
-HRESULT AacEncoder::Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept
+HRESULT AacEncoder::Encode(const uint8_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept
 {
 	written = 0;
 	if (!impl_ || !impl_->transform || pcm == nullptr || out == nullptr) {

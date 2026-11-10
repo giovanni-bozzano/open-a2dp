@@ -57,7 +57,8 @@ RoundTripResult RoundTrip(const FrameParams& p, const std::vector<int16_t>& pcm,
 	std::vector<uint8_t> frame(encoder.MaxFrameBytes());
 	for (size_t f = 0; f < frames; ++f) {
 		size_t written = 0;
-		if (FAILED(encoder.Encode(pcm.data() + f * spf * nch, frame.data(), frame.size(), written)) ||
+		if (FAILED(encoder.Encode(reinterpret_cast<const uint8_t*>(pcm.data() + f * spf * nch),
+								frame.data(), frame.size(), written)) ||
 			written != FrameLength(p)) {
 			result.decodeOk = false;
 			return result;
@@ -337,7 +338,7 @@ TEST(Sbc_Encode_SilenceProducesValidFrames)
 	std::vector<int16_t> pcm(encoder.SamplesPerFrame() * 2, 0);
 	uint8_t frame[512];
 	size_t written = 0;
-	REQUIRE(SUCCEEDED(encoder.Encode(pcm.data(), frame, sizeof(frame), written)));
+	REQUIRE(SUCCEEDED(encoder.Encode(reinterpret_cast<const uint8_t*>(pcm.data()), frame, sizeof(frame), written)));
 	CHECK_EQ(written, size_t{119});
 	CHECK_EQ(frame[0], kSyncWord);
 	CHECK_EQ(frame[1], uint8_t{(2 << 6) | (3 << 4) | (3 << 2) | (0 << 1) | 1});
@@ -350,7 +351,7 @@ TEST(Sbc_Encode_RejectsSmallBuffer)
 	std::vector<int16_t> pcm(256, 0);
 	uint8_t frame[64];
 	size_t written = 0;
-	CHECK(encoder.Encode(pcm.data(), frame, sizeof(frame), written) == E_INVALIDARG);
+	CHECK(encoder.Encode(reinterpret_cast<const uint8_t*>(pcm.data()), frame, sizeof(frame), written) == E_INVALIDARG);
 }
 
 TEST(Sbc_RoundTrip_HighQualityJointStereo)

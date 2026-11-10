@@ -104,7 +104,7 @@ public:
 	PcmFormat InputFormat() const noexcept override;
 	uint32_t SamplesPerFrame() const noexcept override;
 	size_t MaxFrameBytes() const noexcept override;
-	HRESULT Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept override;
+	HRESULT Encode(const uint8_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept override;
 	size_t FramesPerPacket(size_t payloadCapacity) const noexcept override;
 	size_t BuildMediaPayload(const uint8_t* frames, const size_t* frameSizes, size_t frameCount,
 							 uint8_t* out, size_t capacity) noexcept override;

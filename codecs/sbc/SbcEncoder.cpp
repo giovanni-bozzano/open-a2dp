@@ -104,15 +104,16 @@ void SbcEncoder::Analyze(const int16_t* pcm, int channel, int block, double* sub
 		}
 		subbandSamples[i] = sum;
 	}
-}
-
-HRESULT SbcEncoder::Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept
+}HRESULT SbcEncoder::Encode(const uint8_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept
 {
 	written = 0;
 	const size_t frameLength = FrameLength(params_);
-	if (pcm == nullptr || out == nullptr || capacity < frameLength) {
+	if (pcm == nullptr || out == nullptr || capacity < frameLength)
+	{
 		return E_INVALIDARG;
 	}
+	// SBC is 16-bit input, which is the only depth this encoder declares (InputFormat).
+	const auto* pcm16 = reinterpret_cast<const int16_t*>(pcm);
 
 	const int nsb = params_.subbands;
 	const int nblk = params_.blocks;
@@ -121,7 +122,7 @@ HRESULT SbcEncoder::Encode(const int16_t* pcm, uint8_t* out, size_t capacity, si
 	double samples[16][2][8] = {};
 	for (int blk = 0; blk < nblk; ++blk) {
 		for (int ch = 0; ch < nch; ++ch) {
-			Analyze(pcm, ch, blk, samples[blk][ch]);
+			Analyze(pcm16, ch, blk, samples[blk][ch]);
 		}
 	}
 

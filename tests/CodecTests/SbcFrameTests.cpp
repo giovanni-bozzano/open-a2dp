@@ -189,7 +189,8 @@ std::vector<uint8_t> EncodeWithCodec(const Config& c)
 	std::vector<uint8_t> frame(encoder.MaxFrameBytes());
 	size_t written = 0;
 	for (size_t f = 0; f + 1 < 4; ++f) {
-		CHECK_EQ(encoder.Encode(pcm.data() + f * samplesPerFrame, frame.data(), frame.size(), written), S_OK);
+		CHECK_EQ(encoder.Encode(reinterpret_cast<const uint8_t*>(pcm.data() + f * samplesPerFrame),
+							frame.data(), frame.size(), written), S_OK);
 	}
 	frame.resize(written);
 	return frame;

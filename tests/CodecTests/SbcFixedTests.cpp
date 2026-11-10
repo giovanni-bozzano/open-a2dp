@@ -163,7 +163,8 @@ TEST(SbcFixed_AgreesWithCodecEncoder)
 
 		std::vector<uint8_t> codecFrame(SbcFixed::kMaxFrameBytes);
 		size_t codecWritten = 0;
-		REQUIRE(SUCCEEDED(codecEncoder.Encode(pcm.data(), codecFrame.data(), codecFrame.size(), codecWritten)));
+		REQUIRE(SUCCEEDED(codecEncoder.Encode(reinterpret_cast<const uint8_t*>(pcm.data()),
+										codecFrame.data(), codecFrame.size(), codecWritten)));
 		CHECK_EQ(codecWritten, fixedWritten);
 		// Sync word, the rate/block/mode/allocation/subband bits and the bitpool; the CRC
 		// differs because the two analysis filters scale the subbands differently.

@@ -48,11 +48,12 @@ public:
 	size_t MaxFrameBytes() const noexcept override { return maxFrameBytes; }
 	size_t FramesPerPacket(size_t) const noexcept override { return 1; }
 
-	HRESULT Encode(const int16_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept override
+	HRESULT Encode(const uint8_t* pcm, uint8_t* out, size_t capacity, size_t& written) noexcept override
 	{
 		written = 0;
 		const int call = calls++;
-		blocks.emplace_back(pcm, pcm + static_cast<size_t>(samplesPerFrame) * channels);
+		const auto* samples = reinterpret_cast<const int16_t*>(pcm);
+		blocks.emplace_back(samples, samples + static_cast<size_t>(samplesPerFrame) * channels);
 		if (failOnCall >= 0 && call == failOnCall) {
 			return E_FAIL;
 		}
