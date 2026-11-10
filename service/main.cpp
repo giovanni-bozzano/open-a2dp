@@ -467,6 +467,7 @@ void DeviceLoop(const std::wstring& linkName)
 
 	streamEncoder.Stop();
 	hdStreamEncoder.Stop();
+	aptxStreamEncoder.Stop();
 	CloseHandle(h);
 	Log("[svc] %s done", linkUtf8.c_str());
 }
