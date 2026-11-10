@@ -40,10 +40,11 @@ inline constexpr USHORT AvdtpPsm = OpenA2dp::Avdtp::kPsm;
 // Defined in OpenA2dp/Ioctl.h so the driver and the encoder service agree.
 inline constexpr USHORT MediaMaxMtu = static_cast<USHORT>(OpenA2dp::Ioctl::kMediaMaxMtu);
 
-// Render endpoint formats: 16-bit PCM at 44.1 and 48 kHz, mono and stereo. Those are the
-// two rates every A2DP sink supports and the channel counts both codecs can encode, so
-// whichever format Windows opens the stream with can be negotiated. AudioSampleRate and
-// AudioChannels stay the defaults the endpoint reports before a stream exists.
+// Render endpoint formats: PCM at 44.1 and 48 kHz, mono and stereo, in the two depths the
+// codecs can consume. Those are the two rates every A2DP sink supports and the channel
+// counts both codecs can encode, so whichever format Windows opens the stream with can be
+// negotiated. AudioSampleRate and AudioChannels stay the defaults the endpoint reports
+// before a stream exists.
 inline constexpr ULONG AudioSampleRate = 44100;
 inline constexpr USHORT AudioChannels = 2;
 inline constexpr USHORT AudioBytesPerFrame = AudioChannels * sizeof(INT16);
@@ -51,7 +52,31 @@ inline constexpr ULONG AudioRenderRates[] = {44100, 48000};
 inline constexpr ULONG AudioRenderRateCount = ARRAYSIZE(AudioRenderRates);
 inline constexpr USHORT AudioRenderChannels[] = {2, 1};
 inline constexpr ULONG AudioRenderChannelCount = ARRAYSIZE(AudioRenderChannels);
-inline constexpr ULONG AudioRenderFormatCount = AudioRenderRateCount * AudioRenderChannelCount;
+// Valid bits per sample. 24 is offered as 24-in-32, the Windows convention: a 32-bit
+// container with the valid bits left-justified and the low byte zero, so the ring always
+// holds whole samples. Only an encoder that takes 24-bit input lists those formats.
+inline constexpr USHORT AudioRenderValidBits[] = {16, 24};
+inline constexpr ULONG AudioRenderDepthCount = ARRAYSIZE(AudioRenderValidBits);
+// Index layout: rate major, then channel count, then depth (the fastest-varying).
+inline constexpr ULONG AudioRenderFormatsPerRate = AudioRenderChannelCount * AudioRenderDepthCount;
+inline constexpr ULONG AudioRenderFormatCount = AudioRenderRateCount * AudioRenderFormatsPerRate;
+constexpr ULONG AudioRenderRateAt(ULONG index)
+{
+	return AudioRenderRates[index / AudioRenderFormatsPerRate];
+}
+constexpr USHORT AudioRenderChannelsAt(ULONG index)
+{
+	return AudioRenderChannels[(index / AudioRenderDepthCount) % AudioRenderChannelCount];
+}
+constexpr USHORT AudioRenderValidBitsAt(ULONG index)
+{
+	return AudioRenderValidBits[index % AudioRenderDepthCount];
+}
+// Bytes one sample occupies in the stream: 24 valid bits travel in a 32-bit container.
+constexpr USHORT AudioRenderSampleBytes(USHORT validBits)
+{
+	return validBits > 16 ? 4 : 2;
+}
 // About 370 ms of PCM between the ACX stream and the SBC encoder; shared with the
 // encoder service (defined in OpenA2dp/Ioctl.h).
 inline constexpr ULONG PcmRingBytes = OpenA2dp::Ioctl::kPcmRingBytes;
@@ -300,12 +325,14 @@ struct DEVICE_CONTEXT
 	KSPIN_LOCK AudioLock;
 	WDFTIMER AudioTimer;
 	ACXSTREAM AudioStream;
-	// PCM format of the stream that runs (44.1 or 48 kHz, mono or stereo). The encoder input,
-	// the position math and the negotiated configuration follow it; it is committed at stream
-	// run, so the probe streams Windows creates per format leave it alone. Without a running
-	// stream it holds the default.
+	// PCM format of the stream that runs (44.1 or 48 kHz, mono or stereo, 16 or 24 valid bits).
+	// The encoder input, the position math and the negotiated configuration follow it; it is
+	// committed at stream run, so the probe streams Windows creates per format leave it alone.
+	// Without a running stream it holds the default.
 	ULONG PinSampleRate;
 	USHORT PinChannels;
+	USHORT PinValidBits;
+	// Container bytes per frame, so 24 valid bits in a 32-bit container count as four.
 	USHORT PinBytesPerFrame;
 	// PCM format this endpoint offers Windows, set from SET_ENDPOINT_FORMAT and stored per
 	// sink. 0 means automatic: every format the sink supports is listed. A pinned format is
@@ -541,7 +568,8 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx);
 bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);
 
 // Reads up to frames of stereo PCM rendered by Windows; pads the rest with
-// silence. Returns the number of frames that came from the endpoint.
+// silence. Returns the number of frames that came from the endpoint. Reads whole 16-bit
+// frames; a 24-in-32 stream is not encodable yet, so it reads nothing.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames);
 

@@ -54,6 +54,7 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	KeInitializeSpinLock(&ctx->AudioLock);
 	ctx->PinSampleRate = AudioSampleRate;
 	ctx->PinChannels = AudioChannels;
+	ctx->PinValidBits = 16;
 	ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
 	// RenderFormats was filled once in DriverEntry; the table is shared by every endpoint and
 	// must not be rewritten here, or two device adds could expose a half-built format.

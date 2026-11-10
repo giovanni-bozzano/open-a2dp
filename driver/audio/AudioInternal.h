@@ -25,6 +25,7 @@ struct STREAM_CONTEXT
 	// enumerates before it opens the one it plays.
 	ULONG SampleRate;
 	USHORT Channels;
+	USHORT ValidBits;
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(STREAM_CONTEXT, GetStreamContext)
 
@@ -85,6 +86,9 @@ void AudioRestartRenderStream(_In_ DEVICE_CONTEXT* ctx);
 // they can be listed and unlisted as the sink capabilities change.
 NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format);
-void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);
+// Valid bits of a WAVEFORMATEX-shaped stream format, which is the depth it must run at. A
+// plain WAVEFORMATEX has no valid-bits field, so it reports the container depth.
+USHORT PcmValidBits(const KSDATAFORMAT_WAVEFORMATEX& wave);
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels, USHORT validBits);
 const GUID* EndpointCategory(_In_ BTH_COD cod);
 } // namespace OpenA2dpDriver::Audio

@@ -111,8 +111,7 @@ bool KnownEndpointFormat(uint32_t sampleRate, uint32_t channels)
 {
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (sampleRate == AudioRenderRates[i / AudioRenderChannelCount] &&
-			channels == AudioRenderChannels[i % AudioRenderChannelCount])
+		if (sampleRate == AudioRenderRateAt(i) && channels == AudioRenderChannelsAt(i))
 		{
 			return true;
 		}

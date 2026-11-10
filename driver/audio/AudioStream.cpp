@@ -55,6 +55,7 @@ NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACX
 	const auto* wave = static_cast<const KSDATAFORMAT_WAVEFORMATEX*>(AcxDataFormatGetKsDataFormat(format));
 	streamContext->SampleRate = wave->WaveFormatEx.nSamplesPerSec;
 	streamContext->Channels = wave->WaveFormatEx.nChannels;
+	streamContext->ValidBits = PcmValidBits(*wave);
 
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
@@ -115,7 +116,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	// follow. The offered format list is not touched: it belongs to the endpoint setting
 	// (AudioApplyEndpointFormats), not to whatever Windows opened.
 	const STREAM_CONTEXT* streamContext = GetStreamContext(stream);
-	AudioSetPinFormat(ctx, streamContext->SampleRate, streamContext->Channels);
+	AudioSetPinFormat(ctx, streamContext->SampleRate, streamContext->Channels, streamContext->ValidBits);
 	SignalingOnAudioRun(ctx);
 	return STATUS_SUCCESS;
 }

@@ -6,7 +6,10 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 {
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 	const ULONG bytesPerFrame = ctx->PinBytesPerFrame;
-	if (bytesPerFrame == 0)
+	// The caller's buffer holds 16-bit samples. Nothing lists a 24-in-32 stream until an
+	// encoder takes 24-bit input (aptX HD), so refuse it here rather than copy 32-bit frames
+	// into an INT16 buffer.
+	if (bytesPerFrame == 0 || ctx->PinValidBits != 16)
 	{
 		return 0;
 	}

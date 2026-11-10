@@ -56,30 +56,33 @@ NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
 namespace
 {
 // The encoder follows the actual stream, not the Windows mix or advertised default.
-void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ USHORT channels)
+void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ USHORT channels,
+	_In_ USHORT validBits)
 {
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const ULONG previousRate = ctx->PinSampleRate;
 	const USHORT previousChannels = ctx->PinChannels;
+	const USHORT previousValidBits = ctx->PinValidBits;
 	ctx->PinSampleRate = sampleRate;
 	ctx->PinChannels = channels;
-	ctx->PinBytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
+	ctx->PinValidBits = validBits;
+	ctx->PinBytesPerFrame = static_cast<USHORT>(channels * AudioRenderSampleBytes(validBits));
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
-	if (sampleRate != previousRate || channels != previousChannels)
+	if (sampleRate != previousRate || channels != previousChannels || validBits != previousValidBits)
 	{
 		SignalingOnPreferenceChanged(ctx);
 	}
 }
-// Index in AudioRenderRates/AudioRenderChannels of a rate and channel count, or
-// AudioRenderFormatCount when the pair is not one of the endpoint formats.
-ULONG RenderFormatIndex(ULONG sampleRate, USHORT channels)
+// Index in RenderFormats of a rate, channel count and depth, or AudioRenderFormatCount when
+// the triple is not one of the endpoint formats.
+ULONG RenderFormatIndex(ULONG sampleRate, USHORT channels, USHORT validBits)
 {
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (sampleRate == AudioRenderRates[i / AudioRenderChannelCount] &&
-			channels == AudioRenderChannels[i % AudioRenderChannelCount])
+		if (sampleRate == AudioRenderRateAt(i) && channels == AudioRenderChannelsAt(i) &&
+			validBits == AudioRenderValidBitsAt(i))
 		{
 			return i;
 		}
@@ -150,6 +153,18 @@ NTSTATUS RebuildListing(_In_ DEVICE_CONTEXT* ctx, ULONG desired, ULONG startInde
 
 } // namespace
 
+USHORT PcmValidBits(const KSDATAFORMAT_WAVEFORMATEX& wave)
+{
+	const WAVEFORMATEX& pcm = wave.WaveFormatEx;
+	if (pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+		pcm.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
+		wave.DataFormat.FormatSize >= sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEXTENSIBLE))
+	{
+		return reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(&pcm)->Samples.wValidBitsPerSample;
+	}
+	return pcm.wBitsPerSample;
+}
+
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
 	if (format == nullptr)
@@ -166,26 +181,32 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	}
 	NTSTATUS status = STATUS_NOT_SUPPORTED;
 	const WAVEFORMATEX& pcm = wave->WaveFormatEx;
-	bool pcm16 = IsEqualGUID(wave->DataFormat.MajorFormat, KSDATAFORMAT_TYPE_AUDIO) &&
+	const bool extensible = pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE;
+	const USHORT validBits = PcmValidBits(*wave);
+	const USHORT sampleBytes = AudioRenderSampleBytes(validBits);
+	// PCM only, in the depths the endpoint lists: 16-bit samples, and 24 bits in a 32-bit
+	// container. A plain WAVEFORMATEX has no valid-bits field, so it cannot describe 24-bit.
+	bool pcmFormat = IsEqualGUID(wave->DataFormat.MajorFormat, KSDATAFORMAT_TYPE_AUDIO) &&
 		IsEqualGUID(wave->DataFormat.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
-		pcm.wBitsPerSample == 16 && pcm.nBlockAlign == pcm.nChannels * sizeof(INT16) &&
+		(validBits == 16 || (extensible && validBits == 24)) &&
+		pcm.wBitsPerSample == sampleBytes * 8 && pcm.nBlockAlign == pcm.nChannels * sampleBytes &&
 		pcm.nAvgBytesPerSec == pcm.nSamplesPerSec * pcm.nBlockAlign;
-	if (pcm.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+	if (extensible)
 	{
-		pcm16 = pcm16 && pcm.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
+		pcmFormat = pcmFormat && pcm.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
 			wave->DataFormat.FormatSize >= sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEXTENSIBLE);
-		if (pcm16)
+		if (pcmFormat)
 		{
 			const auto& extended = *reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(&pcm);
-			pcm16 = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
-				extended.Samples.wValidBitsPerSample == 16 &&
+			pcmFormat = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) &&
+				extended.Samples.wValidBitsPerSample == validBits &&
 				(extended.dwChannelMask == 0 || extended.dwChannelMask ==
 					static_cast<ULONG>(pcm.nChannels == 1 ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO));
 		}
 	}
 	else
 	{
-		pcm16 = pcm16 && pcm.wFormatTag == WAVE_FORMAT_PCM;
+		pcmFormat = pcmFormat && pcm.wFormatTag == WAVE_FORMAT_PCM;
 	}
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 	const ULONG listed = ctx->FormatsListed;
@@ -193,9 +214,9 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	{
 		// Listed, not merely supported: a pinned endpoint format is offered alone, and a stream
 		// at any other format would move the pin away from the setting Windows kept using.
-		if (pcm16 && (listed & (1u << i)) != 0 &&
-			pcm.nSamplesPerSec == AudioRenderRates[i / AudioRenderChannelCount] &&
-			pcm.nChannels == AudioRenderChannels[i % AudioRenderChannelCount] &&
+		if (pcmFormat && (listed & (1u << i)) != 0 &&
+			pcm.nSamplesPerSec == AudioRenderRateAt(i) && pcm.nChannels == AudioRenderChannelsAt(i) &&
+			validBits == AudioRenderValidBitsAt(i) &&
 			(sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, pcm.nSamplesPerSec,
 				static_cast<uint8_t>(pcm.nChannels))))
 		{
@@ -215,16 +236,19 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 // format. Every committed change invalidates the negotiated configuration, and committing the
 // probes tore the session down once per probe until the shared-mode stream ended up at the
 // first listed format again.
-void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
+void AudioSetPinFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels, USHORT validBits)
 {
-	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch (actual stream)", sampleRate,
-		static_cast<unsigned>(channels));
-	RecordEndpointFormat(ctx, sampleRate, channels);
+	OA2DP_INFO(ctx, "Audio", "endpoint format %u Hz %u ch %u-bit (actual stream)", sampleRate,
+		static_cast<unsigned>(channels), static_cast<unsigned>(validBits));
+	RecordEndpointFormat(ctx, sampleRate, channels, validBits);
 }
 
 namespace
 {
-constexpr ULONG AllFormatsMask = (1u << AudioRenderFormatCount) - 1u;
+// Depth the endpoint lists. No in-tree encoder takes more than 16-bit input yet (SBC, AAC
+// and the Windows AAC encoder cannot, and aptX Classic is 16-bit); aptX HD will list its
+// 24-in-32 entries from here instead of truncating a 24-bit stream.
+constexpr USHORT ListedValidBits = 16;
 
 // Index of the first listed format, used as the endpoint default.
 ULONG FirstListed(_In_ ULONG listed)
@@ -243,17 +267,20 @@ ULONG FirstListed(_In_ ULONG listed)
 // where a format change leaves the endpoint.
 bool CommitPinDefault(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
 {
-	const ULONG sampleRate = AudioRenderRates[index / AudioRenderChannelCount];
-	const USHORT channels = AudioRenderChannels[index % AudioRenderChannelCount];
+	const ULONG sampleRate = AudioRenderRateAt(index);
+	const USHORT channels = AudioRenderChannelsAt(index);
+	const USHORT validBits = AudioRenderValidBitsAt(index);
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const bool changed = ctx->AudioStream == nullptr &&
-		(ctx->PinSampleRate != sampleRate || ctx->PinChannels != channels);
+		(ctx->PinSampleRate != sampleRate || ctx->PinChannels != channels ||
+			ctx->PinValidBits != validBits);
 	if (changed)
 	{
 		ctx->PinSampleRate = sampleRate;
 		ctx->PinChannels = channels;
-		ctx->PinBytesPerFrame = static_cast<USHORT>(channels * sizeof(INT16));
+		ctx->PinValidBits = validBits;
+		ctx->PinBytesPerFrame = static_cast<USHORT>(channels * AudioRenderSampleBytes(validBits));
 	}
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return changed;
@@ -261,15 +288,17 @@ bool CommitPinDefault(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
 
 ULONG DesiredFormats(_In_ uint8_t sinkFormats)
 {
-	if (sinkFormats == 0)
-	{
-		return AllFormatsMask;
-	}
 	ULONG supported = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		if (SbcConfig::SupportsFormat(sinkFormats, AudioRenderRates[i / AudioRenderChannelCount],
-			static_cast<uint8_t>(AudioRenderChannels[i % AudioRenderChannelCount])))
+		if (AudioRenderValidBitsAt(i) != ListedValidBits)
+		{
+			continue;
+		}
+		// No sink capabilities yet means a provisional list, which is narrowed again once
+		// discovery reports the sink's SBC formats.
+		if (sinkFormats == 0 || SbcConfig::SupportsFormat(sinkFormats, AudioRenderRateAt(i),
+			static_cast<uint8_t>(AudioRenderChannelsAt(i))))
 		{
 			supported |= 1u << i;
 		}
@@ -355,7 +384,7 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	ULONG startIndex = FirstListed(desired);
 	if (selectedRate != 0)
 	{
-		const ULONG index = RenderFormatIndex(selectedRate, selectedChannels);
+		const ULONG index = RenderFormatIndex(selectedRate, selectedChannels, ListedValidBits);
 		if (index < AudioRenderFormatCount && (desired & (1u << index)) != 0)
 		{
 			desired = 1u << index;
@@ -435,7 +464,7 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		}
 	}
 
-	char formats[96];
+	char formats[192];
 	formats[0] = '\0';
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
@@ -443,13 +472,14 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		{
 			continue;
 		}
-		char entry[24];
-		(void)RtlStringCchPrintfA(entry, ARRAYSIZE(entry), "%s%u Hz %u ch", formats[0] != '\0' ? ", " : "",
-			AudioRenderRates[i / AudioRenderChannelCount],
-			static_cast<unsigned>(AudioRenderChannels[i % AudioRenderChannelCount]));
+		char entry[28];
+		(void)RtlStringCchPrintfA(entry, ARRAYSIZE(entry), "%s%u Hz %u ch %u-bit",
+			formats[0] != '\0' ? ", " : "", AudioRenderRateAt(i),
+			static_cast<unsigned>(AudioRenderChannelsAt(i)),
+			static_cast<unsigned>(AudioRenderValidBitsAt(i)));
 		(void)RtlStringCchCatA(formats, ARRAYSIZE(formats), entry);
 	}
-	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (16-bit PCM, RAW and DEFAULT modes, %s)", formats,
+	OA2DP_INFO(ctx, "Audio", "endpoint formats %s (PCM, RAW and DEFAULT modes, %s)", formats,
 		sinkFormats == 0 ? "provisional; sink not discovered" : "sink SBC capabilities");
 	return NT_SUCCESS(status) ? defaultStatus : status;
 }
@@ -457,6 +487,6 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
 {
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
-	const ULONG index = RenderFormatIndex(sampleRate, channels);
+	const ULONG index = RenderFormatIndex(sampleRate, channels, ListedValidBits);
 	return index < AudioRenderFormatCount && (DesiredFormats(sinkFormats) & (1u << index)) != 0;
 }

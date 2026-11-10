@@ -50,7 +50,9 @@ Sequencing, together with the aptX HD milestone rather than before it:
 1. Vendor `encoder_for_aptxhd` and build the wrapper against the encoder's native input,
    with tests for 24-in-32 to `int32`.
 2. Add the depth dimension to the render format table and `AudioValidatePinFormat`, and
-   take `PinBytesPerFrame` from the stream instead of the channel count.
+   take `PinBytesPerFrame` from the stream instead of the channel count. Done: the table
+   holds both depths, `PinValidBits` follows the stream and only 16-bit is listed until
+   step 3 selects 24-in-32.
 3. Pick 24-in-32 in `AudioApplyEndpointFormats` from the codec preference and the sink's
    advertised HD capabilities.
 4. Widen `IA2dpEncoder`/`PcmFormat`, then add the 24->16 rounded downconvert on the
