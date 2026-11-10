@@ -41,8 +41,9 @@ Engineering fit for this repository: the AOSP encoders are self-contained C
 of state per channel, so they belong in the user-mode service beside AAC. Three details
 have to be right:
 
-1. 16-bit to 24-bit expansion. The A2DP ring is 16-bit today, so aptX HD's extra depth is
-   theoretical until the ring carries 24-bit samples.
+1. 24-bit input. HD takes 24-bit samples, so the endpoint must list 24-in-32 and carry it
+   through the ring: there is no 16->24 expansion step, which would feed zeroed low bits to
+   the predictor ([PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)).
 2. The vendor-specific capability IE and its vendor and codec IDs. Take them from the
    Apache-2.0 AOSP headers; do not guess, and do not copy them from a reverse-engineered
    library.
