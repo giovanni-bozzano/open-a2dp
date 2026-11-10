@@ -1,5 +1,7 @@
 #include "MediaInternal.h"
 
+#include <OpenA2dp/FrameRecord.h>
+
 namespace OpenA2dpDriver::Media
 {
 void OnMediaTimer(_In_ WDFTIMER timer)
@@ -102,11 +104,42 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	return static_cast<ULONG>(offset);
 }
 
+// Keeps the frame ring near live audio. A transport stall otherwise leaves a backlog that is
+// then handed to the sink at link speed, which it cannot buffer; dropping the oldest records
+// costs one gap instead. The record headers carry the sample count, so the backlog is measured
+// exactly, and the RTP timestamp moves past the gap so the sink hears one jump, not old audio.
+// Caller holds MediaLock.
+static void TrimFrameBacklog(DEVICE_CONTEXT* ctx)
+{
+	if (ctx->FrameRingHeader == nullptr || ctx->ActiveSampleRate == 0)
+	{
+		return;
+	}
+	RingBufferView frames(ctx->FrameRingHeader, ctx->FrameRingData);
+	const uint32_t limit = ctx->ActiveSampleRate * FrameBacklogMs / 1000;
+	const uint32_t trimmedSamples = FrameRecord::Trim(frames, limit);
+	if (trimmedSamples == 0)
+	{
+		return;
+	}
+	ctx->RtpTimestamp += trimmedSamples;
+	InterlockedIncrement(&ctx->FramesTrimmed);
+	const ULONGLONG now = KeQueryInterruptTime();
+	if (now - ctx->FrameTrimLogTime >= UnderrunLogInterval)
+	{
+		ctx->FrameTrimLogTime = now;
+		OA2DP_WARN(ctx, "Media", "dropped %I64u ms of buffered %s to stay live (%u records trimmed)",
+			trimmedSamples * 1000 / ctx->ActiveSampleRate, CodecValueName(ctx->ActiveCodec),
+			static_cast<unsigned>(InterlockedCompareExchange(&ctx->FramesTrimmed, 0, 0)));
+	}
+}
+
 // Builds one RTP packet from the frame ring. Caller holds MediaLock. One record is one
 // packet: the service already wrote the codec's media payload (a LATM AudioMuxElement, or
 // the concatenated aptX HD frames) with the sample count it covers.
 ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 {
+	TrimFrameBacklog(ctx);
 	const UCHAR* payload = nullptr;
 	uint32_t frameSamples = 0;
 	uint32_t flags = 0;

@@ -435,6 +435,9 @@ struct DEVICE_CONTEXT
 	ULONGLONG AudioCopiedPosition;
 	ULONGLONG AudioCompletedPackets;
 	ULONGLONG AudioDroppedBytes;
+	// Audio the producer discarded from the head of the PCM ring to keep the stream near live;
+	// counted apart from the drops above, which mean new audio could not be written at all.
+	ULONGLONG AudioTrimmedBytes;
 	OpenA2dp::RingHeader* PcmRingHeader;
 	UCHAR* PcmRingData;
 
@@ -478,6 +481,10 @@ struct DEVICE_CONTEXT
 	volatile uint32_t ActiveObjectType;
 	volatile LONG StreamFault;
 	volatile LONG FramesDropped;
+	// Buffered records the driver discarded to keep the stream near live after a stall, and the
+	// interrupt time of the last such event so the log stays bounded.
+	volatile LONG FramesTrimmed;
+	ULONGLONG FrameTrimLogTime;
 	volatile LONG Underruns;
 	volatile LONG SendFailures;
 	volatile LONG LastMediaError;

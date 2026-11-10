@@ -156,6 +156,76 @@ TEST(FrameRecord_WriteRejectsFullRing)
 	CHECK(!FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0));
 }
 
+TEST(FrameRecord_TrimDropsTheOldestRecords)
+{
+	TestRing ring;
+	uint8_t payload[100] = {};
+	// One record per index, so the record that survives the trim is identifiable.
+	for (uint8_t i = 0; i < 6; ++i) {
+		payload[0] = i;
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0));
+	}
+	const uint32_t readableBefore = ring.view.ReadableBytes();
+	const uint32_t recordBytes = static_cast<uint32_t>(sizeof(Ioctl::FrameRecordHeader) + sizeof(payload));
+
+	// Six records are 768 samples; keeping 384 drops the oldest three.
+	CHECK_EQ(FrameRecord::Trim(ring.view, 384), static_cast<uint32_t>(3 * 128));
+	CHECK_EQ(readableBefore - ring.view.ReadableBytes(), 3 * recordBytes);
+
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.payload[0], uint8_t{3});
+	CHECK_EQ(record.samples, uint32_t{128});
+}
+
+TEST(FrameRecord_TrimLeavesBacklogThatFits)
+{
+	TestRing ring;
+	uint8_t payload[100] = {};
+	for (uint8_t i = 0; i < 2; ++i) {
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0));
+	}
+	const uint32_t readable = ring.view.ReadableBytes();
+	CHECK_EQ(FrameRecord::Trim(ring.view, 384), uint32_t{0});
+	CHECK_EQ(ring.view.ReadableBytes(), readable);
+
+	// An empty ring has nothing to trim either.
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(FrameRecord::Trim(ring.view, 384), uint32_t{0});
+}
+
+TEST(FrameRecord_TrimStopsAtCorruptRecord)
+{
+	TestRing ring;
+	uint8_t payload[100] = {};
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0));
+	Ioctl::FrameRecordHeader bad{0x1234, 64, 128, 0};
+	REQUIRE(ring.view.Write(&bad, sizeof(bad)));
+	const uint32_t readable = ring.view.ReadableBytes();
+
+	// The good record alone is under the limit, but the walk also has to survive the bad header
+	// and give up without consuming anything Read can still report.
+	CHECK_EQ(FrameRecord::Trim(ring.view, 64), uint32_t{0});
+	CHECK_EQ(ring.view.ReadableBytes(), readable);
+}
+
+TEST(FrameRecord_TrimToZeroEmptiesTheRing)
+{
+	TestRing ring;
+	uint8_t payload[100] = {};
+	for (uint8_t i = 0; i < 4; ++i) {
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0));
+	}
+	// "Keep at most nothing" drops every record the walk validated; the driver never asks for
+	// that, but the boundary must not leave a record the caller did not count on.
+	CHECK_EQ(FrameRecord::Trim(ring.view, 0), static_cast<uint32_t>(4 * 128));
+	CHECK_EQ(ring.view.ReadableBytes(), uint32_t{0});
+}
+
 TEST(FrameRecord_WrapAround)
 {
 	TestRing ring;

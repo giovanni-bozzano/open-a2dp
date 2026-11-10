@@ -93,6 +93,19 @@ public:
 		WriteRelease(&header_->tail, static_cast<LONG>(tail + len));
 	}
 
+	// Copies len bytes `offset` bytes after the read position without consuming them, so a
+	// consumer can walk records ahead of the tail before deciding to skip any.
+	bool PeekAt(uint32_t offset, void* dst, uint32_t len) const noexcept
+	{
+		const uint32_t readable = ReadableBytes();
+		if (offset > readable || len > readable - offset) {
+			return false;
+		}
+		const uint32_t tail = static_cast<uint32_t>(ReadAcquire(&header_->tail));
+		const_cast<RingBufferView*>(this)->Copy(tail + offset, dst, len, false);
+		return true;
+	}
+
 private:
 	void Copy(uint32_t position, const void* buffer, uint32_t len, bool toRing) noexcept
 	{

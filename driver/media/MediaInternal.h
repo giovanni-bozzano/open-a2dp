@@ -20,6 +20,10 @@ constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
 // (diagnostic only; link loss arrives as a transport completion or disconnect
 // indication). The tick count follows the period so the two cannot drift apart.
 constexpr ULONG MediaBusyLimitMs = 3000;
+// Most buffered audio the frame ring may hold before the driver discards the oldest records.
+// A stall then costs one gap in the stream instead of a latency step that lasts until the
+// stream stops; a couple of records is already more than the sink needs ahead of the clock.
+constexpr ULONG FrameBacklogMs = 60;
 constexpr ULONG MediaBusyLimitTicks = MediaBusyLimitMs / MediaPeriodMs;
 
 EVT_WDF_TIMER OnMediaTimer;

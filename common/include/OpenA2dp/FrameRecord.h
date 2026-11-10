@@ -84,4 +84,54 @@ inline ReadResult Read(RingBufferView& ring, uint8_t* storage, uint32_t storageB
 	return ReadResult::Record;
 }
 
+// Consumer side, for latency: drops the oldest records while more than `limitSamples` are
+// buffered, so a consumer that fell behind (a stalled transport) returns to live audio instead
+// of replaying the backlog at real time. Returns the number of samples dropped; the caller
+// advances its media timestamp by that much so the sink sees the gap as one jump. A malformed
+// record stops the walk and is left for Read to report.
+inline uint32_t Trim(RingBufferView& ring, uint32_t limitSamples) noexcept
+{
+	// Records are walked by header, so no payload is copied and the read position does not move
+	// until the decision is made.
+	uint64_t total = 0;
+	uint32_t offset = 0;
+	bool complete = true;
+	const uint32_t readable = ring.ReadableBytes();
+	for (;;) {
+		Ioctl::FrameRecordHeader header{};
+		if (!ring.PeekAt(offset, &header, sizeof(header))) {
+			break; // fewer bytes than a header left: the records walked so far are all there is
+		}
+		if (header.magic != Ioctl::kFrameRecordMagic || header.size <= sizeof(header) ||
+			header.size > Ioctl::kMaxFrameRecordBytes || header.samples == 0 ||
+			offset > readable - header.size) {
+			complete = false;
+			break;
+		}
+		offset += header.size;
+		total += header.samples;
+	}
+	// A record the read path cannot parse is left untouched for Read to report: trimming around
+	// it would hide the fault and move the read position past it.
+	if (!complete || total <= limitSamples) {
+		return 0;
+	}
+
+	uint32_t dropped = 0;
+	uint32_t skipped = 0;
+	while (total - dropped > limitSamples) {
+		Ioctl::FrameRecordHeader header{};
+		if (!ring.PeekAt(skipped, &header, sizeof(header))) {
+			break;
+		}
+		skipped += header.size;
+		dropped += header.samples;
+	}
+	if (skipped == 0) {
+		return 0;
+	}
+	ring.Skip(skipped);
+	return dropped;
+}
+
 } // namespace OpenA2dp::FrameRecord
