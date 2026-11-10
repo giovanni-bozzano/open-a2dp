@@ -313,10 +313,11 @@ bool CommitPinDefault(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
 	return changed;
 }
 
-// 16-bit entries follow the sink's SBC formats; 24-in-32 entries follow aptX HD, which runs
-// 44.1 or 48 kHz stereo only. Forcing a 16-bit codec removes the 24-bit entries, and forcing
-// aptX HD removes the 16-bit ones when HD can actually run - a forced codec the endpoint cannot
-// serve must not leave it with no format at all, so the fallback list stays in that case.
+// 16-bit entries follow the sink's SBC formats or, where SBC cannot play them, its classic
+// aptX formats; 24-in-32 entries follow aptX HD, which runs 44.1 or 48 kHz stereo only.
+// Forcing a 16-bit codec removes the 24-bit entries, and forcing aptX HD removes the 16-bit
+// ones when HD can actually run - a forced codec the endpoint cannot serve must not leave it
+// with no format at all, so the fallback list stays in that case.
 ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 {
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));

@@ -154,7 +154,7 @@ struct VersionInfo {
 
 struct RegisterEncoderIn {
 	uint32_t abiVersion;       // must equal kAbiVersion
-	uint32_t codec;            // kCodecAac
+	uint32_t codec;            // kCodecAac, kCodecAptx or kCodecAptxHd
 	uint32_t maxFramePayload;  // service limit; 0 = no limit (driver clamps)
 	uint32_t reserved;
 };
