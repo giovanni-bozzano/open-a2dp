@@ -38,8 +38,9 @@ exceptions and one hard limit:
 Engineering fit for this repository: the AOSP encoders are self-contained C
 (`aptXbtenc.c`, `QmfConv.c`, `ProcessSubband.c`, `AptxTables.h`), expose
 `aptxbtenc_init` / `aptxbtenc_encodestereo`, take 24-bit stereo PCM and keep roughly 1.6 KB
-of state per channel, so they belong in the user-mode service beside AAC. Three details
-have to be right:
+of state per channel, so they belong in the user-mode service beside AAC. The HD drop is
+vendored at `codecs/aptx/` from AOSP commit `745ee92b87ed62b5a8a1bac47d5df8cad623bf59` and
+stays unmodified there (Apache-2.0 text beside it); three details have to be right:
 
 1. 24-bit input. HD takes 24-bit samples, so the endpoint must list 24-in-32 and carry it
    through the ring: there is no 16->24 expansion step, which would feed zeroed low bits to
