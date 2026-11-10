@@ -6,8 +6,10 @@
 // tells this object how much time has elapsed, and the object encodes whole 10 ms records
 // whenever the clock has made one due. Each record carries many 6-byte frames, because an
 // aptX HD frame covers only four samples per channel; the driver puts one record into one
-// RTP packet. PCM comes from the shared ring as 24-in-32 (the endpoint's 24-bit format), so
-// the bytes are handed to the encoder unchanged.
+// RTP packet. A 44.1 kHz span is not a whole number of frames, so the samples a record
+// cannot encode carry into the next one and the packet sizes average out exactly. PCM comes
+// from the shared ring as 24-in-32 (the endpoint's 24-bit format), so the bytes are handed
+// to the encoder unchanged.
 //
 // No OS calls, no threads: the service supplies the encoder, the clock and the rings.
 
@@ -65,7 +67,7 @@ public:
 	const AptxHdStreamStats& Stats() const noexcept { return stats_; }
 
 private:
-	// Encodes one record of framesPerRecord_ frames, reading a full record of PCM and
+	// Encodes one 10 ms record of framesInRecord frames, reading a full span of PCM and
 	// zero-filling only what the ring does not hold.
 	bool EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept;
 
@@ -78,12 +80,15 @@ private:
 	bool discontinuity_ = false;
 
 	uint32_t sampleBytes_ = 0;   // interleaved 24-in-32 bytes for all channels
-	uint32_t samplesPerRecord_ = 0;
-	size_t framesPerRecord_ = 0;
-	std::vector<uint8_t> pcmRecord_;  // samplesPerRecord_ * sampleBytes_
-	std::vector<uint8_t> frameData_;  // framesPerRecord_ * AptxHd::kFrameBytes
+	uint32_t samplesPerFrame_ = 0;
+	uint32_t spanSamples_ = 0;   // one 10 ms record's worth of clock
+	uint32_t carrySamples_ = 0;  // samples the previous record left for this one
+	size_t maxFrames_ = 0;
+	std::vector<uint8_t> pcmRecord_;  // (spanSamples_ + samplesPerFrame_ - 1) * sampleBytes_
+	std::vector<uint8_t> frameData_;  // maxFrames_ * AptxHd::kFrameBytes
 	std::vector<size_t> frameSizes_;
 	std::vector<uint8_t> payload_;    // Ioctl::kMaxFramePayload
+	std::vector<uint8_t> carryPcm_;   // (samplesPerFrame_ - 1) * sampleBytes_
 };
 
 } // namespace OpenA2dp

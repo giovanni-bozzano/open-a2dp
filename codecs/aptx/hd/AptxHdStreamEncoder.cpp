@@ -37,28 +37,30 @@ bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const Apt
 	if (format.sampleRate != params.sampleRate || format.channels != params.channels ||
 		format.bitsPerSample != AptxHd::kBitsPerSample || params.channels != 2 ||
 		samplesPerFrame != AptxHd::kSamplesPerFrame || maxFrameBytes != AptxHd::kFrameBytes ||
-		encoder->FramesPerPacket(Ioctl::kMaxFramePayload) == 0)
+		params.sampleRate % 100 != 0 || encoder->FramesPerPacket(Ioctl::kMaxFramePayload) == 0)
 	{
 		return false;
 	}
 
-	// Ten milliseconds per record, so a record is one media tick: rate/100 samples of four
-	// samples per frame. The encoder still caps how many frames fit one packet; a record
-	// larger than that would never be sent whole.
-	const size_t recordFrames = std::max<size_t>(1, params.sampleRate / 400);
-	const size_t framesPerRecord = std::min(recordFrames, encoder->FramesPerPacket(Ioctl::kMaxFramePayload));
-	const uint32_t samplesPerRecord = static_cast<uint32_t>(framesPerRecord * samplesPerFrame);
-	if (framesPerRecord > 4096 || samplesPerRecord > 4096)
+	// The clock span is a whole number of milliseconds; the carry absorbs the samples a frame
+	// cannot cover. A record can need one frame more than the span alone.
+	const uint32_t spanSamples = params.sampleRate / 100;
+	const size_t maxFrames = (static_cast<size_t>(spanSamples) + samplesPerFrame - 1) / samplesPerFrame;
+	const uint32_t recordSamples = spanSamples + samplesPerFrame - 1;
+	// A record the encoder cannot hold in one packet would be built past the payload buffer.
+	if (maxFrames > 4096 || recordSamples > 4096 ||
+		maxFrames > encoder->FramesPerPacket(Ioctl::kMaxFramePayload))
 	{
 		return false;
 	}
 	const uint32_t sampleBytes = static_cast<uint32_t>(params.channels) * 4u;
 
 	try {
-		pcmRecord_.assign(static_cast<size_t>(samplesPerRecord) * sampleBytes, 0);
-		frameData_.assign(framesPerRecord * maxFrameBytes, 0);
-		frameSizes_.assign(framesPerRecord, 0);
+		pcmRecord_.assign(static_cast<size_t>(recordSamples) * sampleBytes, 0);
+		frameData_.assign(maxFrames * maxFrameBytes, 0);
+		frameSizes_.assign(maxFrames, 0);
 		payload_.assign(Ioctl::kMaxFramePayload, 0);
+		carryPcm_.assign(static_cast<size_t>(samplesPerFrame - 1) * sampleBytes, 0);
 	} catch (const std::bad_alloc&) {
 		return false;
 	}
@@ -69,8 +71,10 @@ bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const Apt
 	startTimeUs_ = startTimeUs;
 	producedSamples_ = 0;
 	sampleBytes_ = sampleBytes;
-	samplesPerRecord_ = samplesPerRecord;
-	framesPerRecord_ = framesPerRecord;
+	samplesPerFrame_ = samplesPerFrame;
+	spanSamples_ = spanSamples;
+	maxFrames_ = maxFrames;
+	carrySamples_ = 0;
 	// The PCM the endpoint queued before MediaStart predates this stream.
 	const uint32_t stale = pcm.ReadableBytes();
 	if (stale != 0) {
@@ -86,6 +90,7 @@ void AptxHdStreamEncoder::Stop() noexcept
 	active_ = false;
 	encoder_.reset();
 	producedSamples_ = 0;
+	carrySamples_ = 0;
 	discontinuity_ = false;
 }
 
@@ -113,22 +118,34 @@ bool AptxHdStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferVi
 
 bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept
 {
-	// A record always covers its full span; a short read is zero-filled so a late or empty
-	// PCM ring becomes silence instead of a stalled stream.
-	std::memset(pcmRecord_.data(), 0, pcmRecord_.size());
-	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(pcmRecord_.size()));
+	// Samples the previous record could not fit go first; a short read is then zero-filled so
+	// a late or empty PCM ring becomes silence instead of a stalled stream.
+	const uint32_t recordBytes = spanSamples_ * sampleBytes_;
+	std::memcpy(pcmRecord_.data(), carryPcm_.data(), static_cast<size_t>(carrySamples_) * sampleBytes_);
+	uint8_t* const spanStart = pcmRecord_.data() + static_cast<size_t>(carrySamples_) * sampleBytes_;
+	std::memset(spanStart, 0, recordBytes);
+	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), recordBytes);
 	available -= available % sampleBytes_;
-	if (available != 0 && !pcm.Read(pcmRecord_.data(), available)) {
+	if (available != 0 && !pcm.Read(spanStart, available)) {
 		available = 0;
 	}
 
-	const uint32_t availableSamples = available / sampleBytes_;
+	const uint32_t readSamples = available / sampleBytes_;
 	stats_.pcmBytes += available;
-	stats_.silenceSamples += samplesPerRecord_ - availableSamples;
+	stats_.silenceSamples += spanSamples_ - readSamples;
 
-	const size_t pcmFrameBytes = static_cast<size_t>(encoder_->SamplesPerFrame()) * sampleBytes_;
+	const uint32_t totalSamples = carrySamples_ + spanSamples_;
+	const size_t framesInRecord = totalSamples / samplesPerFrame_;
+	const uint32_t encodedSamples = static_cast<uint32_t>(framesInRecord * samplesPerFrame_);
+	const uint32_t carried = totalSamples - encodedSamples;
+	if (framesInRecord == 0 || framesInRecord > maxFrames_) {
+		++stats_.encodeErrors;
+		return false;
+	}
+
+	const size_t pcmFrameBytes = static_cast<size_t>(samplesPerFrame_) * sampleBytes_;
 	size_t total = 0;
-	for (size_t frame = 0; frame < framesPerRecord_; ++frame) {
+	for (size_t frame = 0; frame < framesInRecord; ++frame) {
 		size_t written = 0;
 		const HRESULT hr = encoder_->Encode(pcmRecord_.data() + frame * pcmFrameBytes,
 										   frameData_.data() + frame * AptxHd::kFrameBytes,
@@ -142,16 +159,16 @@ bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& fram
 	}
 
 	const size_t payload = encoder_->BuildMediaPayload(frameData_.data(), frameSizes_.data(),
-													   framesPerRecord_, payload_.data(), payload_.size());
+													   framesInRecord, payload_.data(), payload_.size());
 	if (payload != total) {
 		++stats_.encodeErrors;
 		return false;
 	}
 
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
-	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), samplesPerRecord_, flags)) {
+	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), encodedSamples, flags)) {
 		++stats_.records;
-		stats_.samples += samplesPerRecord_;
+		stats_.samples += encodedSamples;
 		discontinuity_ = false;
 	} else {
 		// The frame ring is full: the driver fell behind, so the next record is a
@@ -160,7 +177,11 @@ bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& fram
 		discontinuity_ = true;
 	}
 
-	producedSamples_ += samplesPerRecord_;
+	std::memcpy(carryPcm_.data(), pcmRecord_.data() + static_cast<size_t>(encodedSamples) * sampleBytes_,
+				static_cast<size_t>(carried) * sampleBytes_);
+	carrySamples_ = carried;
+	// The clock advanced by the full span, whether or not a frame could hold all of it.
+	producedSamples_ += spanSamples_;
 	return true;
 }
 
