@@ -121,7 +121,7 @@ Write and read are atomic per record:
 
 The driver adds the RTP header itself: one record = one RTP packet, `payloadType` 96,
 sequence incremented per packet, timestamp advanced by `samples`. It never packs two
-records into one packet and never fragments a record (see section 11).
+records into one packet and never fragments a record (see section 12).
 
 ## 5. IOCTLs
 
@@ -287,7 +287,43 @@ exceed `kMaxFramePayload`, and enters the service path.
   mapping only and never writes the PCM ring; the driver never trusts `samples` beyond
   `kAacSamplesPerFrame`.
 
-## 11. Not in v1
+## 11. Why the encoder is Windows'
+
+`codecs/aac/AacCodec.cpp` is a client of `CLSID_AACMFTEncoder`, not an AAC implementation.
+The service exists because that encoder is a user-mode Media Foundation transform: it
+cannot be loaded in the kernel, so the driver cannot call it, and the PCM ring, the frame
+ring and the `WAIT_EVENT` handshake (sections 3 to 6) are the price of using it. No AAC
+encoder is compiled into this tree; what the tree owns is the IE negotiation and the LATM
+framing around the encoder.
+
+What that buys:
+
+- the bitstream is the one Windows itself sends over A2DP AAC, so a sink that works with
+  the inbox stack works here, and there is no second encoder to keep in step with the OS
+  decoder it will be compared against;
+- no encoder code or binary is distributed with this project, which keeps the AAC
+  obligation where `Codec-Licensing.md` records it: calling the OS encoder rather than
+  shipping one;
+- encoder fixes and OS-version behaviour arrive with Windows Update, not with a release
+  of this tree.
+
+What it costs:
+
+- the service, its rings, its IOCTLs and the failure modes in section 9; an in-kernel
+  encoder would be a shorter data path, but not an available one;
+- the OS encoder's parameter surface: 16-bit PCM input only (`0xC00D36B4` otherwise) and
+  the rate/bitrate set in section 1, with no quality or afterburner knobs;
+- the encoder must exist on the installed OS build. If `CoCreateInstance` fails,
+  initialization fails, the service never registers, and negotiation stays on SBC; there
+  is deliberately no in-tree fallback.
+
+Bundling an AAC encoder would be a licensing decision before it is a code change: an
+encoder this project ships is what the AAC pool licenses per unit (see
+`Codec-Licensing.md`). If one is ever wanted — for a quality knob Media Foundation does
+not expose, or for an OS build without the encoder — it becomes another `IA2dpEncoder`
+created by `AacCodec::CreateEncoder` inside the service. It does not change this boundary.
+
+## 12. Not in v1
 
 - Fragmentation of AAC frames larger than the media MTU: the selector caps the bitrate to
   what one packet carries (256 kbps at 44.1 kHz, 320 kbps at 48 kHz for the 895-byte MTU),
