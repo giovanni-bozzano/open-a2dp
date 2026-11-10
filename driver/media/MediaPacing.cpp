@@ -79,9 +79,8 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 	if (idle >= UnderrunTimeout && now - ctx->ServiceLastUnderrunLog >= UnderrunLogInterval)
 	{
 		ctx->ServiceLastUnderrunLog = now;
-		InterlockedIncrement(&ctx->Underruns);
-		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)",
-			ctx->ActiveCodec == Ioctl::kCodecAptxHd ? "aptX HD" : "AAC", idle / 10000ull);
+		InterlockedIncrement(&ctx->Underruns);		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)", CodecValueName(ctx->ActiveCodec),
+			idle / 10000ull);
 	}
 }
 

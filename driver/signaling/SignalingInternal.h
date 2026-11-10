@@ -29,19 +29,6 @@ EVT_WDF_TIMER OnResponseTimeout;
 EVT_WDF_REQUEST_COMPLETION_ROUTINE OnReadComplete;
 
 const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason);
-// Name of a preference/status codec value. A codec type cannot name a vendor codec, because
-// every vendor codec shares it and this driver runs two.
-inline const char* PreferenceCodecName(uint32_t codec)
-{
-	switch (codec)
-	{
-	case Ioctl::kCodecSbc: return "SBC";
-	case Ioctl::kCodecAptx: return "aptX";
-	case Ioctl::kCodecAac: return "AAC";
-	case Ioctl::kCodecAptxHd: return "aptX HD";
-	default: return "?";
-	}
-}
 uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 	uint8_t* configIe, size_t& configIeLength);
 uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength);

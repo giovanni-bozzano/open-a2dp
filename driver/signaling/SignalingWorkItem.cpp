@@ -404,7 +404,7 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 			if (DesiredCodec(ctx, desired, desiredValue))
 			{
 				OA2DP_INFO(ctx, "Signaling", "stream closed; rediscovering to negotiate %s",
-					PreferenceCodecName(desiredValue));
+					CodecValueName(desiredValue));
 				Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 			}
 		}
@@ -467,7 +467,7 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		ctx->AppliedPreferenceParameters = parameters; // the rediscovery renegotiates from it
 		OA2DP_INFO(ctx, "Signaling", "%s stream selected but the preference wants %s; closing to renegotiate",
 			CodecLabel(ctx->Session.SelectedCodec(), ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength()),
-			PreferenceCodecName(desiredValue));
+			CodecValueName(desiredValue));
 		BeginCodecSwitchClose(ctx);
 		return;
 	}
@@ -494,7 +494,7 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 		if (parametersDiffer)
 		{
 			OA2DP_INFO(ctx, "Signaling", "%s parameters changed; suspending to reconfigure",
-				PreferenceCodecName(desiredValue));
+				CodecValueName(desiredValue));
 		}
 		// Stop the encoder before the sink suspends so no packet describes the old
 		// configuration once the new one is negotiated.

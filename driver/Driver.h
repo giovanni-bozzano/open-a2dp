@@ -119,6 +119,21 @@ inline const char* CodecName(OpenA2dp::Avdtp::CodecType codec)
 	return name != nullptr ? name : "other";
 }
 
+// The name of an Ioctl::kCodec* value. A codec type cannot name a vendor codec, because
+// every vendor codec shares it and this driver runs two, so the status/preference values
+// are the only names that can tell them apart without an IE at hand.
+inline const char* CodecValueName(uint32_t codec)
+{
+	switch (codec)
+	{
+	case OpenA2dp::Ioctl::kCodecSbc: return "SBC";
+	case OpenA2dp::Ioctl::kCodecAptx: return "aptX";
+	case OpenA2dp::Ioctl::kCodecAac: return "AAC";
+	case OpenA2dp::Ioctl::kCodecAptxHd: return "aptX HD";
+	default: return "?";
+	}
+}
+
 // The name for a selected codec and its configuration IE: a vendor type alone says nothing,
 // because every vendor codec shares it.
 inline const char* CodecLabel(OpenA2dp::Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength)
