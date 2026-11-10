@@ -8,7 +8,8 @@ counsel before shipping anything that encodes AAC or the aptX family.
 |---|---|---|
 | SBC | this repository's encoder | Nothing (patents long expired) |
 | AAC-LC | Windows Media Foundation's encoder, driven from `codecs/aac` | pool licence only if an encoder implementation is distributed |
-| aptX, aptX HD, aptX LL | nothing; Qualcomm proprietary | Qualcomm aptX software licence + SDK |
+| aptX, aptX HD | Qualcomm's Apache-2.0 encoders, available in AOSP | notices; no licence fee |
+| aptX LL, aptX Adaptive, aptX Lossless | nothing | Qualcomm aptX software licence |
 
 The repository itself is Apache-2.0 (`LICENSE`), which settles copyright and contributor
 patents only. None of the licences below are triggered by publishing source; they are
@@ -16,38 +17,52 @@ triggered by distributing binaries.
 
 ## aptX, aptX HD, aptX Low Latency
 
-Qualcomm states that commercial use of aptX requires a software licence agreement, and
-the encoders are delivered as Qualcomm libraries with the licensed SDK, not as a
-published bitstream specification. There is therefore nothing to implement against:
+Qualcomm's general position is that commercial use of aptX requires a software licence, and
+most of the family is only available as licensed libraries. There are two significant
+exceptions and one hard limit:
 
-- A clean-room encoder is not feasible without the specification; the only public
-  implementations are reverse engineered (FFmpeg's LGPL aptX codecs are decoders).
-  Bringing that code here would import LGPL obligations into a repository that ships a
-  kernel driver, and it would still not grant Qualcomm's rights in the codec.
-- Guessing the vendor-specific negotiation is worse than not supporting it: the exact
-  vendor ID, codec ID and payload layout are Qualcomm's, not AVDTP's, and a wrong value
-  negotiates a stream the sink cannot decode.
-- Windows is no help here: its inbox aptX encoder lives inside `BthA2dp` and is not
-  exposed to third parties. The documented extension is the A2DP offload SIOP, which
-  requires the codec to run in the audio DSP or the controller, not in a user-mode
-  encoder. There is no Media Foundation equivalent of `CLSID_AACMFTEncoder` for aptX.
+- **The aptX and aptX HD encoders are open source.** In 2023 Qualcomm contributed
+  `encoder_for_aptx` and `encoder_for_aptxhd` to AOSP (`system/embdrv/`), Apache-2.0, and
+  said the purpose was "to enable people to distribute the encoders as part of their
+  finished products". Apache-2.0 carries a patent grant from the contributor, so this is
+  materially stronger ground than a reverse-engineered implementation. Conditions: keep the
+  Apache notices, and remember that the contribution covers the encoder code, not the mark.
+- **Everything else still needs Qualcomm**: aptX LL, aptX Adaptive, aptX Lossless, the
+  decoders, and use of "aptX" as a certification brand. Qualcomm's statement is explicit
+  that "all other aptX products require a license direct from Qualcomm".
+- **aptX LL is technically classic aptX** with smaller packets and its own vendor-specific
+  signalling, which is why the reverse-engineered libraries offer LL from the same code.
+  Encoding LL frames with the AOSP classic encoder would still be using an aptX product
+  outside the grant, so LL stays out until there is a licence.
 
-The compliant shape, if a licence is obtained:
+Engineering fit for this repository: the AOSP encoders are self-contained C
+(`aptXbtenc.c`, `QmfConv.c`, `ProcessSubband.c`, `AptxTables.h`), expose
+`aptxbtenc_init` / `aptxbtenc_encodestereo`, take 24-bit stereo PCM and keep roughly 1.6 KB
+of state per channel, so they belong in the user-mode service beside AAC. Three details
+have to be right:
 
-1. The encoder stays in user mode beside the AAC path. A closed binary cannot live in
-   the kernel, and the SDK targets user mode.
-2. The SDK's DLL is loaded at runtime from a path outside this repository. The tree keeps
-   only the provider interface and the loader; no Qualcomm headers, no binary blobs.
-3. Negotiation is A2DP "vendor specific" (Media Codec Type 0xFF) with a vendor- and
-   codec-specific payload supplied by the provider. The provider owns those bytes; the
-   driver's SBC/AAC paths stay codec-agnostic.
-4. The names "aptX", "aptX HD" and "aptX Low Latency" are Qualcomm trademarks: the
-   settings window may only show them when a licensed provider is actually present.
-5. aptX LL is a mode of the family, not a separate algorithm: it needs the same encoder
-   with smaller packets. Whether a build supports it is the provider's answer, not ours.
+1. 16-bit to 24-bit expansion. The A2DP ring is 16-bit today, so aptX HD's extra depth is
+   theoretical until the ring carries 24-bit samples.
+2. The vendor-specific capability IE and its vendor and codec IDs. Take them from the
+   Apache-2.0 AOSP headers; do not guess, and do not copy them from a reverse-engineered
+   library.
+3. Packetization. AOSP's classic aptX path writes no RTP header, while aptX HD is
+   encapsulated in RTP; the media path needs that distinction per codec.
 
-Until then, the codec preference must not list the family, because a sink that offers
-only aptX has to fail cleanly with "the sink does not advertise SBC or AAC".
+The alternatives, and what each is actually worth:
+
+| Implementation | Licence | aptX | HD | LL | Patent grant | Binary |
+|---|---|---|---|---|---|---|
+| AOSP `encoder_for_aptx*` | Apache-2.0 | yes | yes | no | yes, from contributor | yes, with notices |
+| libfreeaptx | LGPL-2.1+ | yes | yes | via parameters | no | yes, LGPL relink duties |
+| FFmpeg `aptxenc`/`aptxhdenc` | LGPL-2.1+ | yes | yes | no | no | yes, LGPL relink duties |
+| libopenaptx (pali) | GPL-3.0+ | yes | yes | via parameters | no | no, would force GPL |
+| Android vendor blob | proprietary | yes | yes | yes | n/a | no |
+| Qualcomm SDK | commercial | yes | yes | yes | contractual | on their terms |
+
+`libfreeaptx` and FFmpeg are the same code lineage (FFmpeg 4.0), so their differences are
+licence text and packaging rather than quality. The AOSP encoders are the only option with
+a patent grant, and the only one that does not depend on reverse engineering.
 
 ## AAC
 
@@ -86,8 +101,9 @@ Consequences for this project:
 |---|---|---|
 | Driver + service (today) | SBC encoder, AAC through the Windows encoder | no AAC implementation shipped; pool licence arguable, common practice is to ship with a notice |
 | Driver only | SBC encoder | nothing to license; AAC is never selected because it requires the encoder service |
-| Driver + licensed provider | aptX family DLL from the Qualcomm SDK | Qualcomm licence, redistribution on their terms |
-| Driver + `libfreeaptx` | reverse-engineered aptX | LGPL code, but an unlicensed implementation of a proprietary codec; upstream forbids binary redistribution |
+| Driver + AOSP aptX/HD encoders | aptX and aptX HD, Apache-2.0 | shippable with notices; no aptX LL |
+| Driver + Qualcomm SDK | aptX family DLL | Qualcomm licence, redistribution on their terms |
+| Driver + `libfreeaptx` | reverse-engineered aptX | LGPL code without a patent grant; upstream warns against binary redistribution |
 
 ### Disabling AAC
 
@@ -121,32 +137,33 @@ Two real ways and one that only looks like one:
   `libfreeaptx` in main despite its provenance; Debian keeps `fdk-aac` out of main as
   non-free, and Fedora ships `fdk-aac-free` with the HE profiles stripped for patent
   reasons. The community accepts the aptX risk and avoids shipping an AAC encoder.
-- Android: ships Qualcomm aptX binaries under licence, and the pool's own FAQ says its
-  licence does not cover Android OEMs, who license AAC themselves.
+- Android: ships Qualcomm's aptX and aptX HD encoders from AOSP (Apache-2.0) and licenses
+  the rest; the pool's own FAQ says its licence does not cover Android OEMs, who license
+  AAC themselves.
 
-The pattern is consistent: nobody has a lawful in-tree aptX encoder without Qualcomm, and
-AAC encoders are either licensed, stripped to the free profiles, or left out.
+The pattern: an in-tree aptX encoder is now possible for aptX and HD only, AAC encoders are
+either licensed, stripped to the free profiles, or left out, and aptX LL has no open route.
 
 ## Repository rules
 
-- No third-party codec source is copied in. Any exception needs a compatible licence,
-  attribution, and a note in the file.
+- Vendored codec code keeps its own licence and headers. AOSP files are Apache-2.0, like
+  this repository, and need a NOTICE entry naming the source and the licence.
 - No binary blobs, including licensed codec DLLs; they are deployed, not committed.
 - Adding a licensed provider requires a third-party notice entry naming the vendor, the
   version and the licence that covers redistribution.
 - `LICENSE` is Apache-2.0. Keep the codec obligations in this document rather than
-  implying in the README that it covers codec patents.
+  implying in the README that it covers codec patents or third-party code.
 
 ## Order of work
 
 1. Repository licence: done, Apache-2.0.
 2. Decide the AAC stance for the first release: service included with a notice, or
    driver-only SBC. The code supports both today.
-3. Obtain the aptX SDK and licence, and confirm it permits a user-mode DLL loaded at
-   runtime with the binary redistributed separately.
-4. Add the provider seam in `codecs/` (interface plus loader) once the SDK's API is
-   known; the interface is shaped by that API, not designed ahead of it.
-5. Extend the codec preference, ABI and settings window with the family only behind a
-   provider-present check, and add a mock provider for negotiation tests.
-6. Validate on licensed hardware; no test rig here can prove an aptX stream because the
-   encoder cannot be present.
+3. Vendor the AOSP aptX and aptX HD encoders (Apache-2.0, notices) behind a user-mode
+   provider seam, add the vendor-specific IE and the per-codec packetization, and gate the
+   codec preference on the provider being present.
+4. Add the 24-bit path so aptX HD has something to encode; 16-bit input would make the
+   feature mostly cosmetic.
+5. aptX LL, Adaptive and Lossless stay out until a Qualcomm licence exists.
+6. Validate on licensed hardware; no test rig here can prove an aptX stream end to end, so
+   the tests must cover framing and packetization against a reference sink fixture.

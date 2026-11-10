@@ -15,7 +15,7 @@
 | M8 Signing + release | Not started | Signed release package |
 
 ## Codec licensing
-- aptX, aptX HD and aptX LL are Qualcomm proprietary and need their software licence and SDK, so nothing is implemented in-tree and the family stays out of the codec preference until a licensed provider exists. AAC runs through the Windows MF encoder (no encoder implementation ships) and a Via LA pool licence may still be owed per shipped product; see [codec licensing](architecture/Codec-Licensing.md).
+- aptX and aptX HD use Qualcomm's Apache-2.0 encoders from AOSP, which the project can vendor behind a user-mode provider seam; aptX LL, Adaptive and Lossless need a Qualcomm licence and stay out. AAC runs through the Windows MF encoder (no encoder implementation ships) and a Via LA pool licence may still be owed per shipped product; see [codec licensing](architecture/Codec-Licensing.md).
 - Repository licence is Apache-2.0 (`LICENSE`), whose patent grant covers contributors only; codec patent licences are separate from it and only bind distributors of binaries.
 
 ## Codec audit

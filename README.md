@@ -24,8 +24,9 @@ Current implementation:
 
 Apache-2.0, see [LICENSE](LICENSE). Its patent grant covers contributors only. AAC encoding goes through
 the Windows Media Foundation encoder, so no AAC encoder implementation is distributed
-here, but a product that encodes AAC may still owe a Via LA pool licence; the aptX family
-is Qualcomm proprietary, needs their software licence and is deliberately not implemented.
+here, but a product that encodes AAC may still owe a Via LA pool licence. aptX and aptX HD
+can use Qualcomm's Apache-2.0 encoders from AOSP; aptX LL, aptX Adaptive and aptX Lossless
+need a Qualcomm licence and are not implemented.
 Publishing this source needs neither licence. Details in
 [docs/architecture/Codec-Licensing.md](docs/architecture/Codec-Licensing.md).
 
