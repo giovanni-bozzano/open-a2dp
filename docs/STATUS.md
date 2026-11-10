@@ -16,7 +16,7 @@
 
 ## Codec licensing
 - aptX, aptX HD and aptX LL are Qualcomm proprietary and need their software licence and SDK, so nothing is implemented in-tree and the family stays out of the codec preference until a licensed provider exists. AAC needs a Via LA pool licence per shipped product; see [codec licensing](architecture/Codec-Licensing.md).
-- The repository has no `LICENSE` file; choose one before publishing.
+- Repository licence is Apache-2.0 (`LICENSE`), whose patent grant covers contributors only; codec patent licences are separate from it and only bind distributors of binaries.
 
 ## Codec audit
 - SBC spec math is single-sourced: `SbcConfig` (IE masks, selector, configured-IE parser), `SbcAllocation` (12.6.3 bit allocation), `SbcFrame` (frame length, header and CRC emission, tail padding, payload header, frames per packet), `SbcFilter` (Q30 prototypes, Q14 cosines, sine). The driver and the codec library only adapt their own parameter types.

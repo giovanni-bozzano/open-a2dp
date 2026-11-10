@@ -20,11 +20,12 @@ Current implementation:
 - `tools/OpenA2dpConfig`: desktop settings window (`OpenA2dpConfig.exe`) over the same IOCTLs: sink list, live status, and the codec and endpoint preference.
 - `tools/common`: the status report both tools print (`StatusReport`), so the window, its **Copy** button and `OpenA2dpCtl status` never show different fields; the window's **Details** box and `status --verbose` add every field with its hex value.
 
-## Licensing
+## License
 
-SBC is unencumbered. The in-tree AAC-LC encoder needs a Via LA AAC patent licence for any
-product that ships an encoder, whether or not it uses this code. The aptX family is
-Qualcomm proprietary and is deliberately not implemented here. Details in
+Apache-2.0, see [LICENSE](LICENSE). Its patent grant covers contributors only: the in-tree AAC-LC encoder
+still needs a Via LA AAC patent licence before a product that ships it is distributed, and
+the aptX family is Qualcomm proprietary and deliberately not implemented here. Publishing
+this source needs neither licence; distributing binaries is what they govern. Details in
 [docs/architecture/Codec-Licensing.md](docs/architecture/Codec-Licensing.md).
 
 ## Build
