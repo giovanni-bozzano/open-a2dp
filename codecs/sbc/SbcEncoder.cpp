@@ -167,35 +167,7 @@ HRESULT SbcEncoder::Encode(const int16_t* pcm, uint8_t* out, size_t capacity, si
 	CalculateBits(params_, scaleFactors, bits);
 
 	BitWriter w(out, capacity);
-	const int fsIndex = SampleRateIndex(params_.sampleRate);
-	w.Write(kSyncWord, 8);
-	w.Write(static_cast<uint32_t>(fsIndex), 2);
-	w.Write(static_cast<uint32_t>(nblk / 4 - 1), 2);
-	w.Write(static_cast<uint32_t>(params_.channelMode), 2);
-	w.Write(static_cast<uint32_t>(params_.allocation), 1);
-	w.Write(nsb == 8 ? 1u : 0u, 1);
-	w.Write(params_.bitpool, 8);
-	w.Write(0, 8); // CRC placeholder
-
-	if (params_.channelMode == ChannelMode::JointStereo) {
-		w.Write(join, nsb); // join[0..nsb-2] followed by the RFA bit (always 0)
-	}
-	for (int ch = 0; ch < nch; ++ch) {
-		for (int sb = 0; sb < nsb; ++sb) {
-			w.Write(scaleFactors[ch][sb], 4);
-		}
-	}
-
-	const size_t crcBits = 16 + (params_.channelMode == ChannelMode::JointStereo ? nsb : 0) + 4u * nsb * nch;
-	uint8_t crcData[1 + 2 + 1 + 16] = {};
-	// CRC covers header bytes 1..2 and then everything after the CRC byte up to the end of the scale factors.
-	crcData[0] = out[1];
-	crcData[1] = out[2];
-	const size_t tailBytes = (crcBits - 16 + 7) / 8;
-	for (size_t i = 0; i < tailBytes; ++i) {
-		crcData[2 + i] = out[4 + i];
-	}
-	out[3] = Crc8(crcData, crcBits);
+	SbcFrame::WriteFrameHeader(w, out, params_.ToConfiguration(), join, scaleFactors);
 
 	for (int blk = 0; blk < nblk; ++blk) {
 		for (int ch = 0; ch < nch; ++ch) {
@@ -214,14 +186,8 @@ HRESULT SbcEncoder::Encode(const int16_t* pcm, uint8_t* out, size_t capacity, si
 			}
 		}
 	}
-	w.AlignToByte();
-
-	if (w.Overflow() || w.BytesUsed() > frameLength) {
+	if (!SbcFrame::FinishFrame(w, out, frameLength)) {
 		return E_UNEXPECTED;
-	}
-	// Pad to the nominal frame length (bit allocation may leave unused bits).
-	for (size_t i = w.BytesUsed(); i < frameLength; ++i) {
-		out[i] = 0;
 	}
 	written = frameLength;
 	return S_OK;
