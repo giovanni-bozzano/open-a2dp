@@ -23,6 +23,7 @@
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFixed.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFrame.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFilter.h" />
+	<ClInclude Include="include\OpenA2dp\AptxHdCodec.h" />
 	<ClInclude Include="aptx\include\aptXHDbtenc.h" />
 	<ClInclude Include="aptx\src\AptxEncoder.h" />
 	<ClInclude Include="aptx\src\AptxParameters.h" />
@@ -44,6 +45,7 @@
 	<ClCompile Include="aac\AacCodec.cpp" />
 	<ClCompile Include="aac\AacStreamEncoder.cpp" />
 	<ClCompile Include="aac\LatmWriter.cpp" />
+	<ClCompile Include="aptx\AptxHdCodec.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="aptx\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>

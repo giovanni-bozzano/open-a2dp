@@ -103,6 +103,10 @@ public:
 
 std::unique_ptr<IA2dpCodec> CreateCodec(CodecType type);
 
+// Codec for a vendor-specific codec, identified by the IDs its IE carries; nullptr when this
+// library does not provide it (A2DP has one CodecType for every vendor codec).
+std::unique_ptr<IA2dpCodec> CreateVendorCodec(uint32_t vendorId, uint16_t codecId);
+
 // Codecs in default priority order (highest first).
 size_t GetSupportedCodecs(CodecType* types, size_t capacity) noexcept;
 

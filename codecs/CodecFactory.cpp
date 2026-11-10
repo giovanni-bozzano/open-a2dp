@@ -1,6 +1,7 @@
 #include <OpenA2dp/IA2dpCodec.h>
 #include <OpenA2dp/SbcCodec.h>
 #include <OpenA2dp/AacCodec.h>
+#include <OpenA2dp/AptxHdCodec.h>
 
 namespace OpenA2dp {
 
@@ -18,6 +19,14 @@ std::unique_ptr<IA2dpCodec> CreateCodec(CodecType type)
 	default:
 		return nullptr;
 	}
+}
+
+std::unique_ptr<IA2dpCodec> CreateVendorCodec(uint32_t vendorId, uint16_t codecId)
+{
+	if (vendorId == AptxHd::kVendorId && codecId == AptxHd::kCodecId) {
+		return std::make_unique<AptxHdCodec>();
+	}
+	return nullptr;
 }
 
 size_t GetSupportedCodecs(CodecType* types, size_t capacity) noexcept

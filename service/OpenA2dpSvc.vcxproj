@@ -7,6 +7,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
+	<ClCompile>
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\include;$(OpenA2dpRoot)codecs\aptx\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
 	  <AdditionalDependencies>mfplat.lib;mfuuid.lib;mf.lib;wmcodecdspuuid.lib;ole32.lib;cfgmgr32.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -20,12 +23,27 @@
 	<ClCompile Include="..\codecs\aac\LatmWriter.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcCodec.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcEncoder.cpp" />
+	<ClCompile Include="..\codecs\aptx\AptxHdCodec.cpp" />
+	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
+	<ClCompile Include="..\codecs\aptx\src\aptXHDbtenc.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	</ClCompile>
+	<ClCompile Include="..\codecs\aptx\src\ProcessSubband.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	</ClCompile>
+	<ClCompile Include="..\codecs\aptx\src\QmfConv.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	</ClCompile>
+	<ClCompile Include="..\codecs\aptx\src\QuantiseDifference.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	</ClCompile>
   </ItemGroup>
   <ItemGroup>
 	<ClInclude Include="..\codecs\include\OpenA2dp\IA2dpCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AacCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AacStreamEncoder.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\SbcCodec.h" />
+	<ClInclude Include="..\codecs\include\OpenA2dp\AptxHdCodec.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
