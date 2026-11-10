@@ -452,3 +452,32 @@ TEST(AacStream_StopStopsEncoding)
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().records, records);
 }
+
+TEST(AacStream_Converts24In32RingToEncoderInput)
+{
+	TestRing pcm(64 * 1024);
+	TestRing frames(64 * 1024);
+
+	auto encoder = MakeEncoder();
+	FakeEncoder* fake = encoder.get();
+	AacStreamParams params;
+	params.bitsPerSample = 24;
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), params, pcm.view, 0));
+
+	// Two blocks of 24-in-32 stereo: the top 16 bits are the AAC input, the low byte is
+	// always zero in Windows' left-justified layout.
+	for (uint32_t frame = 0; frame < 2 * Ioctl::kAacSamplesPerFrame; ++frame) {
+		const int32_t samples[2] = {0x12345600, 0x56789A00};
+		REQUIRE(pcm.view.Write(samples, sizeof(samples)));
+	}
+
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{2 * Ioctl::kAacSamplesPerFrame * 8});
+	// 60 ms of preroll asks for three blocks; the third one finds the ring empty and is
+	// encoded as silence.
+	REQUIRE(fake->blocks.size() == size_t{3});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{Ioctl::kAacSamplesPerFrame});
+	CHECK_EQ(fake->blocks[0][0], int16_t{0x1234}); // 0x56 rounds down
+	CHECK_EQ(fake->blocks[0][1], int16_t{0x5679}); // 0x9A rounds up
+}

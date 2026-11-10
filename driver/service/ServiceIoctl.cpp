@@ -52,7 +52,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_REVISION_MISMATCH);
 			return;
 		}
-		if (in->codec != Ioctl::kCodecAac)
+		if (in->codec != Ioctl::kCodecAac && in->codec != Ioctl::kCodecAptxHd)
 		{
 			Complete(request, STATUS_NOT_SUPPORTED);
 			return;
@@ -62,11 +62,25 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_DEVICE_NOT_READY);
 			return;
 		}
-		if (InterlockedCompareExchange(&ctx->EncoderRegistered, 1, 0) != 0)
+		// One provider per codec; a second registration of the same codec is a second
+		// service and would race the first for the frame ring.
+		const LONG bit = static_cast<LONG>(Ioctl::EncoderBit(in->codec));
+		LONG registered = InterlockedCompareExchange(&ctx->EncoderRegistered, 0, 0);
+		for (;;)
 		{
-			Complete(request, STATUS_DEVICE_BUSY);
-			return;
+			if ((registered & bit) != 0)
+			{
+				Complete(request, STATUS_DEVICE_BUSY);
+				return;
+			}
+			const LONG updated = InterlockedCompareExchange(&ctx->EncoderRegistered, registered | bit, registered);
+			if (updated == registered)
+			{
+				break;
+			}
+			registered = updated;
 		}
+
 		file->Registered = TRUE;
 		// A new service session starts with no latched events. Anything left over
 		// belongs to the previous handle (for example kEventDeviceGone latched when
@@ -80,11 +94,13 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		}
 		*out = {};
 		out->abiVersion = Ioctl::kAbiVersion;
-		out->codec = Ioctl::kCodecAac;
+		out->codec = in->codec;
 		out->maxFramePayload = Ioctl::kMaxFramePayload;
 		out->pcmSampleRate = ctx->PinSampleRate;
 		out->pcmChannels = ctx->PinChannels;
-		OA2DP_INFO(ctx, "Service", "encoder registered (max frame %u bytes)", out->maxFramePayload);
+		out->pcmValidBits = ctx->PinValidBits;
+		OA2DP_INFO(ctx, "Service", "%s encoder registered (max frame %u bytes)",
+			in->codec == Ioctl::kCodecAptxHd ? "aptX HD" : "AAC", out->maxFramePayload);
 		if (InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeSbc)
 		{
 			// The stream was negotiated before the service came up, so AAC was not
@@ -217,7 +233,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		{
 			out->mediaState = Ioctl::MediaState::Idle;
 		}
-		else if (mode == MediaModeAac && ctx->RtpSequence == 0)
+		else if (mode == MediaModeService && ctx->RtpSequence == 0)
 		{
 			out->mediaState = Ioctl::MediaState::WaitingForEncoder;
 		}
@@ -230,7 +246,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->channels = ctx->ActiveChannels;
 		out->bitrate = ctx->ActiveBitrate;
 		out->objectType = ctx->ActiveObjectType;
-		out->encoderRegistered = InterlockedCompareExchange(&ctx->EncoderRegistered, 0, 0) != 0 ? 1u : 0u;
+		out->encoderRegistered = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->EncoderRegistered, 0, 0));
 		if (ctx->PcmRingHeader != nullptr)
 		{
 			out->pcmBufferedBytes = RingBufferView(ctx->PcmRingHeader, ctx->PcmRingData).ReadableBytes();
@@ -311,12 +327,16 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			return;
 		}
 		// A codec the sink does not advertise can never be selected, so forcing it is refused
-		// instead of stored. SBC is mandatory, so only AAC can be missing.
+		// instead of stored. SBC is mandatory, so only AAC and aptX HD can be missing.
 		const LONG sinkCodecs = InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0);
-		if ((in->flags & Ioctl::kPreferenceForceCodec) != 0 && in->codec == Ioctl::kCodecAac &&
-			sinkCodecs != 0 && (sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecAac)) == 0)
+		const LONG requiredBit = in->codec == Ioctl::kCodecAac   ? static_cast<LONG>(Ioctl::kSinkCodecAac)
+								  : in->codec == Ioctl::kCodecAptxHd ? static_cast<LONG>(Ioctl::kSinkCodecAptxHd)
+															 : 0;
+		if ((in->flags & Ioctl::kPreferenceForceCodec) != 0 && requiredBit != 0 && sinkCodecs != 0 &&
+			(sinkCodecs & requiredBit) == 0)
 		{
-			OA2DP_WARN(ctx, "Service", "the sink does not advertise AAC, so forcing it is refused");
+			OA2DP_WARN(ctx, "Service", "the sink does not advertise %s, so forcing it is refused",
+				in->codec == Ioctl::kCodecAptxHd ? "aptX HD" : "AAC");
 			Complete(request, STATUS_NOT_SUPPORTED);
 			return;
 		}

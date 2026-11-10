@@ -1,6 +1,7 @@
 #include <OpenA2dp/AacStreamEncoder.h>
 
 #include <OpenA2dp/FrameRecord.h>
+#include <OpenA2dp/PcmDepth.h>
 
 #include <algorithm>
 #include <cstring>
@@ -36,13 +37,21 @@ bool AacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStr
 	// per channel), which is larger than the media payload. Actual payload size is
 	// enforced by BuildMediaPayload in EncodeBlock, so only reject a zero capacity.
 	if (format.sampleRate != params.sampleRate || format.channels != params.channels ||
-		samplesPerFrame == 0 || samplesPerFrame > 4096 || maxFrameBytes == 0) {
+		format.bitsPerSample != 16 || samplesPerFrame == 0 || samplesPerFrame > 4096 || maxFrameBytes == 0) {
+		return false;
+	}
+	if (params.bitsPerSample != 16 && params.bitsPerSample != 24) {
 		return false;
 	}
 
 	const uint32_t bytesPerSample = static_cast<uint32_t>(params.channels) * 2u;
+	const uint32_t ringBytesPerSample =
+		static_cast<uint32_t>(params.channels) * (params.bitsPerSample == 24 ? 4u : 2u);
 	try {
 		pcmBlock_.assign(static_cast<size_t>(samplesPerFrame) * bytesPerSample, 0);
+		if (params.bitsPerSample == 24) {
+			ringBlock_.assign(static_cast<size_t>(samplesPerFrame) * ringBytesPerSample, 0);
+		}
 		accessUnit_.assign(maxFrameBytes, 0);
 		payload_.assign(Ioctl::kMaxFramePayload, 0);
 	} catch (const std::bad_alloc&) {
@@ -56,6 +65,8 @@ bool AacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStr
 	producedSamples_ = 0;
 	samplesPerFrame_ = samplesPerFrame;
 	bytesPerSample_ = bytesPerSample;
+	ringBytesPerSample_ = ringBytesPerSample;
+	convert24_ = params.bitsPerSample == 24;
 	// The PCM the endpoint queued before MediaStart predates this stream.
 	const uint32_t stale = pcm.ReadableBytes();
 	if (stale != 0) {
@@ -104,13 +115,35 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 	// record as 1024 samples, so the padding would insert silence into the middle of
 	// the audio at the tick rate instead of delaying it.
 	std::memset(pcmBlock_.data(), 0, pcmBlock_.size());
-	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(pcmBlock_.size()));
-	available -= available % bytesPerSample_;
-	if (available != 0 && !pcm.Read(pcmBlock_.data(), available)) {
-		available = 0;
+	uint32_t available = 0;
+	uint32_t availableSamples = 0;
+	if (convert24_) {
+		// The ring carries 24-in-32; the top 16 bits of each sample are the AAC input. A
+		// short read leaves the rest of the block silent, as the 16-bit path does.
+		std::memset(ringBlock_.data(), 0, ringBlock_.size());
+		available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(ringBlock_.size()));
+		available -= available % ringBytesPerSample_;
+		if (available != 0 && !pcm.Read(ringBlock_.data(), available)) {
+			available = 0;
+		}
+		availableSamples = available / ringBytesPerSample_;
+		for (uint32_t frame = 0; frame < availableSamples; ++frame) {
+			for (uint16_t channel = 0; channel < params_.channels; ++channel) {
+				int32_t sample = 0;
+				std::memcpy(&sample, ringBlock_.data() + (frame * params_.channels + channel) * 4, sizeof(sample));
+				const int16_t narrow = Pcm::Narrow24To16(sample);
+				std::memcpy(pcmBlock_.data() + (frame * params_.channels + channel) * 2, &narrow, sizeof(narrow));
+			}
+		}
+	} else {
+		available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(pcmBlock_.size()));
+		available -= available % bytesPerSample_;
+		if (available != 0 && !pcm.Read(pcmBlock_.data(), available)) {
+			available = 0;
+		}
+		availableSamples = available / bytesPerSample_;
 	}
 
-	const uint32_t availableSamples = available / bytesPerSample_;
 	stats_.pcmBytes += available;
 	stats_.silenceSamples += samplesPerFrame_ - availableSamples;
 

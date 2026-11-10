@@ -1,34 +1,13 @@
 #pragma once
 
+#include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/IA2dpCodec.h>
 
 namespace OpenA2dp {
 
 // aptX HD, the AOSP vendor codec: 24-bit input, four samples per channel per call and six
-// encoded bytes (three per channel) with no codec-specific payload header.
-//
-// The IE is the codec-specific part of AVDTP's media codec capabilities, i.e. the bytes
-// after the media type and codec type: the vendor and codec IDs (little endian, as A2DP
-// writes them), one byte of sample-rate and channel-mode bits, and four reserved bytes.
-namespace AptxHd {
-
-constexpr uint32_t kVendorId = 0x000000D7;
-constexpr uint16_t kCodecId = 0x0024;
-constexpr size_t kIeLength = 11;
-
-constexpr uint8_t kSampleRate44100 = 0x20;
-constexpr uint8_t kSampleRate48000 = 0x10;
-constexpr uint8_t kSampleRateMask = kSampleRate44100 | kSampleRate48000;
-constexpr uint8_t kChannelMono = 0x01;
-constexpr uint8_t kChannelStereo = 0x02;
-constexpr uint8_t kChannelMask = 0x0F;
-
-constexpr uint32_t kSamplesPerFrame = 4;
-constexpr size_t kFrameBytes = 6;
-// 24-in-32: one sample per 4 bytes, valid bits left-justified, low byte zero.
-constexpr uint16_t kBitsPerSample = 24;
-
-} // namespace AptxHd
+// encoded bytes (three per channel) with no codec-specific payload header. The identifiers
+// and IE helpers are in AptxHd.h, which the driver shares.
 
 class AptxHdCodec final : public IA2dpCodec {
 public:

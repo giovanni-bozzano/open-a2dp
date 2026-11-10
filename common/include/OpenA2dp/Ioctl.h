@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 1;
+constexpr uint32_t kAbiVersion = 2;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -58,9 +58,11 @@ constexpr uint32_t kMaxFrameRecordBytes = 2048;
 // AAC-LC: 1024 PCM samples per raw_data_block.
 constexpr uint32_t kAacSamplesPerFrame = 1024;
 
-// Codec values match Avdtp::CodecType.
+// SBC and AAC values match Avdtp::CodecType. aptX HD cannot: AVDTP has one type for every
+// vendor codec, so preferences and registration identify it by this value instead.
 constexpr uint32_t kCodecSbc = 0x00;
 constexpr uint32_t kCodecAac = 0x02;
+constexpr uint32_t kCodecAptxHd = 0x03;
 
 enum class MediaState : uint32_t {
 	Idle = 0,
@@ -101,6 +103,15 @@ constexpr bool ValidSbcFrameParameters(uint32_t blocks, uint32_t subbands, uint3
 // kCodecSbc is 0.
 constexpr uint32_t kSinkCodecSbc = 1u << 0;
 constexpr uint32_t kSinkCodecAac = 1u << 1;
+constexpr uint32_t kSinkCodecAptxHd = 1u << 2;
+
+// Status.encoderRegistered and DEVICE_CONTEXT::EncoderRegistered hold one bit per registered
+// encoder codec. Registration is per codec because each provider supplies one codec, and a
+// missing provider must keep that codec out of negotiation without hiding the others.
+constexpr uint32_t EncoderBit(uint32_t codec) noexcept
+{
+	return codec < 32 ? 1u << codec : 0;
+}
 
 // Frame record flags.
 constexpr uint32_t kFrameFlagDiscontinuity = 1u << 0; // first record after a gap
@@ -152,7 +163,11 @@ struct RegisterEncoderOut {
 	uint32_t maxFramePayload; // authoritative limit for the frame payload
 	uint32_t pcmSampleRate;   // endpoint rate Windows opened (44100 or 48000)
 	uint32_t pcmChannels;     // 1 or 2
-	uint32_t reserved[3];
+	// Valid bits per sample in the PCM ring: 16 is int16, 24 is 24-in-32 (left-justified in
+	// an int32, low byte zero). The ring carries the endpoint's depth, so a service encoder
+	// that wants another depth converts it.
+	uint32_t pcmValidBits;
+	uint32_t reserved[2];
 };
 
 // Output of MAP_RINGS: one user mapping holding both rings and their headers.
@@ -190,7 +205,8 @@ struct WaitEventOut {
 	uint32_t channels;
 	uint32_t bitrate;
 	uint32_t objectType;
-	uint32_t reserved[2];
+	uint32_t pcmValidBits; // depth the PCM ring carries, as in RegisterEncoderOut
+	uint32_t reserved;
 };
 
 // Length of Status.sinkName, UTF-16 including the terminator. The driver captured the name
@@ -206,7 +222,7 @@ struct Status {
 	uint32_t channels;
 	uint32_t bitrate;
 	uint32_t objectType;
-	uint32_t encoderRegistered;
+	uint32_t encoderRegistered; // EncoderBit() per registered codec; 0 = none
 	uint32_t pcmBufferedBytes;
 	uint32_t pcmCapacity;
 	uint32_t frameBufferedBytes;
@@ -303,11 +319,14 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	{
 		return true;
 	}
-	return preference.codec == kCodecSbc || preference.codec == kCodecAac;
+	return preference.codec == kCodecSbc || preference.codec == kCodecAac ||
+		   preference.codec == kCodecAptxHd;
 }
 
 static_assert(sizeof(Preference) == 36, "Preference layout is part of the driver/CLI ABI");
 
+static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is part of the ABI");
+static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
 static_assert(sizeof(Status) == 240, "Status layout is part of the driver/CLI ABI");

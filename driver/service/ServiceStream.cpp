@@ -13,6 +13,7 @@ void ServiceStreamStart(_In_ DEVICE_CONTEXT* ctx)
 	ctx->WaitState.channels = ctx->ActiveChannels;
 	ctx->WaitState.bitrate = ctx->ActiveBitrate;
 	ctx->WaitState.objectType = ctx->ActiveObjectType;
+	ctx->WaitState.pcmValidBits = ctx->PinValidBits;
 	KeReleaseSpinLock(&ctx->WaitLock, irql);
 
 	LatchEvents(ctx, Ioctl::kEventStreamStart);

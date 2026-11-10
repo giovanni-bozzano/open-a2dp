@@ -211,3 +211,9 @@ bool ServiceRegistered(_In_ DEVICE_CONTEXT* ctx)
 {
 	return InterlockedCompareExchange(&ctx->EncoderRegistered, 0, 0) != 0;
 }
+
+bool ServiceCodecRegistered(_In_ DEVICE_CONTEXT* ctx, uint32_t codec)
+{
+	const LONG bit = static_cast<LONG>(Ioctl::EncoderBit(codec));
+	return bit != 0 && (InterlockedCompareExchange(&ctx->EncoderRegistered, 0, 0) & bit) != 0;
+}

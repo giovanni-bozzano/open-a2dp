@@ -25,9 +25,13 @@ void ServiceStop(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 void ServiceCleanup(_In_ DEVICE_CONTEXT* ctx);
 
-// True while an encoder service is registered for this device.
+// True while any encoder service is registered for this device.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool ServiceRegistered(_In_ DEVICE_CONTEXT* ctx);
+
+// True while an encoder provider for this codec (Ioctl::kCodec*) is registered.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+bool ServiceCodecRegistered(_In_ DEVICE_CONTEXT* ctx, uint32_t codec);
 
 // Latches stream lifecycle events (start/stop) for WAIT_EVENT.
 _IRQL_requires_max_(DISPATCH_LEVEL)

@@ -3,6 +3,8 @@
 #include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/IA2dpCodec.h>
 #include <OpenA2dp/AacStreamEncoder.h>
+#include <OpenA2dp/AptxHd.h>
+#include <OpenA2dp/AptxHdStreamEncoder.h>
 
 #include <windows.h>
 #include <winioctl.h>
@@ -220,6 +222,30 @@ void BuildIe(uint32_t sampleRate, uint32_t channels, uint32_t bitrate, uint32_t 
 	AacConfig::WriteIe(p, ie);
 }
 
+// Registers one encoder provider with the device. Each provider supplies one codec, so the
+// driver can offer the codecs whose encoders are actually present.
+bool RegisterEncoder(HANDLE h, uint32_t codec, const char* name)
+{
+	Ioctl::RegisterEncoderIn in = {};
+	in.abiVersion = Ioctl::kAbiVersion;
+	in.codec = codec;
+	in.maxFramePayload = Ioctl::kMaxFramePayload;
+
+	Ioctl::RegisterEncoderOut out = {};
+	DWORD bytes = 0;
+	if (!IoctlSync(h, Ioctl::kIoctlRegisterEncoder, &in, sizeof(in), &out, sizeof(out), &bytes)) {
+		Log("[svc] REGISTER_ENCODER(%s) failed: %lu", name, GetLastError());
+		return false;
+	}
+	if (out.abiVersion != Ioctl::kAbiVersion) {
+		Log("[svc] %s ABI mismatch: %u vs %u", name, out.abiVersion, Ioctl::kAbiVersion);
+		return false;
+	}
+	Log("[svc] registered %s (max frame %u, %u Hz, %u ch)", name, out.maxFramePayload,
+		out.pcmSampleRate, out.pcmChannels);
+	return true;
+}
+
 // One device's event loop. Returns when the device is gone or the service stops.
 void DeviceLoop(const std::wstring& linkName)
 {
@@ -235,29 +261,18 @@ void DeviceLoop(const std::wstring& linkName)
 		return;
 	}
 
-	// Register as AAC encoder.
-	Ioctl::RegisterEncoderIn regIn = {};
-	regIn.abiVersion = Ioctl::kAbiVersion;
-	regIn.codec = Ioctl::kCodecAac;
-	regIn.maxFramePayload = Ioctl::kMaxFramePayload;
-
-	Ioctl::RegisterEncoderOut regOut = {};
-	DWORD bytes = 0;
-	if (!IoctlSync(h, Ioctl::kIoctlRegisterEncoder, &regIn, sizeof(regIn), &regOut, sizeof(regOut), &bytes)) {
-		Log("[svc] REGISTER_ENCODER failed: %lu", GetLastError());
+	// AAC is the codec Windows falls back to, so failing to register it means the stream would
+	// have nothing to encode with; aptX HD is optional and only removes that codec from
+	// negotiation.
+	if (!RegisterEncoder(h, Ioctl::kCodecAac, "AAC")) {
 		CloseHandle(h);
 		return;
 	}
-	if (regOut.abiVersion != Ioctl::kAbiVersion) {
-		Log("[svc] ABI mismatch: %u vs %u", regOut.abiVersion, Ioctl::kAbiVersion);
-		CloseHandle(h);
-		return;
-	}
-	Log("[svc] registered (max frame %u, %u Hz, %u ch)", regOut.maxFramePayload,
-		regOut.pcmSampleRate, regOut.pcmChannels);
+	(void)RegisterEncoder(h, Ioctl::kCodecAptxHd, "aptX HD");
 
 	// Map rings.
 	Ioctl::SharedRings rings = {};
+	DWORD bytes = 0;
 	if (!IoctlSync(h, Ioctl::kIoctlMapRings, nullptr, 0, &rings, sizeof(rings), &bytes)) {
 		Log("[svc] MAP_RINGS failed: %lu", GetLastError());
 		CloseHandle(h);
@@ -281,6 +296,7 @@ void DeviceLoop(const std::wstring& linkName)
 	Log("[svc] rings mapped: PCM %u B, frames %u B", rings.pcmCapacity, rings.frameCapacity);
 
 	AacStreamEncoder streamEncoder;
+	AptxHdStreamEncoder hdStreamEncoder;
 
 	// Main event loop.
 	for (;;) {
@@ -307,6 +323,45 @@ void DeviceLoop(const std::wstring& linkName)
 		}
 
 		if (ev.events & Ioctl::kEventStreamStart) {
+			// One stream runs one codec; whatever the previous start left running is stale.
+			streamEncoder.Stop();
+			hdStreamEncoder.Stop();
+
+			if (ev.codec == Ioctl::kCodecAptxHd) {
+				Log("[svc] aptX HD stream start: %u Hz, %u ch", ev.sampleRate, ev.channels);
+				if (ev.channels != 2) {
+					Log("[svc] aptX HD needs stereo, got %u ch", ev.channels);
+					continue;
+				}
+
+				uint8_t ie[AptxHd::kIeLength] = {};
+				AptxHd::WriteIe(ev.sampleRate == 44100 ? AptxHd::kSampleRate44100 : AptxHd::kSampleRate48000, ie);
+				A2dpCodecConfig config = {};
+				config.codec = CodecType::Vendor;
+				std::memcpy(config.ie, ie, sizeof(ie));
+				config.ieLength = static_cast<uint8_t>(sizeof(ie));
+
+				auto codec = CreateVendorCodec(AptxHd::kVendorId, AptxHd::kCodecId);
+				if (!codec) {
+					Log("[svc] aptX HD codec is not available");
+					continue;
+				}
+				std::unique_ptr<IA2dpEncoder> encoder;
+				const HRESULT hr = codec->CreateEncoder(config, encoder);
+				if (FAILED(hr)) {
+					Log("[svc] aptX HD CreateEncoder failed: 0x%08X", (unsigned)hr);
+					continue;
+				}
+
+				AptxHdStreamParams params;
+				params.sampleRate = ev.sampleRate;
+				params.channels = static_cast<uint16_t>(ev.channels);
+				if (!hdStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
+					Log("[svc] AptxHdStreamEncoder::Start failed");
+				}
+				continue;
+			}
+
 			Log("[svc] stream start: %u Hz, %u ch, %u bps, obj 0x%02X",
 				ev.sampleRate, ev.channels, ev.bitrate, ev.objectType);
 
@@ -332,6 +387,7 @@ void DeviceLoop(const std::wstring& linkName)
 			params.channels = static_cast<uint16_t>(ev.channels);
 			params.bitrate = ev.bitrate;
 			params.objectType = ev.objectType;
+			params.bitsPerSample = static_cast<uint16_t>(ev.pcmValidBits);
 
 			if (!streamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
 				Log("[svc] AacStreamEncoder::Start failed");
@@ -342,8 +398,14 @@ void DeviceLoop(const std::wstring& linkName)
 		if (ev.events & Ioctl::kEventTick) {
 			if (streamEncoder.Active()) {
 				if (!streamEncoder.Pump(nowUs, pcmRing, frameRing, 8)) {
-					Log("[svc] Pump failed, stopping");
+					Log("[svc] AAC pump failed, stopping");
 					streamEncoder.Stop();
+				}
+			}
+			if (hdStreamEncoder.Active()) {
+				if (!hdStreamEncoder.Pump(nowUs, pcmRing, frameRing, 8)) {
+					Log("[svc] aptX HD pump failed, stopping");
+					hdStreamEncoder.Stop();
 				}
 			}
 		}
@@ -351,10 +413,12 @@ void DeviceLoop(const std::wstring& linkName)
 		if (ev.events & Ioctl::kEventStreamStop) {
 			Log("[svc] stream stop");
 			streamEncoder.Stop();
+			hdStreamEncoder.Stop();
 		}
 	}
 
 	streamEncoder.Stop();
+	hdStreamEncoder.Stop();
 	CloseHandle(h);
 	Log("[svc] %s done", linkUtf8.c_str());
 }

@@ -46,6 +46,7 @@
 	<ClCompile Include="aac\AacStreamEncoder.cpp" />
 	<ClCompile Include="aac\LatmWriter.cpp" />
 	<ClCompile Include="aptx\AptxHdCodec.cpp" />
+	<ClCompile Include="aptx\AptxHdStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="aptx\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>

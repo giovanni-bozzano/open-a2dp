@@ -31,6 +31,9 @@ struct AacStreamParams {
 	uint16_t channels = 2;
 	uint32_t bitrate = 0;
 	uint32_t objectType = 0; // Aac::kObjectMpeg4Lc
+	// Depth the PCM ring carries: 16 (int16) or 24 (24-in-32). AAC takes 16-bit input, so a
+	// 24-bit ring is truncated to the top 16 bits per sample here.
+	uint16_t bitsPerSample = 16;
 };
 
 struct AacStreamStats {
@@ -90,6 +93,9 @@ private:
 
 	uint32_t samplesPerFrame_ = 0;
 	uint32_t bytesPerSample_ = 0; // interleaved 16-bit samples for all channels
+	uint32_t ringBytesPerSample_ = 0; // interleaved samples as the ring stores them
+	bool convert24_ = false;          // ring is 24-in-32, the encoder input is 16-bit
+	std::vector<uint8_t> ringBlock_;  // samplesPerFrame_ * ringBytesPerSample_
 	std::vector<uint8_t> pcmBlock_;  // samplesPerFrame_ * bytesPerSample_
 	std::vector<uint8_t> accessUnit_; // encoder_->MaxFrameBytes()
 	std::vector<uint8_t> payload_;    // Ioctl::kMaxFramePayload

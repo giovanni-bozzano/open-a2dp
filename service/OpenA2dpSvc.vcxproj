@@ -24,6 +24,7 @@
 	<ClCompile Include="..\codecs\sbc\SbcCodec.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcEncoder.cpp" />
 	<ClCompile Include="..\codecs\aptx\AptxHdCodec.cpp" />
+	<ClCompile Include="..\codecs\aptx\AptxHdStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="..\codecs\aptx\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
