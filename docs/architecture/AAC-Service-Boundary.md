@@ -14,9 +14,10 @@ v1 assumptions:
 - aptX HD at 44.1/48 kHz stereo, 24-in-32 input, one record of ten milliseconds per RTP
   packet (110 or 111 six-byte frames at 44.1 kHz, 120 at 48 kHz; the samples a frame cannot
   hold are carried into the next record, as for classic aptX);
-- classic aptX at 44.1/48 kHz stereo, 16-bit input, one record of ten milliseconds per RTP
-  packet (110 or 111 four-byte frames at 44.1 kHz, 120 at 48 kHz; the odd sample per span is
-  carried into the next record so the clock does not drift);
+- classic aptX at 44.1/48 kHz stereo, one record of ten milliseconds per RTP packet (110 or
+  111 four-byte frames at 44.1 kHz, 120 at 48 kHz; the odd sample per span is carried into
+  the next record so the clock does not drift). Its encoder takes 16-bit input, so a
+  24-in-32 ring is narrowed per sample with the kernel SBC path's rounding;
 - one AAC LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
 - the ACX endpoint lists 16-bit formats, and 24-in-32 while aptX HD can run; the encoders
   follow the rate Windows opened the stream with. AAC keeps 16-bit input: Media Foundation

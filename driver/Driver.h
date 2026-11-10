@@ -79,6 +79,13 @@ constexpr USHORT AudioRenderSampleBytes(USHORT validBits)
 {
 	return validBits > 16 ? 4 : 2;
 }
+// The pin depth an aptX codec can run from. HD reads 24-in-32 only; classic takes 16-bit and
+// narrows a 24-in-32 pin in the service with the kernel SBC path's rounding.
+constexpr bool AptxPinDepthUsable(USHORT pinValidBits, USHORT codecBits) noexcept
+{
+	return pinValidBits == codecBits || (codecBits == OpenA2dp::Aptx::kBitsPerSample &&
+										 pinValidBits == OpenA2dp::AptxHd::kBitsPerSample);
+}
 // About 370 ms of PCM between the ACX stream and the SBC encoder; shared with the
 // encoder service (defined in OpenA2dp/Ioctl.h).
 inline constexpr ULONG PcmRingBytes = OpenA2dp::Ioctl::kPcmRingBytes;

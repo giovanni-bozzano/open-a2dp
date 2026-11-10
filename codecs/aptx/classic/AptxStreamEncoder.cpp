@@ -2,6 +2,7 @@
 
 #include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/FrameRecord.h>
+#include <OpenA2dp/PcmDepth.h>
 
 #include <algorithm>
 #include <cstring>
@@ -41,6 +42,12 @@ bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxS
 	{
 		return false;
 	}
+	// The ring depth is the endpoint's; the encoder above is always the 16-bit one.
+	if (params.bitsPerSample != Aptx::kBitsPerSample && params.bitsPerSample != 24)
+	{
+		return false;
+	}
+	const bool convert24 = params.bitsPerSample == 24;
 
 	// The clock span is a whole number of milliseconds; the carry absorbs the samples a frame
 	// cannot cover. A record can need one frame more than the span alone.
@@ -52,13 +59,17 @@ bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxS
 		return false;
 	}
 	const uint32_t sampleBytes = static_cast<uint32_t>(params.channels) * 2u;
+	const uint32_t ringSampleBytes = static_cast<uint32_t>(params.channels) * (convert24 ? 4u : 2u);
 
 	try {
-		pcmRecord_.assign(static_cast<size_t>(recordSamples) * sampleBytes, 0);
+		pcmRecord_.assign(static_cast<size_t>(recordSamples) * ringSampleBytes, 0);
+		carryPcm_.assign(static_cast<size_t>(samplesPerFrame - 1) * ringSampleBytes, 0);
+		if (convert24) {
+			narrowRecord_.assign(static_cast<size_t>(recordSamples) * sampleBytes, 0);
+		}
 		frameData_.assign(maxFrames * maxFrameBytes, 0);
 		frameSizes_.assign(maxFrames, 0);
 		payload_.assign(Ioctl::kMaxFramePayload, 0);
-		carryPcm_.assign(static_cast<size_t>(samplesPerFrame - 1) * sampleBytes, 0);
 	} catch (const std::bad_alloc&) {
 		return false;
 	}
@@ -69,10 +80,12 @@ bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxS
 	startTimeUs_ = startTimeUs;
 	producedSamples_ = 0;
 	sampleBytes_ = sampleBytes;
+	ringSampleBytes_ = ringSampleBytes;
 	samplesPerFrame_ = samplesPerFrame;
 	spanSamples_ = spanSamples;
 	maxFrames_ = maxFrames;
 	carrySamples_ = 0;
+	convert24_ = convert24;
 	// The PCM the endpoint queued before MediaStart predates this stream.
 	const uint32_t stale = pcm.ReadableBytes();
 	if (stale != 0) {
@@ -118,17 +131,17 @@ bool AptxStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 {
 	// Samples the previous record could not fit go first; a short read is then zero-filled so
 	// a late or empty PCM ring becomes silence instead of a stalled stream.
-	const uint32_t recordBytes = spanSamples_ * sampleBytes_;
-	std::memcpy(pcmRecord_.data(), carryPcm_.data(), static_cast<size_t>(carrySamples_) * sampleBytes_);
-	uint8_t* const spanStart = pcmRecord_.data() + static_cast<size_t>(carrySamples_) * sampleBytes_;
+	const uint32_t recordBytes = spanSamples_ * ringSampleBytes_;
+	std::memcpy(pcmRecord_.data(), carryPcm_.data(), static_cast<size_t>(carrySamples_) * ringSampleBytes_);
+	uint8_t* const spanStart = pcmRecord_.data() + static_cast<size_t>(carrySamples_) * ringSampleBytes_;
 	std::memset(spanStart, 0, recordBytes);
 	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), recordBytes);
-	available -= available % sampleBytes_;
+	available -= available % ringSampleBytes_;
 	if (available != 0 && !pcm.Read(spanStart, available)) {
 		available = 0;
 	}
 
-	const uint32_t readSamples = available / sampleBytes_;
+	const uint32_t readSamples = available / ringSampleBytes_;
 	stats_.pcmBytes += available;
 	stats_.silenceSamples += spanSamples_ - readSamples;
 
@@ -141,11 +154,25 @@ bool AptxStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 		return false;
 	}
 
+	// A wide ring holds 24-in-32 words; the encoder takes the top 16 bits of each, rounded the
+	// way the kernel SBC path narrows the same ring.
+	const uint8_t* encodeBase = pcmRecord_.data();
+	if (convert24_) {
+		const uint32_t words = totalSamples * params_.channels;
+		for (uint32_t word = 0; word < words; ++word) {
+			int32_t sample = 0;
+			std::memcpy(&sample, pcmRecord_.data() + static_cast<size_t>(word) * 4, sizeof(sample));
+			const int16_t narrow = Pcm::Narrow24To16(sample);
+			std::memcpy(narrowRecord_.data() + static_cast<size_t>(word) * 2, &narrow, sizeof(narrow));
+		}
+		encodeBase = narrowRecord_.data();
+	}
+
 	const size_t pcmFrameBytes = static_cast<size_t>(samplesPerFrame_) * sampleBytes_;
 	size_t total = 0;
 	for (size_t frame = 0; frame < framesInRecord; ++frame) {
 		size_t written = 0;
-		const HRESULT hr = encoder_->Encode(pcmRecord_.data() + frame * pcmFrameBytes,
+		const HRESULT hr = encoder_->Encode(encodeBase + frame * pcmFrameBytes,
 											frameData_.data() + frame * Aptx::kFrameBytes,
 											Aptx::kFrameBytes, written);
 		if (FAILED(hr) || written != Aptx::kFrameBytes) {
@@ -175,8 +202,8 @@ bool AptxStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 		discontinuity_ = true;
 	}
 
-	std::memcpy(carryPcm_.data(), pcmRecord_.data() + static_cast<size_t>(encodedSamples) * sampleBytes_,
-				static_cast<size_t>(carried) * sampleBytes_);
+	std::memcpy(carryPcm_.data(), pcmRecord_.data() + static_cast<size_t>(encodedSamples) * ringSampleBytes_,
+				static_cast<size_t>(carried) * ringSampleBytes_);
 	carrySamples_ = carried;
 	// The clock advanced by the full span, whether or not a frame could hold all of it.
 	producedSamples_ += spanSamples_;

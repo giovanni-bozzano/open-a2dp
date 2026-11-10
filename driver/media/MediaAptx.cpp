@@ -14,14 +14,13 @@ void StartAptx(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 		return;
 	}
 	const uint32_t sampleRate = (capabilities & Aptx::kSampleRate44100) != 0 ? 44100u : 48000u;
-	// The encoder is 16-bit stereo by definition; the endpoint's ring is what it reads, so a
-	// different depth cannot be fed to it without a conversion this path deliberately does not
-	// do.
+	// The encoder is 16-bit stereo by definition; the service narrows a 24-in-32 ring, so the
+	// endpoint may run either depth.
 	if (sampleRate != ctx->PinSampleRate || ctx->PinChannels != 2 ||
-		ctx->PinValidBits != Aptx::kBitsPerSample)
+		!AptxPinDepthUsable(ctx->PinValidBits, Aptx::kBitsPerSample))
 	{
 		OA2DP_WARN(ctx, "Media",
-			"aptX %u Hz stereo 16-bit does not match the endpoint format %u Hz %u ch %u-bit",
+			"aptX %u Hz stereo does not match the endpoint format %u Hz %u ch %u-bit",
 			sampleRate, ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels),
 			static_cast<unsigned>(ctx->PinValidBits));
 		return;

@@ -115,9 +115,9 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 	// a codec that consumes 16-bit PCM.
 	const bool hdUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptxHd) && offers(Ioctl::kSinkCodecAptxHd) &&
 		ctx->PinValidBits == AptxHd::kBitsPerSample && ctx->PinChannels == 2;
-	// Classic aptX runs on the 16-bit endpoint format, in stereo.
+	// Classic aptX takes 16-bit PCM and narrows a 24-in-32 pin in the service, in stereo.
 	const bool aptxUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptx) && offers(Ioctl::kSinkCodecAptx) &&
-		ctx->PinValidBits == Aptx::kBitsPerSample && ctx->PinChannels == 2;
+		AptxPinDepthUsable(ctx->PinValidBits, Aptx::kBitsPerSample) && ctx->PinChannels == 2;
 	const bool forceCodec = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	if (forceCodec)
 	{

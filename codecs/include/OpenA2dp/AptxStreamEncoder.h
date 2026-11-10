@@ -10,9 +10,10 @@
 // what it actually encoded, which keeps the RTP timestamp locked to the media clock over
 // time. The driver puts one record into one RTP packet.
 //
-// PCM comes from the shared ring as the endpoint's 16-bit stereo, so the bytes are handed to
-// the encoder unchanged. No OS calls, no threads: the service supplies the encoder, the clock
-// and the rings.
+// PCM comes from the shared ring in the endpoint's own depth: 16-bit stereo goes to the
+// encoder unchanged, and a 24-in-32 ring (the endpoint runs wide while aptX HD can) is
+// narrowed per sample with the same rounding the kernel SBC path uses. No OS calls, no
+// threads: the service supplies the encoder, the clock and the rings.
 
 #include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/IA2dpCodec.h>
@@ -28,6 +29,8 @@ namespace OpenA2dp {
 struct AptxStreamParams {
 	uint32_t sampleRate = 48000;
 	uint16_t channels = 2;
+	// Depth of the PCM in the ring: 16 for a 16-bit endpoint, 24 for 24-in-32.
+	uint16_t bitsPerSample = Aptx::kBitsPerSample;
 };
 
 struct AptxStreamStats {
@@ -47,8 +50,9 @@ public:
 	AptxStreamEncoder(const AptxStreamEncoder&) = delete;
 	AptxStreamEncoder& operator=(const AptxStreamEncoder&) = delete;
 
-	// Starts a stream. `encoder` must take 16-bit stereo PCM for `params` and is owned by
-	// this object. PCM already buffered in `pcm` is discarded: it predates the stream.
+	// Starts a stream. `encoder` must take 16-bit stereo PCM for `params.sampleRate` and is
+	// owned by this object; `params.bitsPerSample` describes the ring, which may be wider.
+	// PCM already buffered in `pcm` is discarded: it predates the stream.
 	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxStreamParams& params, RingBufferView& pcm,
 			   uint64_t startTimeUs) noexcept;
 
@@ -80,13 +84,16 @@ private:
 	bool active_ = false;
 	bool discontinuity_ = false;
 
-	uint32_t sampleBytes_ = 0; // interleaved 16-bit bytes for all channels
+	uint32_t sampleBytes_ = 0;     // interleaved 16-bit bytes for all channels
+	uint32_t ringSampleBytes_ = 0; // interleaved ring bytes for all channels (2 or 4 per sample)
 	uint32_t samplesPerFrame_ = 0;
 	uint32_t spanSamples_ = 0; // 10 ms of the media clock
 	size_t maxFrames_ = 0;
 	uint32_t carrySamples_ = 0;
-	std::vector<uint8_t> carryPcm_;   // carrySamples_ * sampleBytes_
-	std::vector<uint8_t> pcmRecord_;  // (span + one frame - 1) * sampleBytes_
+	bool convert24_ = false;
+	std::vector<uint8_t> carryPcm_;   // carrySamples_ * ringSampleBytes_
+	std::vector<uint8_t> pcmRecord_;  // (span + one frame - 1) * ringSampleBytes_
+	std::vector<uint8_t> narrowRecord_; // the same record as 16-bit samples, when convert24_
 	std::vector<uint8_t> frameData_;  // maxFrames_ * maxFrameBytes_
 	std::vector<size_t> frameSizes_;
 	std::vector<uint8_t> payload_;    // Ioctl::kMaxFramePayload

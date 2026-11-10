@@ -400,8 +400,9 @@ classic aptX but not aptX HD.
    sink stays in sync against the PC: that is what the sample carry protects, and underruns
    alone would not show it.
 3. A sink advertising both aptX codecs selects aptX HD; forcing `codec aptx` rebuilds the
-   endpoint listing at 16-bit, the engine reopens the stream at that depth, and the same
-   AVDTP connection moves to classic aptX; forcing `codec aptxhd` rebuilds it at 24-bit and
+   endpoint listing at 16-bit and the same AVDTP connection moves to classic aptX, which
+   plays whether or not the engine reopens the stream at that depth (a still-24-bit stream
+   is narrowed in the service); forcing `codec aptxhd` rebuilds the listing at 24-bit and
    switches back. Expect a brief silence at each change, not a reconnect.
 4. `OpenA2dpCtl codec aptx` on a sink that does not advertise it: refused, stored
    preference unchanged.

@@ -35,6 +35,17 @@ void WritePcm(TestRing& ring, int16_t firstSample, uint32_t frames)
 	}
 }
 
+// The same sweep written as 24-in-32, left-justified like the endpoint writes it.
+void WriteWidePcm(TestRing& ring, int16_t firstSample, uint32_t frames)
+{
+	for (uint32_t frame = 0; frame < frames; ++frame) {
+		const int32_t left = static_cast<int32_t>(firstSample + static_cast<int16_t>(frame)) * 65536;
+		const int32_t right = static_cast<int32_t>(firstSample - static_cast<int16_t>(frame)) * 65536;
+		int32_t samples[2] = {left, right};
+		REQUIRE(ring.view.Write(samples, sizeof(samples)));
+	}
+}
+
 std::unique_ptr<IA2dpEncoder> MakeEncoder(uint8_t capabilities)
 {
 	uint8_t ie[Aptx::kIeLength] = {};
@@ -122,6 +133,10 @@ TEST(AptxStream_StartRejectsUnusableEncoder)
 	auto wide = MakeWideEncoder();
 	REQUIRE(wide != nullptr);
 	CHECK(!stream.Start(std::move(wide), params, pcm.view, 0));
+
+	// The ring is either 16-bit or 24-in-32; any other depth has no layout.
+	params.bitsPerSample = 20;
+	CHECK(!stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm.view, 0));
 
 	// The record layout is four samples to four bytes; another shape would overrun a buffer.
 	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(2, Aptx::kFrameBytes), params, pcm.view, 0));
@@ -326,4 +341,52 @@ TEST(AptxStream_ShortRingBecomesSilence)
 	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{441 * 4});
 	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{2646 - 441});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
+}
+
+// The endpoint runs 24-in-32 while aptX HD can, so classic must encode from that ring too.
+// Narrowing left-justified 24-bit samples rounds back to the original int16 value, so both
+// rings must produce the same codewords and the same timestamp accounting.
+TEST(AptxStream_24BitRingMatches16Bit)
+{
+	TestRing pcm16(64 * 1024);
+	TestRing pcm24(64 * 1024);
+	TestRing frames16(64 * 1024);
+	TestRing frames24(64 * 1024);
+
+	AptxStreamParams params;
+	params.sampleRate = 48000;
+	AptxStreamEncoder narrow;
+	REQUIRE(narrow.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm16.view, 0));
+
+	AptxStreamParams wideParams = params;
+	wideParams.bitsPerSample = 24;
+	AptxStreamEncoder wide;
+	REQUIRE(wide.Start(MakeEncoder(Aptx::kSampleRate48000), wideParams, pcm24.view, 0));
+
+	WritePcm(pcm16, 1000, 4800);
+	WriteWidePcm(pcm24, 1000, 4800);
+	REQUIRE(narrow.Pump(1000000, pcm16.view, frames16.view, 8));
+	REQUIRE(wide.Pump(1000000, pcm24.view, frames24.view, 8));
+
+	CHECK_EQ(wide.Stats().records, narrow.Stats().records);
+	CHECK_EQ(wide.Stats().samples, narrow.Stats().samples);
+	CHECK_EQ(wide.Stats().encodeErrors, uint64_t{0});
+	// Both streams consumed the same number of frames: 8 bytes per frame wide, 4 narrow.
+	CHECK_EQ((4800 * 8 - pcm24.view.ReadableBytes()) / 8,
+		(4800 * 4 - pcm16.view.ReadableBytes()) / 4);
+	CHECK_EQ(frames24.view.ReadableBytes(), frames16.view.ReadableBytes());
+
+	uint8_t storage16[Ioctl::kMaxFrameRecordBytes];
+	uint8_t storage24[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record16;
+	FrameRecord::Record record24;
+	for (uint64_t i = 0; i < narrow.Stats().records; ++i) {
+		REQUIRE(FrameRecord::Read(frames16.view, storage16, sizeof(storage16), record16) ==
+				FrameRecord::ReadResult::Record);
+		REQUIRE(FrameRecord::Read(frames24.view, storage24, sizeof(storage24), record24) ==
+				FrameRecord::ReadResult::Record);
+		CHECK_EQ(record24.samples, record16.samples);
+		REQUIRE(record24.payloadLength == record16.payloadLength);
+		CHECK(std::memcmp(record24.payload, record16.payload, record16.payloadLength) == 0);
+	}
 }

@@ -256,10 +256,10 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 		{
 			return 0;
 		}
-		// Both encoders are stereo and take the endpoint's depth as it is: classic aptX 16-bit,
-		// HD 24-in-32. A mono or other-depth pin would need a conversion this path does not do,
-		// so the stream falls back to a codec that fits instead.
-		if (ctx->PinChannels != 2 || ctx->PinValidBits != bitsPerSample)
+		// Both encoders are stereo. HD takes 24-in-32 only; classic takes 16-bit and narrows a
+		// 24-in-32 pin in the service. Anything else would need a conversion this path does not
+		// do, so the stream falls back to a codec that fits instead.
+		if (ctx->PinChannels != 2 || !AptxPinDepthUsable(ctx->PinValidBits, bitsPerSample))
 		{
 			OA2DP_WARN(ctx, "AVDTP", "%s needs %u-bit stereo, the endpoint format is %u ch %u-bit",
 				hd ? "aptX HD" : "aptX", static_cast<unsigned>(bitsPerSample),
@@ -301,7 +301,7 @@ static uint8_t ValidateAptxConfiguration(DEVICE_CONTEXT* ctx, uint32_t codecValu
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
 	}
-	if (ctx->PinChannels != 2 || ctx->PinValidBits != bitsPerSample)
+	if (ctx->PinChannels != 2 || !AptxPinDepthUsable(ctx->PinValidBits, bitsPerSample))
 	{
 		return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
 	}

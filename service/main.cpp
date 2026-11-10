@@ -374,8 +374,11 @@ void DeviceLoop(const std::wstring& linkName)
 			if (ev.codec == Ioctl::kCodecAptx) {
 				Log("[svc] aptX stream start: %u Hz, %u ch, %u-bit", ev.sampleRate, ev.channels,
 					ev.pcmValidBits);
-				if (ev.channels != 2 || ev.pcmValidBits != Aptx::kBitsPerSample) {
-					Log("[svc] aptX needs 16-bit stereo, got %u ch %u-bit", ev.channels, ev.pcmValidBits);
+				// The endpoint runs 24-in-32 while aptX HD can, even when classic is selected, so
+				// the stream narrows it instead of failing: the sink then hears classic aptX.
+				if (ev.channels != 2 ||
+					(ev.pcmValidBits != Aptx::kBitsPerSample && ev.pcmValidBits != 24)) {
+					Log("[svc] aptX needs 16- or 24-bit stereo, got %u ch %u-bit", ev.channels, ev.pcmValidBits);
 					continue;
 				}
 
@@ -401,6 +404,7 @@ void DeviceLoop(const std::wstring& linkName)
 				AptxStreamParams params;
 				params.sampleRate = ev.sampleRate;
 				params.channels = static_cast<uint16_t>(ev.channels);
+				params.bitsPerSample = static_cast<uint16_t>(ev.pcmValidBits);
 				if (!aptxStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
 					Log("[svc] AptxStreamEncoder::Start failed");
 				}
