@@ -11,14 +11,20 @@ using namespace OpenA2dpDriver::Audio;
 ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames)
 {
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+	// One snapshot of the format: a format change updates the three fields together, and a
+	// depth read apart from its stride would decode the ring at the wrong layout.
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const ULONG channels = ctx->PinChannels;
 	const ULONG frameBytes = ctx->PinBytesPerFrame;
+	const USHORT validBits = ctx->PinValidBits;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	if (frameBytes == 0 || channels == 0)
 	{
 		return 0;
 	}
 
-	if (ctx->PinValidBits == 16)
+	if (validBits == 16)
 	{
 		const ULONG wanted = frames * frameBytes;
 		ULONG available = ring.ReadableBytes();
