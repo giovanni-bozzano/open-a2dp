@@ -9,6 +9,10 @@
 namespace OpenA2dp::Tools {
 namespace {
 
+// How long a cancelled control call may take to land before the tool moves on. The
+// service waits longer for the same cancel (service/main.cpp).
+constexpr DWORD kCancelGraceMs = 1000;
+
 // One typed read: the whole reply, or a failure that says why.
 template <typename T>
 bool ReadIoctl(HANDLE handle, ULONG code, T& out, std::string& error)
@@ -216,7 +220,7 @@ bool IoctlSync(HANDLE handle, ULONG code, const void* in, DWORD inLength, void* 
 			// Give the cancel a moment to land, so the driver is not left writing into `out`
 			// while the caller is already gone.
 			CancelIoEx(handle, &overlapped);
-			WaitForSingleObject(overlapped.hEvent, 1000);
+			WaitForSingleObject(overlapped.hEvent, kCancelGraceMs);
 			GetOverlappedResult(handle, &overlapped, &bytes, FALSE);
 			error = "DeviceIoControl timed out after " + std::to_string(timeoutMs) + " ms";
 			CloseHandle(overlapped.hEvent);

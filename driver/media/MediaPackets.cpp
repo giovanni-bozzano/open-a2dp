@@ -35,7 +35,7 @@ bool MediaSendReady(DEVICE_CONTEXT* ctx, bool tick)
 		if (tick && ++ctx->MediaBusyTicks == MediaBusyLimitTicks)
 		{
 			OA2DP_WARN(ctx, "Media", "the previous send is still pending in the transport after %u ms",
-				MediaBusyLimitTicks * MediaPeriodMs);
+				MediaBusyLimitMs);
 		}
 		return false;
 	}

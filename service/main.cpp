@@ -24,6 +24,10 @@ using namespace OpenA2dp;
 namespace {
 
 constexpr wchar_t kServiceName[] = L"OpenA2dpSvc";
+// How long a cancelled control call may take to land before the caller moves on.
+// The tools wait less for the same cancel (tools/common/ControlDevice.cpp); one
+// shared value is pending a sink to validate the timeout path against.
+constexpr DWORD kCancelGraceMs = 2000;
 // How long a service stop waits for the per-device workers before abandoning them.
 constexpr DWORD kWorkerStopWaitMs = 3000;
 
@@ -117,7 +121,7 @@ bool IoctlSync(HANDLE device, DWORD code, void* in, DWORD inLength, void* out, D
 			ok = GetOverlappedResult(device, &ov, &returned, FALSE);
 		} else {
 			CancelIoEx(device, &ov);
-			WaitForSingleObject(ov.hEvent, 2000);
+			WaitForSingleObject(ov.hEvent, kCancelGraceMs);
 			SetLastError(ERROR_TIMEOUT);
 			ok = FALSE;
 		}
@@ -156,7 +160,7 @@ WaitResult WaitForEvent(HANDLE device, Ioctl::WaitEventOut& ev)
 		if (which == WAIT_OBJECT_0) {
 			CancelIoEx(device, &ov);
 			// Bounded: the caller closes the handle next, which cancels whatever is left.
-			WaitForSingleObject(ov.hEvent, 2000);
+			WaitForSingleObject(ov.hEvent, kCancelGraceMs);
 			CloseHandle(ov.hEvent);
 			return WaitResult::Stopped;
 		}

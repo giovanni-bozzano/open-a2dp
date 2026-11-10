@@ -15,9 +15,11 @@ constexpr ULONG MediaPeriodMs = 10;
 // Diagnostic only: encoder loss is handled by its own events (file cleanup, ring fault).
 constexpr ULONGLONG UnderrunTimeout = 200ull * 10000ull;
 constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
-// Ticks (10 ms each) a media send may stay pending before it is logged (diagnostic
-// only; link loss arrives as a transport completion or disconnect indication).
-constexpr ULONG MediaBusyLimitTicks = 300;
+// How long a media send may stay pending in the transport before it is logged
+// (diagnostic only; link loss arrives as a transport completion or disconnect
+// indication). The tick count follows the period so the two cannot drift apart.
+constexpr ULONG MediaBusyLimitMs = 3000;
+constexpr ULONG MediaBusyLimitTicks = MediaBusyLimitMs / MediaPeriodMs;
 
 EVT_WDF_TIMER OnMediaTimer;
 EVT_WDF_WORKITEM OnMediaWorkItem;
