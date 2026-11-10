@@ -556,6 +556,12 @@ private:
 			break;
 
 		case Signal::Reconfigure:
+			// The session left Open while this response was pending, which only a sink START
+			// during the SUSPEND/reconfigure window does. The stream then runs a configuration
+			// this response never confirmed, so a rejection must not be mistaken for silence
+			// and an acceptance must not be adopted: fail, and let the owner rediscover from a
+			// known state. A response that arrives after our own ABORT is dropped earlier, in
+			// OnPacket, because the ABORT took over the pending label and signal.
 			if (state_ != SessionState::Open) {
 				break;
 			}

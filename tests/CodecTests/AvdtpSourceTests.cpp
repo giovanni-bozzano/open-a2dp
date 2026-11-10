@@ -312,6 +312,31 @@ TEST(AvdtpSource_ReconfigureWhilePendingIsIgnored)
 	CHECK(!s.LastReconfigureAccepted());
 }
 
+TEST(AvdtpSource_ReconfigureResponseAfterSinkStartFailsTheSession)
+{
+	SourceSession s = MakeSession();
+	uint8_t cmd[kMaxSignalPacket];
+	uint8_t reply[kMaxSignalPacket];
+	uint8_t rsp[kMaxSignalPacket];
+	const uint8_t ie[6] = {0x80, 0x00, 0x84, 0x01, 0xF4, 0x00};
+
+	ConnectToOpen(s);
+	REQUIRE(s.Reconfigure(ie, 6, cmd, kMaxSignalPacket) != 0);
+
+	// The sink starts streaming before answering the RECONFIGURE.
+	uint8_t sinkStart[3];
+	WriteSignalHeader({0, PacketType::Single, MessageType::Command, Signal::Start}, sinkStart, sizeof(sinkStart));
+	sinkStart[2] = static_cast<uint8_t>(kLocalAacSeid << 2);
+	CHECK_EQ(s.OnPacket(sinkStart, sizeof(sinkStart), reply, kMaxSignalPacket), size_t{2});
+	REQUIRE(s.State() == SessionState::Streaming);
+
+	// The response now describes a configuration the stream never took, and the state machine
+	// cannot tell which one is in effect: the session fails instead of adopting either.
+	const size_t n = s.OnPacket(rsp, Accept(cmd, nullptr, 0, rsp), cmd, kMaxSignalPacket);
+	CHECK_EQ(n, size_t{0});
+	CHECK(s.State() == SessionState::Failed);
+}
+
 TEST(AvdtpSource_ReconfigureRejectsMissingInput)
 {
 	SourceSession s = MakeSession();
