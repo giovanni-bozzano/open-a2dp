@@ -86,6 +86,15 @@ void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx)
 
 void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx)
 {
+	// The listed formats follow the preference: a forced 16-bit codec drops the 24-bit
+	// entries, and forcing aptX HD restores them. Without this the stale listing keeps the
+	// pin at its old depth and the work item refuses the requested codec.
+	const NTSTATUS status = AudioApplyEndpointFormats(ctx);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_WARN(ctx, "Signaling", "applying the endpoint formats after a preference change failed "
+			"0x%08X", status);
+	}
 	RequestCodecSwitch(ctx);
 }
 
