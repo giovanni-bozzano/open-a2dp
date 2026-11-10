@@ -22,8 +22,8 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 **Decision: 24-bit is native end to end.** No 16->24 expansion adapter goes into a codec
 wrapper. The HD encoder already consumes 24-bit samples, so a pad would feed zeroed low
 bits to its predictor and be deleted again when the real path lands, after the interface,
-both encoders, both test fakes and every call site had been touched twice. SBC and AAC
-keep their own 16-bit input; the endpoint tells the service which depth the PCM ring
+both encoders, both test fakes and every call site had been touched twice. SBC, AAC and
+classic aptX keep their own 16-bit input; the endpoint tells the service which depth the PCM ring
 carries (`RegisterEncoderOut`/`WaitEventOut.pcmValidBits`).
 
 - Endpoint: 24-in-32, PCM subformat, `wBitsPerSample = 32`, `wValidBitsPerSample = 24`,
@@ -33,8 +33,8 @@ carries (`RegisterEncoderOut`/`WaitEventOut.pcmValidBits`).
   times the container size and `AudioReadPcm`, `ctx->PcmBuffer` and the render format table
   become depth aware. At 48 kHz stereo, 24-in-32 halves the 64 KiB ring to about 170 ms,
   still above the preroll.
-- Encoder seam: `PcmFormat` carries the depth and `Encode` takes bytes. SBC and AAC declare
-  16 and reject anything else; HD declares 24-in-32.
+- Encoder seam: `PcmFormat` carries the depth and `Encode` takes bytes. SBC, AAC and
+  classic aptX declare 16 and reject anything else; HD declares 24-in-32.
 - HD input: `aptxhdbtenc_encodestereo(state, pcmL[4], pcmR[4], out[2])` wants four 24-bit
   samples per channel as `int32`, sign-extended in the low 24 bits, and returns 6 bytes (3
   per channel) per call. AOSP's own glue expands packed 24-bit into that layout; from
@@ -56,8 +56,8 @@ Sequencing, together with the aptX HD milestone rather than before it:
 3. Pick 24-in-32 in `AudioApplyEndpointFormats` from the codec preference and the sink's
    advertised HD capabilities. Done: `DesiredFormats` follows the HD capability byte and
    the registered provider, and the 24-bit list leads the endpoint.
-4. Widen `IA2dpEncoder`/`PcmFormat`, then add the 24->16 rounded downconvert on the
-   SBC/AAC path only. Done: `Pcm::Narrow24To16` rounds and saturates, used by the kernel
+4. Widen `IA2dpEncoder`/`PcmFormat`, then add the 24->16 rounded downconvert on the 16-bit
+   codec path only. Done: `Pcm::Narrow24To16` rounds and saturates, used by the kernel
    SBC reader and by `AacStreamEncoder` when the ring is 24-in-32.
 
 Two limits stay, and neither is in the HD path: a configuration that falls back from HD
