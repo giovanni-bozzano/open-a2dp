@@ -5,6 +5,8 @@ description: Build Debug x64 and run CodecTests after code changes.
 
 Run from the repository root in PowerShell:
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-vendored-aptx.ps1
+if ($LASTEXITCODE -ne 0) { throw 'Vendored aptX HD sources changed; re-vendor or run the check with -Update' }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $ms = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\amd64\MSBuild.exe' | Select-Object -First 1
 if (-not $ms) { throw 'MSBuild x64 not found' }
