@@ -8,7 +8,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\include;$(OpenA2dpRoot)codecs\aptx\src;$(OpenA2dpRoot)codecs\aptx\classic\include;$(OpenA2dpRoot)codecs\aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\hd\include;$(OpenA2dpRoot)codecs\aptx\hd\src;$(OpenA2dpRoot)codecs\aptx\classic\include;$(OpenA2dpRoot)codecs\aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
@@ -23,21 +23,21 @@
 	<ClCompile Include="..\codecs\aac\LatmWriter.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcCodec.cpp" />
 	<ClCompile Include="..\codecs\sbc\SbcEncoder.cpp" />
-	<ClCompile Include="..\codecs\aptx\AptxCodec.cpp" />
-	<ClCompile Include="..\codecs\aptx\AptxHdCodec.cpp" />
-	<ClCompile Include="..\codecs\aptx\AptxHdStreamEncoder.cpp" />
-	<ClCompile Include="..\codecs\aptx\AptxStreamEncoder.cpp" />
+	<ClCompile Include="..\codecs\aptx\classic\AptxCodec.cpp" />
+	<ClCompile Include="..\codecs\aptx\hd\AptxHdCodec.cpp" />
+	<ClCompile Include="..\codecs\aptx\hd\AptxHdStreamEncoder.cpp" />
+	<ClCompile Include="..\codecs\aptx\classic\AptxStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
-	<ClCompile Include="..\codecs\aptx\src\aptXHDbtenc.c">
+	<ClCompile Include="..\codecs\aptx\hd\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
-	<ClCompile Include="..\codecs\aptx\src\ProcessSubband.c">
+	<ClCompile Include="..\codecs\aptx\hd\src\ProcessSubband.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
-	<ClCompile Include="..\codecs\aptx\src\QmfConv.c">
+	<ClCompile Include="..\codecs\aptx\hd\src\QmfConv.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
-	<ClCompile Include="..\codecs\aptx\src\QuantiseDifference.c">
+	<ClCompile Include="..\codecs\aptx\hd\src\QuantiseDifference.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
 	<!-- Same base names as the HD drop's sources, so each needs its own object file. -->

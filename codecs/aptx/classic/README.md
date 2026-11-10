@@ -8,8 +8,8 @@ Vendored from AOSP `platform/packages/modules/Bluetooth`, directory
   licence header; the licence text is in `LICENSE-APACHE-2.0.txt`.
 - The sources are unmodified apart from line endings, and are compiled with warnings as
   errors turned off for that reason. Do not patch them here: fixes belong upstream.
-- `../AptxCodec.cpp` and `../include/OpenA2dp/AptxCodec.h` are this repository's wrapper, not
-  part of the vendored drop.
+- `AptxCodec.cpp`, `AptxStreamEncoder.cpp` and `../../include/OpenA2dp/AptxCodec.h` are this
+  repository's wrapper, not part of the vendored drop.
 - The helper files share their names with the HD drop but are different code (the HD set is
   the 24-bit `_HD` variants), so both trees are compiled. Quoted includes keep each drop on
   its own headers.

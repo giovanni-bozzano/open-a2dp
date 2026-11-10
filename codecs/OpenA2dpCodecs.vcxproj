@@ -41,19 +41,19 @@
 	<ClInclude Include="aptx\classic\src\SubbandFunctionsCommon.h" />
 	<ClInclude Include="aptx\classic\src\SyncInserter.h" />
 	<ClInclude Include="aptx\classic\src\swversion.h" />
-	<ClInclude Include="aptx\include\aptXHDbtenc.h" />
-	<ClInclude Include="aptx\src\AptxEncoder.h" />
-	<ClInclude Include="aptx\src\AptxParameters.h" />
-	<ClInclude Include="aptx\src\AptxTables.h" />
-	<ClInclude Include="aptx\src\CBStruct.h" />
-	<ClInclude Include="aptx\src\CodewordPacker.h" />
-	<ClInclude Include="aptx\src\DitherGenerator.h" />
-	<ClInclude Include="aptx\src\Quantiser.h" />
-	<ClInclude Include="aptx\src\Qmf.h" />
-	<ClInclude Include="aptx\src\SubbandFunctions.h" />
-	<ClInclude Include="aptx\src\SubbandFunctionsCommon.h" />
-	<ClInclude Include="aptx\src\SyncInserter.h" />
-	<ClInclude Include="aptx\src\swversion.h" />
+	<ClInclude Include="aptx\hd\include\aptXHDbtenc.h" />
+	<ClInclude Include="aptx\hd\src\AptxEncoder.h" />
+	<ClInclude Include="aptx\hd\src\AptxParameters.h" />
+	<ClInclude Include="aptx\hd\src\AptxTables.h" />
+	<ClInclude Include="aptx\hd\src\CBStruct.h" />
+	<ClInclude Include="aptx\hd\src\CodewordPacker.h" />
+	<ClInclude Include="aptx\hd\src\DitherGenerator.h" />
+	<ClInclude Include="aptx\hd\src\Quantiser.h" />
+	<ClInclude Include="aptx\hd\src\Qmf.h" />
+	<ClInclude Include="aptx\hd\src\SubbandFunctions.h" />
+	<ClInclude Include="aptx\hd\src\SubbandFunctionsCommon.h" />
+	<ClInclude Include="aptx\hd\src\SyncInserter.h" />
+	<ClInclude Include="aptx\hd\src\swversion.h" />
   </ItemGroup>
   <ItemGroup>
 	<ClCompile Include="CodecFactory.cpp" />
@@ -62,21 +62,21 @@
 	<ClCompile Include="aac\AacCodec.cpp" />
 	<ClCompile Include="aac\AacStreamEncoder.cpp" />
 	<ClCompile Include="aac\LatmWriter.cpp" />
-	<ClCompile Include="aptx\AptxCodec.cpp" />
-	<ClCompile Include="aptx\AptxHdCodec.cpp" />
-	<ClCompile Include="aptx\AptxHdStreamEncoder.cpp" />
-	<ClCompile Include="aptx\AptxStreamEncoder.cpp" />
+	<ClCompile Include="aptx\classic\AptxCodec.cpp" />
+	<ClCompile Include="aptx\hd\AptxHdCodec.cpp" />
+	<ClCompile Include="aptx\hd\AptxHdStreamEncoder.cpp" />
+	<ClCompile Include="aptx\classic\AptxStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
-	<ClCompile Include="aptx\src\aptXHDbtenc.c">
+	<ClCompile Include="aptx\hd\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
-	<ClCompile Include="aptx\src\ProcessSubband.c">
+	<ClCompile Include="aptx\hd\src\ProcessSubband.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
-	<ClCompile Include="aptx\src\QmfConv.c">
+	<ClCompile Include="aptx\hd\src\QmfConv.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
-	<ClCompile Include="aptx\src\QuantiseDifference.c">
+	<ClCompile Include="aptx\hd\src\QuantiseDifference.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	</ClCompile>
 	<!-- Same base names as the HD drop's sources, so each needs its own object file. -->
@@ -99,7 +99,7 @@
   </ItemGroup>
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(ProjectDir)aptx\include;$(ProjectDir)aptx\src;$(ProjectDir)aptx\classic\include;$(ProjectDir)aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(ProjectDir)aptx\hd\include;$(ProjectDir)aptx\hd\src;$(ProjectDir)aptx\classic\include;$(ProjectDir)aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

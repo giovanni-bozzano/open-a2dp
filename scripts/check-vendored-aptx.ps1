@@ -3,7 +3,7 @@
 Verifies the vendored aptX and aptX HD encoders against their SHA256SUMS.
 
 .DESCRIPTION
-The AOSP sources under codecs\aptx and codecs\aptx\classic are vendored unmodified, so a
+The AOSP sources under codecs\aptx\hd and codecs\aptx\classic are vendored unmodified, so a
 change there is either a mistake or a deliberate re-vendor. Hashes cover the LF form of each
 file, so a CRLF checkout verifies the same as an LF one. -Update rewrites both manifests after
 a deliberate re-vendor.
@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 # Each drop is a directory with include\ and src\ and its own SHA256SUMS next to them.
 $drops = @(
-    @{ Name = 'aptX HD'; Root = Join-Path $repoRoot 'codecs\aptx' },
+    @{ Name = 'aptX HD'; Root = Join-Path $repoRoot 'codecs\aptx\hd' },
     @{ Name = 'aptX'; Root = Join-Path $repoRoot 'codecs\aptx\classic' }
 )
 
