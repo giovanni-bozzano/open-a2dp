@@ -74,7 +74,7 @@ void RecordEndpointFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG sampleRate, _In_ 
 
 	if (sampleRate != previousRate || channels != previousChannels || validBits != previousValidBits)
 	{
-		SignalingOnPreferenceChanged(ctx);
+		SignalingOnStreamFormatChanged(ctx);
 	}
 }
 // Index in RenderFormats of a rate, channel count and depth, or AudioRenderFormatCount when
@@ -487,7 +487,7 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 		WdfWaitLockRelease(ctx->FormatLock);
 		if (pinChanged)
 		{
-			SignalingOnPreferenceChanged(ctx);
+			SignalingOnStreamFormatChanged(ctx);
 		}
 		return STATUS_SUCCESS;
 	}
@@ -514,7 +514,7 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	// nothing to renegotiate before a client exists.
 	if (pinChanged && !firstBuild)
 	{
-		SignalingOnPreferenceChanged(ctx);
+		SignalingOnStreamFormatChanged(ctx);
 	}
 	// Editing the lists entry by entry does not raise the pin's format-change event, and
 	// without it Windows keeps a running stream at the format it was opened with. The event

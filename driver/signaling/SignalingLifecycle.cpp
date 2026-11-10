@@ -98,6 +98,13 @@ void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx)
 	RequestCodecSwitch(ctx);
 }
 
+void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx)
+{
+	// The listing already follows the preference; only the codec choice has to be
+	// reconsidered, because a different depth makes a different codec usable.
+	RequestCodecSwitch(ctx);
+}
+
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->AudioRunPending, 1);

@@ -576,10 +576,16 @@ void SignalingRequestMtuRenegotiation(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx);
 
-// Called when a selection input changes - SET_PREFERENCE, or the endpoint format Windows
-// opened - and renegotiates an active stream instead of waiting for the sink to reconnect.
+// Called when SET_PREFERENCE replaced the stored selection. Rebuilds the endpoint formats
+// the preference controls, then renegotiates an active stream instead of waiting for the
+// sink to reconnect.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx);
+
+// Called when the endpoint format Windows opened replaced the pinned one; renegotiates an
+// active stream when that changes which codec can run.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx);
 
 // Called when Windows runs the render stream; discovers if no stream is configured.
 _IRQL_requires_max_(DISPATCH_LEVEL)
