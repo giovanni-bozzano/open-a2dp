@@ -530,6 +530,17 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	// Before the session lock: the rebuild notifies ACX, and the callers that only set the flag
+	// (the encoder service's cleanup) hold the control lock while doing so.
+	if (InterlockedExchange(&ctx->FormatsPending, 0) != 0)
+	{
+		const NTSTATUS status = AudioApplyEndpointFormats(ctx);
+		if (!NT_SUCCESS(status))
+		{
+			OA2DP_WARN(ctx, "Signaling",
+				"applying the endpoint formats after a provider change failed 0x%08X", status);
+		}
+	}
 	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
 	ctx->SignalingWorkItemThread = KeGetCurrentThread();
 	PumpSignalSends(ctx);

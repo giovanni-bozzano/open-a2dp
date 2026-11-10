@@ -63,6 +63,14 @@ void SignalingRequestMtuRenegotiation(_In_ DEVICE_CONTEXT* ctx)
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
+static void RequestFormatRebuild(DEVICE_CONTEXT* ctx)
+{
+	// Rebuilding notifies ACX, and this can be called with the control lock held (the encoder
+	// service's cleanup), so the work item does it at PASSIVE with no lock of ours held.
+	InterlockedExchange(&ctx->FormatsPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
 static void RequestCodecSwitch(DEVICE_CONTEXT* ctx)
 {
 	// The work item recomputes the desired codec from the current inputs, so events
@@ -82,6 +90,13 @@ void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx)
 			status);
 	}
 	RequestCodecSwitch(ctx);
+}
+
+void SignalingOnEncoderUnregistered(_In_ DEVICE_CONTEXT* ctx)
+{
+	// The 24-bit formats are listed only while an aptX HD provider is registered; without the
+	// rebuild the endpoint keeps offering a depth nothing can encode after the service exits.
+	RequestFormatRebuild(ctx);
 }
 
 void SignalingOnPreferenceChanged(_In_ DEVICE_CONTEXT* ctx)

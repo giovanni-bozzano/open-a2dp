@@ -36,6 +36,9 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 			MediaStop(ctx);
 			SignalingRequestSuspend(ctx);
 		}
+		// The provider that made the 24-in-32 formats available is gone; the deferred rebuild
+		// happens in the signaling work item because this path holds the control lock.
+		SignalingOnEncoderUnregistered(ctx);
 	}
 	file->Mapped = FALSE;
 	UnmapRings(ctx, fileObject);

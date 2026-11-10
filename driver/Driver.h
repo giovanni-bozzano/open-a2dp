@@ -262,6 +262,9 @@ struct DEVICE_CONTEXT
 	// keeps the switch alive across the teardown and L2capCloseSignalingChannel reopens
 	// the channel, at most CodecSwitchReconnectLimit times per switch.
 	volatile LONG CodecSwitchPending;
+	// Set when the registered providers changed in a context that must not touch ACX; the
+	// work item rebuilds the endpoint format listing before it reconsiders the codec.
+	volatile LONG FormatsPending;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;
@@ -584,6 +587,12 @@ void SignalingRequestMtuRenegotiation(_In_ DEVICE_CONTEXT* ctx);
 // makes a different codec selectable. Rebuilds the endpoint formats, so PASSIVE only.
 _IRQL_requires_(PASSIVE_LEVEL)
 void SignalingOnEncoderRegistered(_In_ DEVICE_CONTEXT* ctx);
+
+// Called when the encoder service closed; drops the endpoint formats only that provider
+// could serve. Safe to call with the control lock held, which is why the rebuild is
+// deferred to the signaling work item instead of happening here.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnEncoderUnregistered(_In_ DEVICE_CONTEXT* ctx);
 
 // Called when SET_PREFERENCE replaced the stored selection. Rebuilds the endpoint formats
 // the preference controls, then renegotiates an active stream instead of waiting for the
