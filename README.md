@@ -12,10 +12,11 @@ Current implementation:
 - The audio endpoint is named `<sink> [OpenA2DP]` and typed as headphones or speakers from the sink's Class of Device.
 - `common/include/OpenA2dp`: kernel-safe AVDTP/RTP/ring-buffer/codec-selection headers, including `SbcConfig.h`, `AacConfig.h` and the driver/service ABI `Ioctl.h`.
 - `driver/service/`: driver side of the AAC boundary: per-device control device with a SYSTEM/Administrators SDDL, IOCTL queue, shared PCM/frame rings mapped into the service process, `WAIT_EVENT` ticked by the media timer. See the [driver map](driver/README.md) for all subsystems.
-- [Architecture references](docs/architecture/README.md): system overview, lifecycle, protocols and [AAC service boundary](docs/architecture/AAC-Service-Boundary.md).
+- [Architecture references](docs/architecture/README.md): system overview, lifecycle, protocols and the [encoder service boundary](docs/architecture/Encoder-Service.md).
 - `service/main.cpp`: encoder Windows service (`OpenA2dpSvc.exe`) for AAC-LC, classic aptX and aptX HD.
 - `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and Media Foundation/LATM encoder, plus the vendored AOSP aptX and aptX HD encoders behind the same seam.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.
+- `tests/HardwareTests`: the hardware procedure scripted per test, with the "Expect" lines asserted; see [its README](tests/HardwareTests/README.md).
 - `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC/aptX/aptX HD; deployed by `scripts/deploy.ps1` (this machine) or `scripts/deploy.ps1 -Vm` (the test VM).
 - `tools/OpenA2dpConfig`: desktop settings window (`OpenA2dpConfig.exe`) over the same IOCTLs: sink list, live status, and the codec and endpoint preference.
 - `tools/common`: the status report both tools print (`StatusReport`), so the window, its **Copy** button and `OpenA2dpCtl status` never show different fields; the window's **Details** box and `status --verbose` add every field with its hex value.

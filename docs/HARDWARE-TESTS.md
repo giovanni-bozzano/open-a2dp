@@ -111,6 +111,8 @@ the sink has not reconnected yet, the script says so - reconnect it and rerun.
   `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
 - Sleep: `rundll32 powrprof.dll,SetSuspendState 0,1,0` (or the Start menu) and wake.
 - Pool leaks: `poolmon -b` and watch tag `OAdp` (driver pool tag `'pdAO'`).
+- Scripted procedure: `tests\HardwareTests\` holds one script per test below, with the same
+  steps and the "Expect" lines asserted; `Invoke-HardwareTests.ps1 -List` names them.
 
 ## 3. Tests
 

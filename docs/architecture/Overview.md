@@ -20,7 +20,7 @@ Windows audio engine -> ACX endpoint -> PCM ring
   aptX: shared PCM ring -> service/AOSP -> frame ring -> driver RTP -> same transport
 ```
 
-SBC stays integer-only in the kernel so mandatory audio does not depend on a service. AAC and the aptX codecs use user-mode encoders (Media Foundation and the vendored AOSP trees); the driver validates returned records and owns transport. See [AAC boundary](AAC-Service-Boundary.md) for memory/trust boundaries.
+SBC stays integer-only in the kernel so mandatory audio does not depend on a service. AAC and the aptX codecs use user-mode encoders (Media Foundation and the vendored AOSP trees); the driver validates returned records and owns transport. See [encoder service boundary](Encoder-Service.md) for memory/trust boundaries.
 
 The driver binds above Microsoft's `bthport`/`BthEnum`; `bthusb` or the vendor radio transport remains unchanged. One ACX render circuit represents each remote device. See [driver lifecycle](Driver-Lifecycle.md) for ownership and teardown constraints.
 

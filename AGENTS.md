@@ -11,7 +11,7 @@
 ## Context and tracking
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
 - `docs/STATUS.md` is the only live plan: milestone state, blockers, next priorities. A milestone is done when its code and host tests are; a hardware run is evidence for a build, never the gate that closes it. Update it only when this changes; replace stale state rather than append a diary.
-- See `docs/AGENT-EFFICIENCY.md` for reference locations.
+- See `docs/README.md` for the documentation map.
 - Use Git for historical evidence. Do not log validation, build, and test status in Git commit messages.
 - Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs.
 - Architecture lives in `docs/architecture/`; load only the relevant reference via its index. 
@@ -24,7 +24,7 @@
 
 ## Code map
 - Entry/PnP: `driver/Driver.cpp`; `driver/README.md` lists subsystem `.cpp` files under `driver/{audio,config,l2cap,signaling,service,media}/`.
-- AAC service: `service/main.cpp`.
+- Encoder service: `service/main.cpp`.
 - Diagnostics: `tools/OpenA2dpCtl/`.
 - Codecs: `codecs/`.
 - Tests: `tests/CodecTests/`.
@@ -36,3 +36,4 @@ Read `.agents/skills/<name>/SKILL.md` when needed:
 - `build-and-test`: MSBuild and CodecTests after code changes; docs-only changes need link/diff checks, not a driver build.
 - `windbg-deadlock-check`: diagnose hangs.
 - `log-audit`: inspect driver warnings/errors.
+- `hardware-test`: run a scripted procedure from `tests/HardwareTests/`.

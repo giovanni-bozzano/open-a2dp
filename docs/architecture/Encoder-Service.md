@@ -1,4 +1,4 @@
-# OpenA2dp — AAC driver/service boundary
+# OpenA2dp — encoder service boundary
 
 ## 1. Scope
 

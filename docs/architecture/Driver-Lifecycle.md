@@ -9,7 +9,7 @@
   IOCTL takes it alone. No lock is held across an unbounded transport wait.
 - Control BRBs and send slots own requests, BRBs and packet copies independently of a waiting caller. Timeout must not leave the transport using stack memory. Late successful opens/accepts close their own channels after teardown.
 - Never re-use an in-flight read request. Completion signals read-idle on success and failure; stop also flushes the reader's work item.
-- Control-device rundown and an FDO reference protect service handlers; `RingLock` serializes map/unmap ownership. See [AAC lifetime](AAC-Service-Boundary.md#3-shared-memory).
+- Control-device rundown and an FDO reference protect service handlers; `RingLock` serializes map/unmap ownership. See [service lifetime](Encoder-Service.md#3-shared-memory).
 
 ## ACX audio
 - Render circuit `Speaker0`: PCM stereo at 44.1 or 48 kHz, 16-bit and 24-in-32 while [aptX HD lists it](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd), whichever format the ACX stream opened with.
