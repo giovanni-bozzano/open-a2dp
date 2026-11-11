@@ -114,14 +114,29 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	// The PCM the endpoint queued before MediaStart predates this stream, exactly as the service
 	// encoders treat their own start: drop it, so the pacer fills the lead with silence rather
 	// than sending audio captured while the sink was not listening.
+	ULONG flushed = 0;
 	{
 		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-		const ULONG stale = ring.ReadableBytes();
-		if (stale != 0)
+		flushed = ring.ReadableBytes();
+		if (flushed != 0)
 		{
-			ring.Skip(stale);
+			ring.Skip(flushed);
 		}
 	}
+	// The endpoint starts running the moment Windows begins playback, but this stream only starts
+	// once AVDTP accepts START, and until then nothing drains the ring: the audio Windows queues in
+	// between is trimmed by the ring bound, then flushed above. That span is the start latency the
+	// listener hears, and nothing else reports it, so it is logged with the audio it cost.
+	const ULONGLONG started = KeQueryInterruptTime();
+	const ULONGLONG waited = ctx->AudioRunStamp != 0 && started > ctx->AudioRunStamp
+		? (started - ctx->AudioRunStamp) / 10000ull
+		: 0;
+	const ULONGLONG lostBytes = static_cast<ULONGLONG>(flushed) + ctx->AudioTrimmedBytes;
+	const ULONGLONG lostMs = ctx->PinSampleRate != 0 && ctx->PinBytesPerFrame != 0
+		? lostBytes * 1000ull / (static_cast<ULONGLONG>(ctx->PinSampleRate) * ctx->PinBytesPerFrame)
+		: 0;
+	OA2DP_INFO(ctx, "Media", "stream started %I64u ms after the endpoint ran, %I64u ms of queued PCM lost",
+		waited, lostMs);
 	InterlockedExchange(&ctx->StreamFault, 0);
 	InterlockedExchange(&ctx->MediaMode, MediaModeSbc);
 	ctx->MediaActive = TRUE;

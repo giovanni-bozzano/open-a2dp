@@ -115,6 +115,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	ctx->AudioStartQpc = QpcNow(nullptr);
+	ctx->AudioRunStamp = KeQueryInterruptTime();
 	ctx->AudioRunning = TRUE;
 	ctx->AudioDroppedBytes = 0;
 	ctx->AudioTrimmedBytes = 0;

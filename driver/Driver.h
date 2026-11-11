@@ -439,6 +439,9 @@ struct DEVICE_CONTEXT
 	ULONG AudioRtPacketCount;
 	BOOLEAN AudioRunning;
 	ULONGLONG AudioStartQpc;
+	// Interrupt time the endpoint last started running. The audio side measures the start latency
+	// against the AVDTP START that has to complete before media can drain the ring.
+	ULONGLONG AudioRunStamp;
 	ULONGLONG AudioBasePosition;
 	ULONGLONG AudioCopiedPosition;
 	ULONGLONG AudioCompletedPackets;
