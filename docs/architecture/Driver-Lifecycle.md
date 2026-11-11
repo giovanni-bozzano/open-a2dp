@@ -13,8 +13,14 @@
 
 ## ACX audio
 - Render circuit `Speaker0`: PCM stereo at 44.1 or 48 kHz, 16-bit and 24-in-32 while [aptX HD lists it](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd), whichever format the ACX stream opened with.
-- Accept one or two RT packets; page-round and zero buffers. Report a small hardware FIFO (128 bytes), not PCM ring capacity, to avoid audio-engine rejection.
+- Accept one or two RT packets; page-round and zero buffers. Report the pacing lead as the presentation delay with no FIFO in front of the ring, so the audio engine adds no latency of its own and the sink's own buffering is all that is left outside the report.
 - Windows software volume/mute remains active; ACX/AVRCP absolute-volume integration is deferred.
+
+## Driver binding
+- Windows gives each remote sink its own BTHENUM node for the AudioSink service (`0x110B`), and that node's function driver is the A2DP source: the inbox `BthA2dp` or `OpenA2dp`. Both INFs match the same hardware ID, so a sink moves between them by installing the other package on that one node; the other sinks keep the driver they are on.
+- `tools/common/SinkDriver.*` reads the binding from the node (`SPDRP_SERVICE`, its instance id, the INF of both candidate packages) and switches it with `UpdateDriverForPlugAndPlayDevicesW` on the node's instance-specific hardware ID and `INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE`. The install needs an elevated prompt and restarts that node, so its endpoints, stream and control device go with it.
+- A sink address reaches its node through the instance id, in natural or byte-reversed order (`MatchesAddress`): BTHENUM writes it either way. The same reference names the control device, which is what ties a sink in the tools to a sink in PnP.
+- A sink on `BthA2dp` has no control device, so `EnumerateSinkNodes` lists A2DP nodes from PnP alone. `OpenA2dpCtl driver` and the `OpenA2dpConfig` sink list both start from it, which is the only way to reach a sink this driver does not own.
 
 ## Diagnostics
 - Driver logs use `OA2DP_INFO/WARN/ERROR` with level, device tag and category. Tags are prepared as ANSI before high-IRQL callbacks; do not print `%ws` there.

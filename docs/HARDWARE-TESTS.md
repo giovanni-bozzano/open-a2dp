@@ -484,6 +484,29 @@ hiccups, or a service that restarts.
    through a single outstanding send, so most links starve and `underruns` climbs; that is the
    documented trade-off of the setting, not a failure of this test.
 
+### Driver switching
+
+Both tools change which A2DP source driver owns one sink, and neither needs the sink to be on
+`OpenA2dp` first: PnP names the node and no control device is involved. The switch installs the
+other package on that node, which restarts it.
+
+**T34 Per-sink driver switch (S/A)** — needs `OpenA2dp.inf` deployed and an elevated prompt.
+1. With one sink connected on `BthA2dp` and a second in range on `OpenA2dp`, run
+   `OpenA2dpCtl driver`: one line per A2DP node with its driver, including the sink that has no
+   control device.
+2. `OpenA2dpCtl driver windows --device <BthA2dp address>` reports `already on BthA2dp`;
+   `driver opena2dp --device <address>` installs the package on that node. The node restarts,
+   then `driver` and `OpenA2dpCtl list` report `OpenA2dp` and `status` returns a report.
+3. In `OpenA2dpConfig` the same sink is listed as `<address> - Windows driver`, with Apply
+   disabled and a `Use OpenA2dp driver` button. Pressing it asks for confirmation and switches
+   the sink; the window reopens it and the button reads `Use Windows driver`. Pressing that
+   restores the `BthA2dp` binding.
+4. The second sink keeps the driver and the settings it had throughout, and audio stops only on
+   the sink being moved (the player resumes when it is restarted).
+5. Log: stop/start lines for the moved sink and the expected teardown `stop` lines, no other
+   WARN or ERROR. A switch without an elevated prompt fails with the tool's message and leaves
+   the binding as it was.
+
 ### Soak
 
 **T20 Long run** — stream (A if available, else S) for 8 hours with Verifier on.
