@@ -9,6 +9,7 @@
 #include <OpenA2dp/Ioctl.h>
 
 #include "common/ControlDevice.h"
+#include "common/SinkDriver.h"
 #include "common/StatusReport.h"
 #include "common/Text.h"
 
@@ -39,6 +40,7 @@ Usage:
                      [--allocation <loudness|snr>] [--preroll <ms>]
                      [--frames <n>] [--device <mac|index>]
   OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
+  OpenA2dpCtl driver [<opena2dp|windows>] [--device <mac|index>]
   OpenA2dpCtl reset [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
@@ -67,6 +69,14 @@ Commands:
             first format the endpoint lists and ignores the Sound-settings pick,
             so pinning is the only way to force one; the sink has to advertise
             it. Pinning also limits WASAPI exclusive-mode players to it.
+  driver    Show which A2DP source driver this sink is bound to, or move it to
+            the other one: `driver opena2dp` takes the sink over from the inbox
+            BthA2dp, `driver windows` hands it back. Only this sink's BTHENUM
+            A2DP node is rebound, so other sinks keep their driver; the node
+            restarts and any open stream goes with it. The OpenA2dp package has
+            to be deployed once (scripts/deploy-vm.ps1) for the forward switch,
+            and the inbox driver has to still be a candidate for the node for
+            the way back.
   reset     Clear this sink's stored codec preference and endpoint format, so
             the automatic codec order and every sink-supported PCM format
             apply again.
@@ -671,6 +681,146 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 	return 0;
 }
 
+// The 12 hex digits of an address, from "AA:BB:CC:DD:EE:FF" or "aabbccddeeff". Empty when the
+// text is not an address: a partial address is still resolved through the device list.
+std::string AddressDigits(const std::string& text)
+{
+	std::string digits;
+	for (const char character : text)
+	{
+		if (character == ':' || character == '-' || character == ' ')
+		{
+			continue;
+		}
+		if (isxdigit(static_cast<unsigned char>(character)) == 0)
+		{
+			return {};
+		}
+		digits += static_cast<char>(toupper(static_cast<unsigned char>(character)));
+	}
+	return digits.size() == 12 ? digits : std::string();
+}
+
+// Shows or changes which A2DP source driver the sink's BTHENUM node is bound to. Unlike the
+// other commands this one never opens the control device: while the sink is on BthA2dp there is
+// no control device to open, which is exactly the state it is here to get out of.
+int CommandDriver(const std::vector<Device>& devices, const std::string& spec, const std::string& targetArg)
+{
+	const std::string choice = Lower(targetArg);
+	SinkDriver target = SinkDriver::Unknown;
+	if (choice == "opena2dp")
+	{
+		target = SinkDriver::OpenA2dp;
+	}
+	else if (choice == "windows" || choice == "btha2dp")
+	{
+		target = SinkDriver::Windows;
+	}
+	else if (!choice.empty())
+	{
+		std::fprintf(stderr, "driver takes opena2dp or windows\n");
+		return 2;
+	}
+
+	// Which sink: the usual selection, a bare address, or the only sink there is. The address
+	// form is what makes a sink on BthA2dp reachable, because it has no control device to pick.
+	std::string reference;
+	std::string error;
+	if (!spec.empty())
+	{
+		size_t index = 0;
+		if (FindDevice(devices, spec, index, error))
+		{
+			reference = devices[index].reference;
+		}
+		else
+		{
+			reference = AddressDigits(spec);
+			if (reference.empty())
+			{
+				std::fprintf(stderr, "%s\n", error.c_str());
+				return 2;
+			}
+		}
+	}
+
+	std::vector<SinkNode> nodes;
+	if (!EnumerateSinkNodes(nodes, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+	if (reference.empty())
+	{
+		if (nodes.size() == 1)
+		{
+			reference = nodes.front().reference;
+		}
+		else
+		{
+			if (nodes.empty())
+			{
+				std::printf("no A2DP sink is connected: pair and connect one, then try again.\n");
+				return 1;
+			}
+			std::printf("%u A2DP sinks; name one with --device <address>:\n",
+						static_cast<unsigned>(nodes.size()));
+			for (const SinkNode& node : nodes)
+			{
+				std::printf("  %s  %s\n", FormatAddress(node.reference).c_str(),
+							SinkDriverName(node.driver));
+			}
+			return 0;
+		}
+	}
+
+	SinkDriverState state;
+	if (!ReadSinkDriver(reference, state, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	if (target == SinkDriver::Unknown)
+	{
+		std::printf("%s: %s\n", FormatAddress(reference).c_str(), SinkDriverName(state.current));
+		std::printf("  node      %s\n", state.instanceId.c_str());
+		std::printf("  switch    %s\n",
+					state.switchable ? "`driver opena2dp` or `driver windows` moves this sink"
+									 : state.problem.c_str());
+		return 0;
+	}
+
+	if (state.current == target)
+	{
+		std::printf("%s: already on %s, nothing to change.\n", FormatAddress(reference).c_str(),
+					SinkDriverName(target));
+		return 0;
+	}
+
+	bool reboot = false;
+	if (!SwitchSinkDriver(reference, target, reboot, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+	std::printf("%s: %s installed on the sink's A2DP node%s.\n", FormatAddress(reference).c_str(),
+				SinkDriverName(target), reboot ? "; it takes effect after a reboot" : "");
+
+	// The node restarts as part of the install; reading it back says what Windows settled on.
+	SinkDriverState applied;
+	if (ReadSinkDriver(reference, applied, error))
+	{
+		std::printf("  node      %s\n  driver    %s\n", applied.instanceId.c_str(),
+					SinkDriverName(applied.current));
+	}
+	else
+	{
+		std::printf("  the node is restarting: %s\n", error.c_str());
+	}
+	return 0;
+}
+
 int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 {
 	size_t index = 0;
@@ -736,6 +886,7 @@ int main(int argc, char** argv)
 	std::string codecArg;
 	std::string formatRateArg;
 	std::string formatChannelsArg;
+	std::string driverArg;
 	PreferenceOverrides overrides;
 	bool watch = false;
 	bool verbose = false;
@@ -750,6 +901,11 @@ int main(int argc, char** argv)
 	if (command == "codec" && position < args.size() && args[position][0] != '-')
 	{
 		codecArg = args[position];
+		++position;
+	}
+	if (command == "driver" && position < args.size() && args[position][0] != '-')
+	{
+		driverArg = args[position];
 		++position;
 	}
 	if (command == "format" && position < args.size() && args[position][0] != '-')
@@ -921,7 +1077,7 @@ int main(int argc, char** argv)
 		return 0;
 	}
 	if (command != "list" && command != "status" && command != "codec" && command != "version" &&
-		command != "format" && command != "reset")
+		command != "format" && command != "driver" && command != "reset")
 	{
 		std::fprintf(stderr, "unknown command '%s'\n\n%s", command.c_str(), kUsage);
 		return 2;
@@ -960,6 +1116,10 @@ int main(int argc, char** argv)
 	if (command == "format")
 	{
 		return CommandFormat(devices, deviceSpec, formatRateArg, formatChannelsArg);
+	}
+	if (command == "driver")
+	{
+		return CommandDriver(devices, deviceSpec, driverArg);
 	}
 	if (command == "reset")
 	{
