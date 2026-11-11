@@ -350,6 +350,10 @@ struct DEVICE_CONTEXT
 	volatile LONG SignalingIncoming;
 	// Set by the ACX stream run (SignalingOnAudioRun) for the signaling work item.
 	volatile LONG AudioRunPending;
+	// Set by an endpoint pause or resume (SignalingOnAudioPause/Run). The work item makes the
+	// AVDTP stream follow the endpoint and keeps this set until the session can do that, because
+	// SUSPEND only exists from Streaming and START only from Open.
+	volatile LONG EndpointStreamPending;
 	// Byte 0 of the SBC capabilities the sink advertised in the last discovery (rates and
 	// channel modes), 0 until one ran. Determines PCM availability independently of preferences.
 	volatile LONG SinkSbcCapabilities;
@@ -610,6 +614,11 @@ bool SignalingAbortSession(_In_ DEVICE_CONTEXT* ctx);
 // Asks the signaling work item to SUSPEND the stream (e.g. after a media send failure).
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
+
+// The endpoint paused: no stream should keep running for it. The work item suspends once the
+// session can take a SUSPEND; a resume before then starts it again instead.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx);
 
 // The negotiated AAC bitrate does not fit the media channel's real MTU (it was chosen
 // before the channel opened): reconfigures in place once per connection at a bitrate the

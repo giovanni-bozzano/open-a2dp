@@ -157,6 +157,16 @@ void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx)
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->AudioRunPending, 1);
+	// A stream suspended while Windows had nothing to play starts again with the audio.
+	InterlockedExchange(&ctx->EndpointStreamPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx)
+{
+	// The endpoint is the reason the stream exists, so a paused one suspends it. The edge is
+	// only recorded here: the work item sends SUSPEND, which is legal from Streaming alone.
+	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 

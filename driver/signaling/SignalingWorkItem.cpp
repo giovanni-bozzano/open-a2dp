@@ -533,6 +533,54 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	BeginReconfigure(ctx);
 }
 
+// Makes the AVDTP stream follow the endpoint's run state. SUSPEND is legal only from Streaming
+// and START only from Open, so an edge that arrives mid-handshake leaves the request pending
+// and the response that settles the session runs this again.
+static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
+{
+	const Avdtp::SessionState state = ctx->Session.State();
+	const bool running = AudioStreamRunning(ctx);
+	if (state == Avdtp::SessionState::Streaming && !running)
+	{
+		InterlockedExchange(&ctx->EndpointStreamPending, 0);
+		OA2DP_INFO(ctx, "AVDTP", "suspending stream, the endpoint paused");
+		Transmit(ctx, ctx->Session.Suspend(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		if (ctx->Session.State() != Avdtp::SessionState::Suspending)
+		{
+			InterlockedExchange(&ctx->EndpointStreamPending, 1); // the SUSPEND never left
+		}
+		return;
+	}
+	if (state == Avdtp::SessionState::Open && running)
+	{
+		// The channel and a settled command, or START would race the open or a reconfigure.
+		// Both re-enter this through their own completion.
+		if (ctx->MediaChannel == nullptr || ctx->ReconfigurePhase != ReconfigureNone ||
+			ctx->Session.HasPendingCommand())
+		{
+			return;
+		}
+		InterlockedExchange(&ctx->EndpointStreamPending, 0);
+		OA2DP_INFO(ctx, "AVDTP", "starting stream, the endpoint resumed");
+		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		if (ctx->Session.State() != Avdtp::SessionState::Starting)
+		{
+			InterlockedExchange(&ctx->EndpointStreamPending, 1); // the START never left
+		}
+		return;
+	}
+	// Settled and already matching, or no session to move: the request is spent. Every other
+	// state is a handshake in flight, which keeps it so the response decides.
+	const bool settled = (state == Avdtp::SessionState::Streaming && running) ||
+		(state == Avdtp::SessionState::Open && !running);
+	const bool unusable = state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed ||
+		state == Avdtp::SessionState::Closing || state == Avdtp::SessionState::Aborting;
+	if (settled || unusable)
+	{
+		InterlockedExchange(&ctx->EndpointStreamPending, 0);
+	}
+}
+
 void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
@@ -697,6 +745,13 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		ctx->SignalingState == ChannelOpen)
 	{
 		ContinueCodecSwitch(ctx);
+	}
+	// Runs after the codec work: a reconfigure keeps the stream it needs and this then only
+	// corrects what is still out of step with the endpoint.
+	if (InterlockedCompareExchange(&ctx->EndpointStreamPending, 0, 0) != 0 &&
+		ctx->SignalingState == ChannelOpen)
+	{
+		ContinueEndpointStream(ctx);
 	}
 
 	ctx->SignalingWorkItemThread = nullptr;

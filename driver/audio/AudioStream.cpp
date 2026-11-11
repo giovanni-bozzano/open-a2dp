@@ -92,12 +92,20 @@ NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const BOOLEAN wasRunning = ctx->AudioRunning;
 	ctx->AudioRunning = FALSE;
 	ctx->AudioBasePosition = 0;
 	ctx->AudioCopiedPosition = 0;
 	ctx->AudioCompletedPackets = 0;
 	ctx->AudioStream = nullptr;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	if (wasRunning != FALSE)
+	{
+		// Released without a pause - a playback that stopped, or the format change that rebuilds
+		// the endpoint - leaves a stream nothing plays for. A stream Windows only enumerated and
+		// released never ran, so it must not suspend the one that does.
+		SignalingOnAudioPause(ctx);
+	}
 	return STATUS_SUCCESS;
 }
 
@@ -134,6 +142,9 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	OA2DP_INFO(ctx, "Audio", "stream paused, %llu bytes dropped during the run", dropped);
+	// Nothing is playing, so the stream the sink keeps buffering is silence the listener does not
+	// need: suspend it and start again on the next run.
+	SignalingOnAudioPause(ctx);
 	return STATUS_SUCCESS;
 }
 } // namespace OpenA2dpDriver::Audio
