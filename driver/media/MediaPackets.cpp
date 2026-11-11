@@ -150,7 +150,9 @@ static void TrimFrameBacklog(DEVICE_CONTEXT* ctx)
 		return;
 	}
 	RingBufferView frames(ctx->FrameRingHeader, ctx->FrameRingData);
-	const uint32_t limit = ctx->ActiveSampleRate * FrameBacklogMs / 1000;
+	// The lead is what the sink is meant to have queued, so only what the ring holds past it is
+	// excess worth dropping.
+	const uint32_t limit = ctx->ActiveSampleRate * (ctx->PacingLeadMs + FrameSlackMs) / 1000;
 	const uint32_t trimmedSamples = FrameRecord::Trim(frames, limit);
 	if (trimmedSamples == 0)
 	{

@@ -25,8 +25,8 @@ single largest fixed part of it.
    dropped the *new* audio and kept the old, and the encoder went on draining the backlog at
    real time, so a 500 ms transport stall meant 500 ms (up to 371 ms of PCM, 1.6 s of frames)
    of permanent offset. `OnAudioTimer` now drops the oldest frames past
-   `AudioPcmBacklogMs` (lead plus a packet), and `FrameRecord::Trim` drops the oldest records
-   past `FrameBacklogMs`; the RTP timestamp moves past the dropped span, so the sink hears one
+   `AudioPcmBacklogMs` of backlog, and `FrameRecord::Trim` drops encoded records past the
+   pacing lead plus `FrameSlackMs`; the RTP timestamp moves past the dropped span, so the sink hears one
    gap rather than old audio. Both are counted (`status.pcmTrimmedBytes`, `framesTrimmed`
    log) and logged once per second.
 2. **The lead is a stored setting.** `Preference.prerollMs` (registry
@@ -34,7 +34,9 @@ single largest fixed part of it.
    codec, 20–200 ms or 0 for the default. `MediaStart` resolves it once, the kernel pacer and
    the service's records both use it, the presentation position subtracts the same value, and
    `status.pacingLeadMs` reports it; a low-latency profile asks for 30 ms, the default stays
-   60 ms for sinks that need the margin.
+   60 ms for sinks that need the margin. The whole range is honoured on both paths: the trims
+   bound what the rings hold past the lead, and a pacer with less PCM than its lead pads
+   silence in front, so 200 ms means 200 ms and not the trim constant.
 3. **The latency is measurable.** `status.pcmBufferedMs` and `status.frameBufferedMs` derive
    the buffered duration from the ring fills (PCM by the depth it carries, frames by the codec
    bitrate). The report's `latency` line adds the two to the pacing lead - the audio the driver

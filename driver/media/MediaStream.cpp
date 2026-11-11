@@ -103,6 +103,17 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaStartTime = KeQueryInterruptTime();
+	// The PCM the endpoint queued before MediaStart predates this stream, exactly as the service
+	// encoders treat their own start: drop it, so the pacer fills the lead with silence rather
+	// than sending audio captured while the sink was not listening.
+	{
+		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+		const ULONG stale = ring.ReadableBytes();
+		if (stale != 0)
+		{
+			ring.Skip(stale);
+		}
+	}
 	InterlockedExchange(&ctx->StreamFault, 0);
 	InterlockedExchange(&ctx->MediaMode, MediaModeSbc);
 	ctx->MediaActive = TRUE;

@@ -10,9 +10,10 @@ using namespace OpenA2dp;
 namespace OpenA2dpDriver::Audio
 {
 constexpr ULONG AudioPeriodMs = 10;
-// Most PCM the ring may hold before the oldest audio is dropped. It has to cover the encoder's
-// pacing lead (Ioctl::kPrerollMs) plus a packet, because both are read ahead of the clock;
-// beyond that the ring only adds latency to whatever is heard.
+// Most PCM the ring may hold beyond the pacing lead before the oldest audio is dropped. The
+// pacer reads at elapsed + lead, so it takes whatever is there and pads a lead's worth of
+// silence at stream start; what the ring holds on top of that is backlog the sink has not heard
+// yet and would only wait longer for. Two packets' worth covers a copy tick and a full packet.
 constexpr ULONG AudioPcmBacklogMs = 80;
 // How long the jack reports unplugged while Windows is made to rebuild the endpoint after a
 // format change; long enough for the audio engine to close the stream it was using.
