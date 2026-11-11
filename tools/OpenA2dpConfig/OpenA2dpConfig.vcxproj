@@ -14,8 +14,9 @@
 	<Link>
 	  <SubSystem>Windows</SubSystem>
 	  <!-- CM_Register_Notification: the control-device arrivals the window follows; dwmapi and
-	       uxtheme: the dark title bar and the dark combo boxes; advapi32: the apps theme key. -->
-	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;dwmapi.lib;uxtheme.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	       uxtheme: the dark title bar and the dark combo boxes; advapi32: the apps theme key;
+	       setupapi and newdev: which A2DP node a sink is on, and moving it to the other driver. -->
+	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;dwmapi.lib;uxtheme.lib;advapi32.lib;setupapi.lib;newdev.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	  <!-- The control device is limited to Administrators, so ask for that up front. -->
 	  <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
 	</Link>
@@ -26,11 +27,13 @@
 	<ClCompile Include="Theme.cpp" />
 	<ClCompile Include="..\common\StatusReport.cpp" />
 	<ClCompile Include="..\common\ControlDevice.cpp" />
+	<ClCompile Include="..\common\SinkDriver.cpp" />
 	<ClCompile Include="..\common\Text.cpp" />
 	<ClInclude Include="StatusView.h" />
 	<ClInclude Include="Theme.h" />
 	<ClInclude Include="..\common\StatusReport.h" />
 	<ClInclude Include="..\common\ControlDevice.h" />
+	<ClInclude Include="..\common\SinkDriver.h" />
 	<ClInclude Include="..\common\Text.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

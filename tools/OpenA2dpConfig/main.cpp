@@ -10,6 +10,7 @@
 #include "Theme.h"
 
 #include "common/ControlDevice.h"
+#include "common/SinkDriver.h"
 #include "common/StatusReport.h"
 #include "common/Text.h"
 
@@ -26,6 +27,7 @@
 
 #include <cfgmgr32.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +50,12 @@ using Tools::ReadStatus;
 using Tools::ReadVersion;
 using Tools::WriteEndpointFormat;
 using Tools::WritePreference;
+using Tools::EnumerateSinkNodes;
+using Tools::ReadSinkDriver;
+using Tools::SinkDriver;
+using Tools::SinkDriverState;
+using Tools::SinkNode;
+using Tools::SwitchSinkDriver;
 
 // Nothing here is shared with the driver; the control IDs are the only contract between
 // the layout and the command handlers.
@@ -67,6 +75,7 @@ enum ControlId : int {
 	kPacingLeadCombo,
 	kSbcFramesCombo,
 	kApplyButton,
+	kDriverButton,
 	kMessageLabel,
 };
 
@@ -78,6 +87,9 @@ constexpr wchar_t kRefreshText[] = L"Refresh";
 constexpr wchar_t kCopyText[] = L"Copy";
 constexpr wchar_t kDetailsText[] = L"Details";
 constexpr wchar_t kApplyText[] = L"Apply";
+// The switch names the driver the sink is not on, so the caption reads as the action.
+constexpr wchar_t kUseWindowsText[] = L"Use Windows driver";
+constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
 constexpr wchar_t kSessionGroupText[] = L"Session";
 constexpr wchar_t kCodecGroupText[] = L"Codec";
 constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
@@ -134,6 +146,7 @@ constexpr int kCodecAptxHdChoice = 4;
 enum class DeviceState {
 	Connected,
 	Playing,
+	WindowsDriver, // an A2DP node the inbox driver owns: listed, but with no control device
 };
 
 // One group of controls: the frame the window draws and the caption on its top line. A
@@ -157,6 +170,11 @@ struct SinkState
 	HANDLE control = INVALID_HANDLE_VALUE;
 	bool open = false;
 	std::string reference;
+	// Which A2DP source driver owns the selected sink: it decides what the switch offers, and
+	// a sink on the inbox driver has no control device to open at all.
+	SinkDriver driver = SinkDriver::Unknown;
+	bool driverSwitchable = false;
+	std::wstring driverProblem;
 	Ioctl::Status status = {};
 	Ioctl::Preference preference = {};
 	Ioctl::EndpointFormat endpointFormat = {};
@@ -704,18 +722,27 @@ void ApplyLayout(HWND hwnd)
 	const int headerWidth = margin + sinkLabelWidth + gap + sinkComboWidth + gap + refreshWidth + gap +
 							copyWidth + gap + detailsWidth + margin;
 
+	// The bottom row holds the driver switch and Apply, and the message beside them keeps a
+	// button's width, so the switch cannot squeeze the outcome of the last action out of view.
+	const int applyWidth = TextWidth(dc, kApplyText) + gap * 4;
+	const int applyHeight = rowHeight + 4;
+	const int driverWidth = MaxOf(TextWidth(dc, kUseWindowsText), TextWidth(dc, kUseOpenA2dpText)) + gap * 4;
+	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + margin;
+
 	int width = contentWidth + (margin + inset) * 2;
 	if (headerWidth > width)
 	{
 		width = headerWidth;
+	}
+	if (bottomWidth > width)
+	{
+		width = bottomWidth;
 	}
 	const int groupLeft = margin;
 	const int groupWidth = width - margin * 2;
 	const int innerLeft = groupLeft + inset;
 	const int innerWidth = groupWidth - inset * 2;
 
-	const int applyWidth = TextWidth(dc, kApplyText) + gap * 4;
-	const int applyHeight = rowHeight + 4;
 	const int codecHintHeight = MaxOf(TextHeight(dc, kCodecHintText, innerWidth), textHeight);
 	const int formatHintHeight = MaxOf(TextHeight(dc, kFormatHintText, innerWidth), textHeight);
 	// Rows come from the fields themselves, so adding a setting does not need a height to be
@@ -805,12 +832,16 @@ void ApplyLayout(HWND hwnd)
 	Place(state->formatHint, innerLeft, formatTop + captionHeight + formatRows * rowHeight, innerWidth,
 		  formatHintHeight);
 
-	// Apply sits under the right edge, the outcome of the last action fills the rest.
+	// Apply sits under the right edge, the driver switch just left of it, and the outcome of the
+	// last action fills the rest.
 	const int applyLeft = width - margin - applyWidth;
 	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, bottomTop + (bottomHeight - applyHeight) / 2, applyWidth,
 		  applyHeight);
+	const int driverLeft = applyLeft - gap - driverWidth;
+	Place(GetDlgItem(hwnd, kDriverButton), driverLeft, bottomTop + (bottomHeight - applyHeight) / 2,
+		  driverWidth, applyHeight);
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop + (bottomHeight - textHeight) / 2,
-		  applyLeft - gap - margin, textHeight);
+		  driverLeft - gap - margin, textHeight);
 
 	if (dc != nullptr)
 	{
@@ -902,7 +933,10 @@ void CreateControls(HWND hwnd)
 	}
 
 	CreateChild(hwnd, L"BUTTON", kApplyText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kApplyButton, font);
+	CreateChild(hwnd, L"BUTTON", kUseOpenA2dpText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kDriverButton,
+				font);
 	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
+	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
 
 	// Worst to best, so the better format is always the lower entry: rate first, then channels.
 	AddComboItem(hwnd, kFormatCombo, L"Automatic (every sink format)", 0);
@@ -1020,6 +1054,45 @@ void CloseControl(SinkState& state)
 	state.open = false;
 }
 
+// The switch offers the driver the sink is not on, and only while the other package is there to
+// move it to: a button that stays enabled would promise a switch that cannot happen.
+void UpdateDriverButton(HWND hwnd)
+{
+	const SinkState* state = StateOf(hwnd);
+	const HWND button = GetDlgItem(hwnd, kDriverButton);
+	if (state == nullptr || button == nullptr)
+	{
+		return;
+	}
+	SetWindowTextW(button, state->driver == SinkDriver::OpenA2dp ? kUseWindowsText : kUseOpenA2dpText);
+	EnableWindow(button, state->driverSwitchable);
+}
+
+// Reads which driver owns the sink, and whether the other one is there to switch to.
+void ReadSelectedDriver(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	SinkDriverState driver;
+	std::string error;
+	if (ReadSinkDriver(state->reference, driver, error))
+	{
+		state->driver = driver.current;
+		state->driverSwitchable = driver.switchable;
+		state->driverProblem = Tools::Widen(driver.problem);
+	}
+	else
+	{
+		state->driver = SinkDriver::Unknown;
+		state->driverSwitchable = false;
+		state->driverProblem = Tools::Widen(error);
+	}
+	UpdateDriverButton(hwnd);
+}
+
 // Opens the selected device and reads everything the window shows.
 void OpenSelected(HWND hwnd)
 {
@@ -1032,6 +1105,9 @@ void OpenSelected(HWND hwnd)
 	EnableWindow(GetDlgItem(hwnd, kApplyButton), FALSE);
 	if (state->selected >= state->devices.size())
 	{
+		state->driver = SinkDriver::Unknown;
+		state->driverSwitchable = false;
+		UpdateDriverButton(hwnd);
 		state->message = L"No sink found: connect a paired A2DP sink, then press Refresh.";
 		SetMessage(hwnd, state->message);
 		RefreshStatusView(hwnd);
@@ -1040,6 +1116,19 @@ void OpenSelected(HWND hwnd)
 
 	const Device& device = state->devices[state->selected];
 	state->reference = device.reference;
+	ReadSelectedDriver(hwnd);
+	if (device.path.empty())
+	{
+		// Listed from its A2DP node: the inbox driver owns the sink, so there is no control
+		// device to read and the switch is the only thing this window can do with it.
+		state->message = SinkTitle(device.reference, std::wstring()) +
+						 L" runs the Windows A2DP driver; " +
+						 (state->driverSwitchable ? L"switch it to use these settings."
+												  : state->driverProblem + L".");
+		SetMessage(hwnd, state->message);
+		RefreshStatusView(hwnd);
+		return;
+	}
 	std::string error;
 	const HANDLE control = OpenControl(device, error);
 	if (control == INVALID_HANDLE_VALUE)
@@ -1204,7 +1293,9 @@ std::wstring SinkTitle(const std::string& reference, const std::wstring& name)
 // "<name> (<address>) - <state>".
 std::wstring DeviceLabel(const std::string& reference, DeviceState state, const std::wstring& name)
 {
-	const wchar_t* const text = state == DeviceState::Playing ? L" - playing" : L" - connected";
+	const wchar_t* const text = state == DeviceState::Playing		  ? L" - playing"
+								 : state == DeviceState::WindowsDriver ? L" - Windows driver"
+																		  : L" - connected";
 	return SinkTitle(reference, name) + text;
 }
 
@@ -1268,7 +1359,9 @@ void ReloadDevices(HWND hwnd)
 	{
 		return;
 	}
-	const std::string previous = state->open ? state->reference : std::string();
+	// The sink the window was on stays selected across a reload, including the one it is on
+	// after a driver switch, where the control device is gone but the sink is still there.
+	const std::string previous = state->reference;
 	std::string error;
 	std::vector<Device> devices = EnumerateDevices(error);
 	if (!error.empty())
@@ -1276,6 +1369,33 @@ void ReloadDevices(HWND hwnd)
 		SetMessage(hwnd, Tools::Widen(error));
 		return;
 	}
+
+	// A sink on the inbox A2DP driver is an A2DP node with no control device, and it is exactly
+	// the sink the switch is for: list it too, so the window can take it over.
+	std::vector<SinkNode> nodes;
+	std::string nodeError;
+	if (!EnumerateSinkNodes(nodes, nodeError))
+	{
+		SetMessage(hwnd, Tools::Widen(nodeError));
+	}
+	for (const SinkNode& node : nodes)
+	{
+		if (node.driver != SinkDriver::Windows)
+		{
+			continue;
+		}
+		const bool listed = std::any_of(devices.begin(), devices.end(), [&node](const Device& device) {
+			return device.reference == node.reference;
+		});
+		if (!listed)
+		{
+			devices.push_back(Device{std::wstring(), node.reference});
+		}
+	}
+	// One order whatever driver a sink is on, so the list does not reshuffle when it moves.
+	std::sort(devices.begin(), devices.end(), [](const Device& left, const Device& right) {
+		return left.reference < right.reference;
+	});
 
 	const HWND combo = GetDlgItem(hwnd, kSinkCombo);
 	SendMessageW(combo, CB_RESETCONTENT, 0, 0);
@@ -1288,8 +1408,12 @@ void ReloadDevices(HWND hwnd)
 	state->deviceNames.assign(state->devices.size(), std::wstring());
 	for (size_t i = 0; i < state->devices.size(); ++i)
 	{
-		DeviceState deviceState = DeviceState::Connected;
-		(void)TryReadDeviceState(state->devices[i], deviceState, &state->deviceNames[i]);
+		DeviceState deviceState =
+				state->devices[i].path.empty() ? DeviceState::WindowsDriver : DeviceState::Connected;
+		if (!state->devices[i].path.empty())
+		{
+			(void)TryReadDeviceState(state->devices[i], deviceState, &state->deviceNames[i]);
+		}
 		state->deviceStates[i] = deviceState;
 		const std::wstring label =
 			DeviceLabel(state->devices[i].reference, deviceState, state->deviceNames[i]);
@@ -1318,7 +1442,7 @@ void ReloadDevices(HWND hwnd)
 	ApplyLayout(hwnd);
 	// Another sink arriving or leaving does not change the open one: keep its control device
 	// and the settings the user may have changed but not applied yet.
-	if (!previous.empty() && state->selected < state->devices.size() &&
+	if (state->open && !previous.empty() && state->selected < state->devices.size() &&
 		state->devices[state->selected].reference == previous)
 	{
 		return;
@@ -1450,7 +1574,7 @@ void ApplyDarkControls(HWND hwnd)
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}
-	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDetailsCheck})
+	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kDetailsCheck})
 	{
 		// Owner-drawn, because a themed or classic button paints its own face from the light
 		// system colours; the window then keeps the check box's state itself.
@@ -1603,6 +1727,57 @@ void PaintGroups(HWND hwnd, HDC dc)
 	DeleteObject(pen);
 }
 
+// How the window names a driver in a sentence.
+std::wstring DriverTitle(SinkDriver driver)
+{
+	return driver == SinkDriver::Windows	? L"the Windows A2DP driver"
+		   : driver == SinkDriver::OpenA2dp ? L"the OpenA2dp driver"
+											: L"no A2DP driver";
+}
+
+// Moves the selected sink to the other A2DP source driver. The install restarts that sink's
+// A2DP node, so its control device, endpoints and stream go with it: the list is read again
+// afterwards and reopens the sink under whichever driver now owns it.
+void SwitchSelectedDriver(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr || state->selected >= state->devices.size())
+	{
+		return;
+	}
+	const SinkDriver target = Tools::OtherDriver(state->driver);
+	if (target == SinkDriver::Unknown)
+	{
+		SetMessage(hwnd, L"The A2DP node this sink is on was not found: reconnect it, then Refresh.");
+		return;
+	}
+
+	const std::string reference = state->devices[state->selected].reference;
+	const std::wstring title = SinkTitle(reference, state->deviceNames[state->selected]);
+	const std::wstring prompt = L"Switch " + title + L" to " + DriverTitle(target) +
+			L"?\n\nThe sink's A2DP device is restarted, so the audio stops for a moment, and the "
+			L"switch needs administrator rights.";
+	if (MessageBoxW(hwnd, prompt.c_str(), L"Switch driver", MB_ICONQUESTION | MB_YESNO) != IDYES)
+	{
+		return;
+	}
+
+	bool reboot = false;
+	std::string error;
+	if (!SwitchSinkDriver(reference, target, reboot, error))
+	{
+		SetMessage(hwnd, Tools::Widen(error));
+		return;
+	}
+
+	// The control device the window held belongs to the install that just went away, so it is
+	// dropped before the list is read again; the sink stays selected across that reload.
+	CloseControl(*state);
+	ReloadDevices(hwnd);
+	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) +
+						 (reboot ? L"; it takes effect after a reboot." : L"."));
+}
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
@@ -1649,6 +1824,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		if (id == kApplyButton && notification == BN_CLICKED)
 		{
 			ApplySettings(hwnd);
+			return 0;
+		}
+		if (id == kDriverButton && notification == BN_CLICKED)
+		{
+			SwitchSelectedDriver(hwnd);
 			return 0;
 		}
 		if (id == kCopyButton && notification == BN_CLICKED)
