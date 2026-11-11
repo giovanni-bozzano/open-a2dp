@@ -617,6 +617,30 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		}
 		return;
 	}
+	if (state == Avdtp::SessionState::Idle && playing)
+	{
+		// A sink tears down a stream that stays Open without START, and an endpoint that is
+		// already running brings no run edge to rediscover it. Audio on an Idle session is
+		// what brings the stream back. A close or a media retry in flight rediscovers by itself.
+		if (ctx->CodecSwitchClosing || ctx->MediaOpenRetry || ctx->Session.HasPendingCommand())
+		{
+			return;
+		}
+		InterlockedExchange(&ctx->EndpointStreamPending, 0);
+		const LONG attempt = InterlockedIncrement(&ctx->EndpointStartAttempts);
+		if (attempt > kEndpointStartAttempts)
+		{
+			if (attempt == kEndpointStartAttempts + 1)
+			{
+				OA2DP_WARN(ctx, "AVDTP", "the stream did not stay up after %u starts; waiting for the next run",
+					static_cast<unsigned>(kEndpointStartAttempts));
+			}
+			return;
+		}
+		OA2DP_INFO(ctx, "Signaling", "the endpoint plays on an idle session; discovering");
+		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+		return;
+	}
 	// Settled and already matching, or no session to move: the request is spent. Every other
 	// state is a handshake in flight, which keeps it so the response decides.
 	const bool settled = (state == Avdtp::SessionState::Streaming && playing) ||
