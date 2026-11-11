@@ -12,7 +12,7 @@
 | M5b Codec configuration | Done | — |
 | M5c aptX + aptX HD | In progress | Both AOSP encoders are vendored (HD and classic are different `_HD`/plain code, with separate manifests) and advertised as SEID 3 and 4, service-encoded from the pin's own depth, with precedence HD > aptX > AAC > SBC; remaining: sink interop on hardware (T27) and a reference codeword vector |
 | M6 Config UI + install/uninstall | In progress | The `OpenA2dpConfig` window covers device selection, status and the codec/endpoint settings; the sink list names every sink `name (address)` like `OpenA2dpCtl list`, with its state refreshed every second, and the layout is measured from the strings with the session panel scrolling itself. The clean restore of `BthA2dp.sys` runs in the VM (`deploy-vm.ps1 -Uninstall`): the packages, both services and the control device are gone and `OpenA2dpCtl list` is empty; the sink's return to `BthA2dp` still needs it paired and connected |
-| M7 System testing | Not started | System test matrix and long-run validation, starting with the two checks M5b handed over: a real player resumes after the endpoint flap (T25) and a pinned format survives a sink reconnect (T26) |
+| M7 System testing | Not started | System test matrix and long-run validation, starting with the two checks M5b handed over: a real player resumes after the endpoint flap (T25) and a pinned format survives a sink reconnect (T26), plus the latency plan's hardware gates (T29): no SBC or service underrun at 44.1 and 48 kHz, one trim and a return to steady state after a 500 ms stall, and the lead each sink actually needs |
 | M8 Signing + release | Not started | Signed release package |
 
 ## Codec licensing
