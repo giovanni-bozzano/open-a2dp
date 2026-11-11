@@ -19,6 +19,10 @@ constexpr int kColumnGap = 8;    // between the divider and the text on either s
 constexpr int kSplitterGrab = 3; // pixels either side of the divider that start a drag
 // Rows per wheel notch, like a list that scrolls by items.
 constexpr int kWheelRows = 3;
+// The column width the user chose lives in their own settings, so it survives a restart.
+constexpr wchar_t kSettingsKey[] = L"Software\\OpenA2dp\\ConfigUi";
+constexpr wchar_t kLabelWidthValue[] = L"LabelWidth";
+constexpr int kMaxLabelColumnWidth = 2000; // anything larger is not a width this panel had
 
 struct ViewState
 {
@@ -81,6 +85,44 @@ void ClampLabelWidth(HWND window, ViewState& state)
 	{
 		state.labelWidth = kMinLabelColumnWidth;
 	}
+}
+
+// A missing or nonsensical value leaves the automatic width in charge.
+int LoadLabelWidth()
+{
+	HKEY key = nullptr;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+	{
+		return 0;
+	}
+	DWORD width = 0;
+	DWORD bytes = sizeof(width);
+	DWORD type = 0;
+	const bool read = RegQueryValueExW(key, kLabelWidthValue, nullptr, &type,
+							 reinterpret_cast<LPBYTE>(&width), &bytes) == ERROR_SUCCESS;
+	RegCloseKey(key);
+	if (!read || type != REG_DWORD || width < static_cast<DWORD>(kMinLabelColumnWidth) ||
+		width > static_cast<DWORD>(kMaxLabelColumnWidth))
+	{
+		return 0;
+	}
+	return static_cast<int>(width);
+}
+
+// The width is written when a drag ends, not while it runs: every pixel of the drag would
+// otherwise be a registry write.
+void SaveLabelWidth(int width)
+{
+	HKEY key = nullptr;
+	if (RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key,
+						nullptr) != ERROR_SUCCESS)
+	{
+		return;
+	}
+	const DWORD value = static_cast<DWORD>(width);
+	(void)RegSetValueExW(key, kLabelWidthValue, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value),
+					 sizeof(value));
+	RegCloseKey(key);
 }
 
 bool OnDivider(const ViewState& state, int x)
@@ -291,6 +333,14 @@ void DragLabelWidth(HWND window, ViewState& state, int x)
 	InvalidateRect(window, nullptr, FALSE);
 }
 
+// Ends a drag wherever it ends - the button, or another window taking the capture - and keeps
+// the width that was chosen.
+void EndDrag(ViewState& state)
+{
+	state.dragging = false;
+	SaveLabelWidth(state.labelWidth);
+}
+
 void SetDividerHot(HWND window, ViewState& state, bool hot)
 {
 	if (state.dividerHot == hot)
@@ -368,7 +418,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_LBUTTONUP:
 		if (state != nullptr && state->dragging)
 		{
-			state->dragging = false;
+			EndDrag(*state);
 			ReleaseCapture();
 			InvalidateRect(window, nullptr, FALSE);
 			return 0;
@@ -377,7 +427,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_CAPTURECHANGED:
 		if (state != nullptr && state->dragging)
 		{
-			state->dragging = false;
+			EndDrag(*state);
 			InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
@@ -465,6 +515,12 @@ bool CreateStatusView(HWND parent, int id, int x, int y, int width, int height, 
 	auto* state = new ViewState();
 	state->normal = font;
 	state->bold = CreateBoldFont(font);
+	const int savedWidth = LoadLabelWidth();
+	if (savedWidth > 0)
+	{
+		state->labelWidth = savedWidth;
+		state->labelWidthChosen = true;
+	}
 	// Rows follow the font, so a larger system font does not squeeze the text.
 	const HDC dc = GetDC(window);
 	if (dc != nullptr)

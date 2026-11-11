@@ -4,7 +4,8 @@
 // Rows are grouped under section bands, each group restarts the row shading and closes with a
 // hairline, and a value that reports a failure is coloured, so the state is readable without
 // parsing every line. The divider between the columns is draggable; until it is dragged the
-// label column follows the widest label.
+// label column follows the widest label, and the width it is dragged to is kept for the next
+// run of the window.
 //
 // It is painted by this window and not by a common control: an Explorer-themed list marks
 // the row under the cursor, and this view is a read-only report - only the divider reacts to
