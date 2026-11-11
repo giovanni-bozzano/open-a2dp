@@ -169,14 +169,14 @@ TEST(StatusReport_ShowsWhatTheLatencyCost)
 	status.underruns = 3;
 	status.pcmTrimmedBytes = 2048;
 	const std::string report = Report(false, status, StreamingPreference());
-	CHECK(Contains(report, "underruns       3 packets of silence"));
+	CHECK(Contains(report, "underruns       3 packets short of PCM"));
 	CHECK(Contains(report, "trimmed         2048 B of old audio dropped"));
 
 	// A clean stream says so, so the absence of the warning tone means something.
 	status.underruns = 0;
 	status.pcmTrimmedBytes = 0;
 	const std::string clean = Report(false, status, StreamingPreference());
-	CHECK(Contains(clean, "underruns       0 packets of silence"));
+	CHECK(Contains(clean, "underruns       0 packets short of PCM"));
 	CHECK(Contains(clean, "trimmed         0 B of old audio dropped"));
 }
 
