@@ -72,7 +72,10 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 {
 	const SbcFixed::Params& p = ctx->Encoder.GetParams();
-	const size_t frameCount = SbcFixed::FramesPerPacket(p, ctx->MediaOutMtu - Rtp::kHeaderSize);
+	// A stored cap shortens the packet: less audio buffered per packet, at the cost of more
+	// packets per second. 0 keeps the MTU's fill.
+	const size_t frameCount =
+		SbcFixed::FramesPerPacket(p, ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket);
 	if (frameCount == 0)
 	{
 		return 0;

@@ -12,7 +12,7 @@ Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales 
 | Driver copy granularity | `AudioPeriodMs = 10`, `OnAudioTimer` (`AudioPosition.cpp`) | 0–10 ms |
 | PCM ring backlog | `AudioPcmBacklogMs = 80`, `Ioctl::kPcmRingBytes` = 64 KB | under 10 ms |
 | Encoder pacing lead | `Ioctl::kPrerollMs = 60` as the default, overridable per sink through `Preference.prerollMs` (20–200 ms) | 60 ms, or as configured |
-| Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`); AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
+| Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`), or fewer with `Preference.sbcFramesPerPacket`; AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
 | Transport | one send in flight per stream (`MediaSendReady`), L2CAP | link dependent |
 | Sink buffer | not ours | 50–200 ms |
 
@@ -52,10 +52,11 @@ single largest fixed part of it.
 
 ## Remaining risks and plan
 
-1. **Packetization follows the MTU and bitpool**, not a latency target: seven SBC frames is
-   20 ms the sink has to buffer, up to 43 ms at a low sink bitpool. A low-latency profile can
-   cap frames per packet now that the lead is configurable, since both are decided where the
-   stream starts.
+1. **Packetization still defaults to the MTU.** SBC now takes a stored cap
+   (`Preference.sbcFramesPerPacket`, `OpenA2dpCtl codec --frames`, the settings window's
+   `SBC frames` field), so a profile can trade packets per second for a shorter packet; the
+   default is unchanged at seven frames. AAC and both aptX codecs carry one access unit per
+   packet, so they are already at their shortest packet.
 2. **The sink's own buffering is invisible.** No A2DP profile reports it; measuring the
    audible delay needs a hardware loopback (a click track against the sink's output).
 3. **The trims are verified in user mode only.** Both policies live in shared headers and are

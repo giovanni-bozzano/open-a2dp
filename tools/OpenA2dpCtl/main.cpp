@@ -37,7 +37,7 @@ Usage:
   OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd>] [--bitrate <bps>] [--bitpool <n>]
                      [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--preroll <ms>]
-                     [--device <mac|index>]
+                     [--frames <n>] [--device <mac|index>]
   OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
   OpenA2dpCtl reset [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
@@ -53,8 +53,9 @@ Commands:
             encoder service is registered, then SBC. --bitrate and --bitpool cap
             the AAC bitrate and the SBC bitpool; --blocks, --subbands and
             --allocation pin the SBC frame shape; --preroll shortens the lead the
-            stream is sent ahead of the clock, which lowers latency while the
-            sink still buffers reliably. 0 restores the driver default
+            stream is sent ahead of the clock and --frames caps how many SBC
+            frames one packet carries, which lowers latency while the sink
+            still buffers reliably. 0 restores the driver default
             (--allocation default), and the sink's advertised limits still apply.
             Without a codec name the stored selection is kept and only the
             flags given are applied.
@@ -81,6 +82,10 @@ Options:
                     Every codec is sent this far ahead of the media clock; a
                     shorter lead is less latency but less margin against the
                     sink running dry.
+  --frames <n>      SBC frames per media packet for `codec`, 0 (fill the
+                    packet) or 1..15. Fewer frames is a shorter packet, less
+                    audio buffered per packet and more packets per second.
+                    AAC and aptX send one access unit per packet regardless.
   --watch           Refresh status until interrupted.
   --interval <ms>   Refresh period for --watch (default 1000).
   --verbose         Append every Status and Preference field with its decimal
@@ -378,10 +383,13 @@ struct PreferenceOverrides {
 	uint32_t allocation = 0;
 	bool hasPreroll = false;
 	uint32_t preroll = 0;
+	bool hasFrames = false;
+	uint32_t frames = 0;
 
 	bool ParameterChange() const
 	{
-		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation || hasPreroll;
+		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation || hasPreroll ||
+			   hasFrames;
 	}
 
 };
@@ -499,6 +507,10 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	if (overrides.hasPreroll)
 	{
 		preference.prerollMs = overrides.preroll;
+	}
+	if (overrides.hasFrames)
+	{
+		preference.sbcFramesPerPacket = overrides.frames;
 	}
 
 	const bool set = WritePreference(handle, preference, error);
@@ -807,6 +819,26 @@ int main(int argc, char** argv)
 			}
 			overrides.hasPreroll = true;
 			overrides.preroll = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--frames" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			if (!IsDecimal(value))
+			{
+				std::fprintf(stderr, "--frames takes 0 (fill the packet) or %u..%u\n",
+						Ioctl::kSbcMinFramesPerPacket, Ioctl::kSbcMaxFramesPerPacket);
+				return 2;
+			}
+			const unsigned long parsed = std::strtoul(value.c_str(), nullptr, 10);
+			if (parsed != 0 &&
+				(parsed < Ioctl::kSbcMinFramesPerPacket || parsed > Ioctl::kSbcMaxFramesPerPacket))
+			{
+				std::fprintf(stderr, "--frames takes 0 (fill the packet) or %u..%u\n",
+						Ioctl::kSbcMinFramesPerPacket, Ioctl::kSbcMaxFramesPerPacket);
+				return 2;
+			}
+			overrides.hasFrames = true;
+			overrides.frames = static_cast<uint32_t>(parsed);
 		}
 		else if (arg == "--blocks" && position + 1 < args.size())
 		{

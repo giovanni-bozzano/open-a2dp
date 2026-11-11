@@ -295,6 +295,10 @@ struct Preference {
 	// kPrerollMs, otherwise kMinPrerollMs..kMaxPrerollMs. A shorter lead lowers latency by
 	// spending the sink's jitter margin.
 	uint32_t prerollMs;
+	// Most SBC frames one media packet carries: 0 fills the packet (the MTU decides), 1..15 caps
+	// it so a packet carries less audio (shorter packets, more of them). AAC and the aptX codecs
+	// send one access unit per packet and are unaffected.
+	uint32_t sbcFramesPerPacket;
 };
 
 // The PCM format the render endpoint offers Windows. Windows opens the shared-mode stream
@@ -322,6 +326,10 @@ constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
 
 static_assert(sizeof(EndpointFormat) == 16, "EndpointFormat layout is part of the driver/CLI ABI");
 
+// Range SbcFramesPerPacket accepts (see SbcFrame::kMaxFramesPerPacket).
+constexpr uint32_t kSbcMinFramesPerPacket = 1;
+constexpr uint32_t kSbcMaxFramesPerPacket = 15;
+
 // A hand-edited or stale store must not force a configuration the driver cannot serve.
 // The driver and the CLI share this, so a rejected preference never leaves an endpoint
 // without a render format.
@@ -345,6 +353,11 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	{
 		return false;
 	}
+	if (preference.sbcFramesPerPacket != 0 && (preference.sbcFramesPerPacket < kSbcMinFramesPerPacket ||
+												 preference.sbcFramesPerPacket > kSbcMaxFramesPerPacket))
+	{
+		return false;
+	}
 	if ((preference.flags & kPreferenceForceCodec) == 0)
 	{
 		return true;
@@ -353,7 +366,7 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 		   preference.codec == kCodecAac || preference.codec == kCodecAptxHd;
 }
 
-static_assert(sizeof(Preference) == 36, "Preference layout is part of the driver/CLI ABI");
+static_assert(sizeof(Preference) == 40, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is part of the ABI");
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");

@@ -141,6 +141,10 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	{
 		AppendLine(text, "pacing lead", Format("%u ms (stored)", preference.prerollMs));
 	}
+	if (preference.sbcFramesPerPacket != 0)
+	{
+		AppendLine(text, "SBC frames", Format("%u per packet (stored)", preference.sbcFramesPerPacket));
+	}
 	if (preference.sbcBlocks != 0 || preference.sbcSubbands != 0 || preference.sbcAllocation != 0)
 	{
 		AppendLine(text, "SBC frame",
@@ -210,6 +214,7 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "preference.aacBitrate", preference.aacBitrate);
 	AppendField(text, "preference.sbcBitpool", preference.sbcBitpool);
 	AppendField(text, "preference.prerollMs", preference.prerollMs);
+	AppendField(text, "preference.sbcFramesPerPacket", preference.sbcFramesPerPacket);
 	AppendField(text, "preference.sbcBlocks", preference.sbcBlocks);
 	AppendField(text, "preference.sbcSubbands", preference.sbcSubbands);
 	AppendField(text, "preference.sbcAllocation", preference.sbcAllocation);

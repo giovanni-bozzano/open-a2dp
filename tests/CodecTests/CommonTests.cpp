@@ -165,6 +165,14 @@ TEST(Ioctl_PreferenceValidation)
 	CHECK(Ioctl::ValidPreference(preference));
 	CHECK_EQ(Ioctl::EffectivePrerollMs(0), Ioctl::kPrerollMs);
 
+	// The SBC packet cap: 0 fills the packet, otherwise the range SbcFrame accepts.
+	preference.sbcFramesPerPacket = Ioctl::kSbcMaxFramesPerPacket;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.sbcFramesPerPacket = Ioctl::kSbcMaxFramesPerPacket + 1;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.sbcFramesPerPacket = 0;
+	CHECK(Ioctl::ValidPreference(preference));
+
 }
 
 TEST(RingBuffer_WrapAround)

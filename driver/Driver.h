@@ -496,6 +496,9 @@ struct DEVICE_CONTEXT
 	// sampled on the audio copy tick. A transport or service stall shows up here even after the
 	// stream trimmed back to live.
 	volatile LONG LatencyPeakMs;
+	// Most SBC frames one packet carries for this stream, from the stored preference at
+	// MediaStart; 0 lets the MTU decide. Shorter packets carry less audio each.
+	volatile ULONG SbcFramesPerPacket;
 	// Service-encoded pacing: interrupt time of the last sent frame and of the last underrun
 	// log.
 	ULONGLONG ServiceLastFrameTime;

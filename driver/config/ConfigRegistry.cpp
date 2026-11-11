@@ -21,6 +21,7 @@ const wchar_t kSbcBlocksValueName[] = L"CodecPreferenceSbcBlocks";
 const wchar_t kSbcSubbandsValueName[] = L"CodecPreferenceSbcSubbands";
 const wchar_t kSbcAllocationValueName[] = L"CodecPreferenceSbcAllocation";
 const wchar_t kPrerollValueName[] = L"CodecPreferencePrerollMs";
+const wchar_t kSbcFramesValueName[] = L"CodecPreferenceSbcFramesPerPacket";
 // The endpoint format the user selected; 0/0 (or no value) means automatic. The names differ
 // from the values earlier builds wrote from the observed stream, so a stale observation is
 // never mistaken for a selection.
@@ -106,6 +107,7 @@ bool ReadPreference(WDFKEY key, Ioctl::Preference& preference)
 	found |= ReadDword(key, kSbcSubbandsValueName, preference.sbcSubbands);
 	found |= ReadDword(key, kSbcAllocationValueName, preference.sbcAllocation);
 	found |= ReadDword(key, kPrerollValueName, preference.prerollMs);
+	found |= ReadDword(key, kSbcFramesValueName, preference.sbcFramesPerPacket);
 	return found;
 }
 
@@ -173,9 +175,10 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx)
 	{
 		OA2DP_INFO(ctx, "Config",
 			"codec preference %s restored from the registry (SBC bitpool %u, blocks %u, subbands %u, "
-			"allocation 0x%02X, AAC bitrate %u, preroll %u ms)",
+			"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u)",
 			PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
-			preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate, preference.prerollMs);
+			preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate, preference.prerollMs,
+			preference.sbcFramesPerPacket);
 	}
 }
 
@@ -211,6 +214,7 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 			WriteDword(ctx, sink, kSbcSubbandsValueName, preference.sbcSubbands);
 			WriteDword(ctx, sink, kSbcAllocationValueName, preference.sbcAllocation);
 			WriteDword(ctx, sink, kPrerollValueName, preference.prerollMs);
+			WriteDword(ctx, sink, kSbcFramesValueName, preference.sbcFramesPerPacket);
 			WdfRegistryClose(sink);
 		}
 		WdfRegistryClose(devices);
@@ -219,9 +223,10 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 
 	OA2DP_INFO(ctx, "Config",
 		"codec preference %s stored for this sink (SBC bitpool %u, blocks %u, subbands %u, "
-		"allocation 0x%02X, AAC bitrate %u, preroll %u ms)",
+		"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u)",
 		PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
-		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate, preference.prerollMs);
+		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate, preference.prerollMs,
+		preference.sbcFramesPerPacket);
 }
 
 void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx)

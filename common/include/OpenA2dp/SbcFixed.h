@@ -238,10 +238,13 @@ private:
 	int32_t history_[2][80] = {};
 };
 
-// How many frames fit in a media payload of `payloadCapacity` bytes (after RTP).
-inline size_t FramesPerPacket(const Params& p, size_t payloadCapacity) noexcept
+// How many frames fit in a media payload of `payloadCapacity` bytes (after RTP). `cap` limits
+// that number so a packet carries less audio (shorter packets, more of them); 0 keeps the
+// packet full, which is the default.
+inline size_t FramesPerPacket(const Params& p, size_t payloadCapacity, size_t cap = 0) noexcept
 {
-	return SbcFrame::FramesPerPacket(p.ToConfiguration(), payloadCapacity);
+	return SbcFrame::FramesPerPacket(p.ToConfiguration(), payloadCapacity,
+			cap == 0 ? SbcFrame::kMaxFramesPerPacket : cap);
 }
 
 // Interleaved sine generator using a 256-entry table and a 32-bit phase accumulator.

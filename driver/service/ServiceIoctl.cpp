@@ -379,7 +379,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 								ctx->Preference.sbcSubbands != in->sbcSubbands ||
 								ctx->Preference.sbcAllocation != in->sbcAllocation ||
 								ctx->Preference.aacBitrate != in->aacBitrate ||
-								ctx->Preference.prerollMs != in->prerollMs;
+								ctx->Preference.prerollMs != in->prerollMs ||
+				ctx->Preference.sbcFramesPerPacket != in->sbcFramesPerPacket;
 			changed = selectionChanged || parametersChanged;
 			ctx->Preference = *in;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
@@ -394,9 +395,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			}
 			OA2DP_INFO(ctx, "Service",
 				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, blocks %u, subbands %u, "
-				"allocation 0x%02X, AAC bitrate %u, preroll %u ms)",
+				"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u)",
 				in->flags, static_cast<unsigned>(in->codec), in->sbcBitpool, in->sbcBlocks, in->sbcSubbands,
-				in->sbcAllocation, in->aacBitrate, in->prerollMs);
+				in->sbcAllocation, in->aacBitrate, in->prerollMs, in->sbcFramesPerPacket);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
 			ConfigSavePreference(ctx);

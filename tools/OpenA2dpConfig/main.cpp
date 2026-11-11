@@ -65,6 +65,7 @@ enum ControlId : int {
 	kSubbandsCombo,
 	kAllocationCombo,
 	kPacingLeadCombo,
+	kSbcFramesCombo,
 	kApplyButton,
 	kMessageLabel,
 };
@@ -80,9 +81,9 @@ constexpr wchar_t kApplyText[] = L"Apply";
 constexpr wchar_t kSessionGroupText[] = L"Session";
 constexpr wchar_t kCodecGroupText[] = L"Codec";
 constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
-constexpr wchar_t kCodecHintText[] = L"The frame shape and bitpool apply to SBC, the bitrate to "
-									 L"AAC. The pacing lead applies to every codec: a shorter lead is less "
-									 L"latency, less margin against the sink running dry.";
+constexpr wchar_t kCodecHintText[] = L"The frame shape, bitpool and frames per packet apply to "
+									 L"SBC, the bitrate to AAC. The pacing lead applies to every codec: a shorter "
+									 L"lead is less latency, less margin against the sink running dry.";
 constexpr wchar_t kFormatHintText[] = L"Windows plays the first format the endpoint lists and ignores the "
 									 L"Sound-settings pick, so a pinned format is offered alone.";
 // A combo box is created with the height of its drop-down list, which is never resized.
@@ -757,6 +758,7 @@ void CreateControls(HWND hwnd)
 	CreateField(hwnd, L"Subbands", kSubbandsCombo, 0, 2, font);
 	CreateField(hwnd, L"Allocation", kAllocationCombo, 1, 2, font);
 	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, 0, 3, font);
+	CreateField(hwnd, L"SBC frames", kSbcFramesCombo, 1, 3, font);
 	if (state != nullptr)
 	{
 		state->codecHint = CreateChild(hwnd, L"STATIC", kCodecHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
@@ -822,8 +824,15 @@ void CreateControls(HWND hwnd)
 		AddComboItem(hwnd, kPacingLeadCombo, Format(L"%u ms", lead).c_str(), lead);
 	}
 
+	// SBC frames per packet: fewer frames is a shorter packet with less audio in it.
+	AddComboItem(hwnd, kSbcFramesCombo, L"Default (fill the packet)", 0);
+	for (const uint32_t frames : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u})
+	{
+		AddComboItem(hwnd, kSbcFramesCombo, Format(L"%u per packet", frames).c_str(), frames);
+	}
+
 	for (const int id : {kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo, kSubbandsCombo,
-						 kAllocationCombo, kPacingLeadCombo})
+						 kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -864,6 +873,7 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
 	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
 	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
+	SelectComboValueOrAdd(hwnd, kSbcFramesCombo, preference.sbcFramesPerPacket);
 	SelectComboValue(hwnd, kFormatCombo,
 					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
 }
@@ -1240,6 +1250,7 @@ void ApplySettings(HWND hwnd)
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
 	preference.prerollMs = ComboValue(hwnd, kPacingLeadCombo);
+	preference.sbcFramesPerPacket = ComboValue(hwnd, kSbcFramesCombo);
 
 	// The endpoint format is its own setting; the combo carries the whole format.
 	const uint32_t formatValue = ComboValue(hwnd, kFormatCombo);
@@ -1303,7 +1314,7 @@ void ApplyDarkControls(HWND hwnd)
 	}
 	EnumChildWindows(hwnd, UnthemeTextControl, 0);
 	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo,
-				 kBlocksCombo, kSubbandsCombo, kAllocationCombo, kPacingLeadCombo})
+				 kBlocksCombo, kSubbandsCombo, kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo})
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}

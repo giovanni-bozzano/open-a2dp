@@ -71,14 +71,21 @@ constexpr uint8_t MediaPayloadHeader(size_t frameCount) noexcept
 	return static_cast<uint8_t>(frameCount & 0x0F);
 }
 
-// How many whole frames fit in a media payload of `payloadCapacity` bytes (after RTP).
-constexpr size_t FramesPerPacket(const SbcConfig::Configuration& p, size_t payloadCapacity) noexcept
+// How many whole frames fit in a media payload of `payloadCapacity` bytes (after RTP), at most
+// `maxFrames`. A caller that wants shorter packets - less audio buffered per packet, at the
+// cost of a packet per 8 ms instead of per 20 - passes a lower cap.
+constexpr size_t FramesPerPacket(const SbcConfig::Configuration& p, size_t payloadCapacity,
+								 size_t maxFrames = kMaxFramesPerPacket) noexcept
 {
-	if (payloadCapacity <= 1)
+	if (payloadCapacity <= 1 || maxFrames == 0)
 	{
 		return 0;
 	}
-	const size_t n = (payloadCapacity - 1) / FrameLength(p);
+	size_t n = (payloadCapacity - 1) / FrameLength(p);
+	if (n > maxFrames)
+	{
+		n = maxFrames;
+	}
 	return n < kMaxFramesPerPacket ? n : kMaxFramesPerPacket;
 }
 

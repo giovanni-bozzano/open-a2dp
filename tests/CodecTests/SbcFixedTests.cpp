@@ -113,6 +113,23 @@ TEST(SbcFixed_ParseIe)
 	CHECK_EQ(SbcFixed::FramesPerPacket(p, 895 - Rtp::kHeaderSize), size_t{7});
 }
 
+// A stored cap shortens the packet: fewer frames, less audio per packet and more packets per
+// second, at the same MTU. 0 means "fill the packet".
+TEST(SbcFixed_FramesPerPacketCap)
+{
+	SbcFixed::Params p;
+	const size_t payload = 895 - Rtp::kHeaderSize;
+
+	CHECK_EQ(SbcFixed::FramesPerPacket(p, payload, 0), size_t{7});
+	CHECK_EQ(SbcFixed::FramesPerPacket(p, payload, 3), size_t{3});
+	CHECK_EQ(SbcFixed::FramesPerPacket(p, payload, 1), size_t{1});
+	// A cap above what fits changes nothing, and a shorter payload still wins over the cap.
+	CHECK_EQ(SbcFixed::FramesPerPacket(p, payload, 15), size_t{7});
+	CHECK_EQ(SbcFixed::FramesPerPacket(p, 2 * 119 + 1, 7), size_t{2});
+	// A payload that cannot carry one frame carries none, whatever the cap.
+	CHECK_EQ(SbcFixed::FramesPerPacket(p, 100, 3), size_t{0});
+}
+
 // The two SBC encoders have to describe the same frame for the same configuration and
 // allocate the same bits for the same scale factors; only the analysis filter (Q12 against
 // double) may differ. This pins the adapters in both headers to the shared SbcConfig,
