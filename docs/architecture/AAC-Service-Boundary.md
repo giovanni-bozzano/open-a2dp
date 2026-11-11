@@ -181,7 +181,10 @@ to the user.
 
 - latched events are returned immediately; otherwise the request is parked;
 - the media timer completes it with `kEventTick` while a service-encoded codec streams,
-  which is the service's clock (no polling, no shared event handle);
+  which is the service's clock (no polling, no shared event handle). It wakes at the codec's
+  access-unit cadence, learned from the sample count in the records the service writes, so a
+  wake never arrives with nothing due: AAC (1024 samples, ~23 ms) every third clock tick,
+  aptX at the tick rate;
 - `kEventStreamStart`/`kEventStreamStop` carry the negotiated parameters in the same
   struct (`codec`, rate, channels, bitrate, object type, `pcmValidBits`), so the service
   configures its encoder before the first tick (a reconfigure while streaming stops and

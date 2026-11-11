@@ -45,7 +45,10 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 	ctx->ActiveCodec = Ioctl::kCodecAac;
-	ctx->MediaBusyTicks = 0;
+	ctx->MediaBusySince = 0;
+	// Unknown until the first record arrives: every tick until then, as before.
+	ctx->ServiceWakeTicks = 0;
+	ctx->ServiceWakeSkip = 0;
 	ctx->MediaSendUnchecked = FALSE;
 	ctx->ActiveSampleRate = params.sampleRate;
 	ctx->ActiveChannels = params.channels;

@@ -24,8 +24,11 @@ NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx)
 	// Send completions drive the stream: each one enqueues the next packet.
 	ctx->MediaSend.CompletionWorkItem = ctx->MediaWorkItem;
 
+	// One shot: every run arms it again for the next wake this stream actually needs. A
+	// periodic timer fired whether or not anything was due, which woke the CPU for nothing
+	// about a third of the time and kept a playing stream out of deeper idle states.
 	WDF_TIMER_CONFIG timerConfig;
-	WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, OnMediaTimer, MediaPeriodMs);
+	WDF_TIMER_CONFIG_INIT(&timerConfig, OnMediaTimer);
 	return WdfTimerCreate(&timerConfig, &attrs, &ctx->MediaTimer);
 }
 
@@ -92,7 +95,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 	ctx->Encoder.Reset(params);
-	ctx->MediaBusyTicks = 0;
+	ctx->MediaBusySince = 0;
 	ctx->MediaSendUnchecked = FALSE;
 	ctx->ActiveCodec = Ioctl::kCodecSbc;
 	ctx->ActiveSampleRate = params.sampleRate;

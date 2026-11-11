@@ -296,8 +296,9 @@ struct DEVICE_CONTEXT
 	// try per connection, since the same session cannot yield a different configuration.
 	volatile LONG MtuRenegotiate;
 	volatile LONG MtuRenegotiationAttempts;
-	// Consecutive media ticks that found the previous send still pending (diagnostic).
-	ULONG MediaBusyTicks;
+	// Interrupt time the previous send was first found still pending, 0 while the slot is
+	// idle (diagnostic). Time, not a tick count: the media timer wakes on demand.
+	ULONGLONG MediaBusySince;
 	// Set by the media timer so the work item can tell clock ticks from send completions.
 	volatile LONG MediaTickPending;
 	// A media send was submitted and its completion status has not been checked yet.
@@ -512,6 +513,10 @@ struct DEVICE_CONTEXT
 	// log.
 	ULONGLONG ServiceLastFrameTime;
 	ULONGLONG ServiceLastUnderrunLog;
+	// Clock ticks between service wakes, learned from the records the service writes (0 while
+	// unknown, which wakes it on every tick), and the ticks still to skip before the next one.
+	ULONG ServiceWakeTicks;
+	ULONG ServiceWakeSkip;
 	// SBC packets the PCM ring could not fill since the last underrun log, and that log's
 	// interrupt time. Taken under MediaLock with the rest of the pacer state.
 	ULONG SbcUnderrunPackets;

@@ -2,14 +2,21 @@
 
 namespace OpenA2dpDriver::Media
 {
+// Samples the stream must have sent by now: the media clock plus the pacing lead. The pacer
+// and the watchdog both read it, so they cannot disagree about when the next packet is due.
+// Caller holds MediaLock.
+static ULONGLONG SbcTargetSamples(DEVICE_CONTEXT* ctx)
+{
+	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
+	const ULONGLONG elapsed = KeQueryInterruptTime() - ctx->MediaStartTime;
+	return elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * ctx->PacingLeadMs / 1000;
+}
+
 // SBC: pace from the endpoint clock and encode in the kernel. One packet per run; its
 // completion enqueues the next run, so a backlog drains at transport speed. Caller holds MediaLock.
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 {
-	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
-	const ULONGLONG elapsed = KeQueryInterruptTime() - ctx->MediaStartTime;
-	const ULONGLONG target =
-			elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * ctx->PacingLeadMs / 1000;
+	const ULONGLONG target = SbcTargetSamples(ctx);
 
 	if (ctx->MediaSamplesSent >= target)
 	{
@@ -46,8 +53,8 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 }
 
 // Service-encoded codecs (AAC, aptX HD): drain the frame ring, one packet per run. The
-// service owns the media clock, so there is no target; clock ticks wake it and account
-// underruns. Caller holds MediaLock.
+// service owns the media clock, so there is no target; clock ticks account underruns and,
+// at the codec's access-unit cadence, wake it. Caller holds MediaLock.
 void TickService(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const ULONGLONG now = KeQueryInterruptTime();
@@ -83,8 +90,18 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 	{
 		return;
 	}
-	// Wake the service on every clock tick: it is the media clock for these codecs.
-	ServiceTick(ctx);
+	// Wake the service when an access unit is due, not on every clock tick: it paces itself
+	// against the clock it is handed, so a wake that finds nothing due is a context switch
+	// and no audio. Its own records say how long one access unit lasts.
+	if (ctx->ServiceWakeSkip != 0)
+	{
+		--ctx->ServiceWakeSkip;
+	}
+	else
+	{
+		ctx->ServiceWakeSkip = ctx->ServiceWakeTicks > 0 ? ctx->ServiceWakeTicks - 1 : 0;
+		ServiceTick(ctx);
+	}
 
 	if (!AudioStreamRunning(ctx))
 	{
@@ -102,6 +119,31 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)", CodecValueName(ctx->ActiveCodec),
 			idle / 10000ull);
 	}
+}
+
+// Arms the one-shot media timer for the next wake this stream needs. A pacing stream is driven
+// by send completions - each one enqueues the next run - so the timer only has to cover what a
+// completion cannot: the moment the next SBC packet is due, and a send that never completes.
+// Caller holds MediaLock.
+static void ArmMediaTimer(DEVICE_CONTEXT* ctx)
+{
+	ULONG waitMs = MediaPeriodMs;
+	if (L2capSendIdle(&ctx->MediaSend) &&
+		InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeSbc)
+	{
+		const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
+		const ULONGLONG target = SbcTargetSamples(ctx);
+		// A packet carries audio from past the clock; the next one is due when that audio has
+		// been played out. Waking then, instead of one fixed period later, means a wake that
+		// finds nothing due cannot happen.
+		if (rate != 0 && ctx->MediaSamplesSent >= target)
+		{
+			const ULONGLONG dueMs =
+				((ctx->MediaSamplesSent - target) * 1000ull + rate - 1) / rate;
+			waitMs = dueMs < 1 ? 1 : static_cast<ULONG>(dueMs);
+		}
+	}
+	WdfTimerStart(ctx->MediaTimer, WDF_REL_TIMEOUT_IN_MS(waitMs));
 }
 
 void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
@@ -133,6 +175,10 @@ void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 		if (!ctx->MediaActive)
 		{
 			WdfTimerStop(ctx->MediaTimer, FALSE);
+		}
+		else
+		{
+			ArmMediaTimer(ctx);
 		}
 	}
 

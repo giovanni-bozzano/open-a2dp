@@ -34,14 +34,25 @@ bool MediaSendReady(DEVICE_CONTEXT* ctx, bool tick)
 {
 	if (!L2capSendIdle(&ctx->MediaSend))
 	{
-		if (tick && ++ctx->MediaBusyTicks == MediaBusyLimitTicks)
+		// Real time, not ticks: the watchdog wakes on demand, so a tick count would stretch
+		// the diagnostic with whatever the wake interval happened to be.
+		if (tick)
 		{
-			OA2DP_WARN(ctx, "Media", "the previous send is still pending in the transport after %u ms",
-				MediaBusyLimitMs);
+			const ULONGLONG now = KeQueryInterruptTime();
+			if (ctx->MediaBusySince == 0)
+			{
+				ctx->MediaBusySince = now;
+			}
+			else if (now - ctx->MediaBusySince >= MediaBusyLimit)
+			{
+				ctx->MediaBusySince = now;
+				OA2DP_WARN(ctx, "Media",
+					"the previous send is still pending in the transport after %u ms", MediaBusyLimitMs);
+			}
 		}
 		return false;
 	}
-	ctx->MediaBusyTicks = 0;
+	ctx->MediaBusySince = 0;
 	if (ctx->MediaSendUnchecked)
 	{
 		ctx->MediaSendUnchecked = FALSE;
@@ -186,6 +197,31 @@ static void TrimFrameBacklog(DEVICE_CONTEXT* ctx)
 	}
 }
 
+// The service says how long one access unit of its codec lasts by writing records: the sample
+// count in each one. That is how often it needs to be woken, so the driver stops waking it on
+// every clock tick. Rounded up to the clock tick and capped, because a wake also flushes the
+// records that piled up (the service encodes several per wake). Caller holds MediaLock.
+static void NoteServiceRecord(DEVICE_CONTEXT* ctx, uint32_t samples)
+{
+	if (samples == 0 || ctx->ActiveSampleRate == 0)
+	{
+		return;
+	}
+	const ULONGLONG frameUs =
+		static_cast<ULONGLONG>(samples) * 1000000ull / ctx->ActiveSampleRate;
+	const ULONGLONG tickUs = static_cast<ULONGLONG>(MediaPeriodMs) * 1000ull;
+	ULONG ticks = static_cast<ULONG>((frameUs + tickUs - 1) / tickUs);
+	if (ticks < 1)
+	{
+		ticks = 1;
+	}
+	if (ticks > ServiceWakeMaxTicks)
+	{
+		ticks = ServiceWakeMaxTicks;
+	}
+	ctx->ServiceWakeTicks = ticks;
+}
+
 // Builds one RTP packet from the frame ring. Caller holds MediaLock. One record is one
 // packet: the service already wrote the codec's media payload (a LATM AudioMuxElement, or
 // the concatenated aptX HD frames) with the sample count it covers.
@@ -210,6 +246,7 @@ ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	RtlCopyMemory(ctx->MediaBuffer + offset, payload, length);
 
 	samples = frameSamples;
+	NoteServiceRecord(ctx, frameSamples);
 	++ctx->RtpSequence;
 	++ctx->PacketsSent;
 	ctx->RtpTimestamp += frameSamples;
