@@ -123,20 +123,39 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 			ring.Skip(flushed);
 		}
 	}
-	// The endpoint starts running the moment Windows begins playback, but this stream only starts
-	// once AVDTP accepts START, and until then nothing drains the ring: the audio Windows queues in
-	// between is trimmed by the ring bound, then flushed above. That span is the start latency the
-	// listener hears, and nothing else reports it, so it is logged with the audio it cost.
-	const ULONGLONG started = KeQueryInterruptTime();
-	const ULONGLONG waited = ctx->AudioRunStamp != 0 && started > ctx->AudioRunStamp
-		? (started - ctx->AudioRunStamp) / 10000ull
-		: 0;
-	const ULONGLONG lostBytes = static_cast<ULONGLONG>(flushed) + ctx->AudioTrimmedBytes;
+	// While media is stopped the copy skips the endpoint's audio rather than queueing it
+	// (CopyConsumedLocked), so what the wait for this stream cost is that skipped audio plus
+	// anything flushed above. The run stamp is spent here: a later restart in the same run is a
+	// renegotiation, whose wait is not measured from the run edge.
+	ULONGLONG skipped = 0;
+	ULONGLONG runStamp = 0;
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		skipped = ctx->AudioSkippedBytes;
+		ctx->AudioSkippedBytes = 0;
+		runStamp = ctx->AudioRunStamp;
+		ctx->AudioRunStamp = 0;
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+	}
+	const ULONGLONG lostBytes = static_cast<ULONGLONG>(flushed) + skipped;
 	const ULONGLONG lostMs = ctx->PinSampleRate != 0 && ctx->PinBytesPerFrame != 0
 		? lostBytes * 1000ull / (static_cast<ULONGLONG>(ctx->PinSampleRate) * ctx->PinBytesPerFrame)
 		: 0;
-	OA2DP_INFO(ctx, "Media", "stream started %I64u ms after the endpoint ran, %I64u ms of queued PCM lost",
-		waited, lostMs);
+	const ULONGLONG started = KeQueryInterruptTime();
+	if (runStamp != 0 && started > runStamp)
+	{
+		OA2DP_INFO(ctx, "Media", "stream started %I64u ms after the endpoint ran, %I64u ms of endpoint PCM lost",
+			(started - runStamp) / 10000ull, lostMs);
+	}
+	else
+	{
+		OA2DP_INFO(ctx, "Media", "stream restarted, %I64u ms of endpoint PCM lost", lostMs);
+	}
+	const ULONG packetBytes = static_cast<ULONG>(SbcFixed::FramesPerPacket(params,
+		ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket) * params.SamplesPerFrame() *
+		ctx->PinBytesPerFrame);
+	InterlockedExchange(&ctx->MediaPacketPcmBytes, static_cast<LONG>(packetBytes));
 	InterlockedExchange(&ctx->StreamFault, 0);
 	InterlockedExchange(&ctx->MediaMode, MediaModeSbc);
 	ctx->MediaActive = TRUE;
@@ -156,6 +175,7 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 	// work item stops taking MediaLock. In the failing hang the lock was held by a work
 	// item that kept running every 10 ms for two minutes while this thread waited.
 	const bool wasActive = InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), 0) != 0;
+	InterlockedExchange(&ctx->MediaPacketPcmBytes, 0);
 	WdfTimerStop(ctx->MediaTimer, TRUE);
 	// MediaLock is only ever held for one bounded work item run, so this wait ends. It
 	// is retried rather than abandoned: stopping without the lock would race a send.

@@ -105,6 +105,11 @@ void OnDeviceCleanup(_In_ WDFOBJECT object)
 	{
 		WdfTimerStop(ctx->JackFlapTimer, TRUE);
 	}
+	// The timer may already have handed over to its work item, which rebuilds the format lists.
+	if (ctx->JackFlapWorkItem != nullptr)
+	{
+		WdfWorkItemFlush(ctx->JackFlapWorkItem);
+	}
 	ServiceCleanup(ctx);
 	if (ctx->ProfileValid)
 	{

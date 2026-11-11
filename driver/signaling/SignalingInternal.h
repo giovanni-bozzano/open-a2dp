@@ -27,6 +27,8 @@ constexpr uint8_t kSbcDriverCapabilities[SbcConfig::kIeLength] = {
 	SbcConfig::kMaxBitpool};
 // Initiator media channel opens per connection before the signaling channel is torn down.
 constexpr ULONG kMediaOpenAttempts = 3;
+// STARTs the endpoint reconciliation sends per run or renegotiation (ContinueEndpointStream).
+constexpr LONG kEndpointStartAttempts = 3;
 
 EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;

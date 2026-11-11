@@ -13,19 +13,25 @@ static ULONGLONG TargetSamples(DEVICE_CONTEXT* ctx, uint32_t rate)
 	return elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * ctx->PacingLeadMs / 1000;
 }
 
-// True when the PCM ring holds at least the audio of one whole packet. Caller holds MediaLock.
-static bool PcmHasPacket(DEVICE_CONTEXT* ctx)
+// PCM samples (per channel) one packet of this stream carries. Caller holds MediaLock.
+static uint32_t PacketSamples(DEVICE_CONTEXT* ctx)
 {
 	const SbcFixed::Params& params = ctx->Encoder.GetParams();
 	const size_t frames =
 		SbcFixed::FramesPerPacket(params, ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket);
+	return static_cast<uint32_t>(frames * params.SamplesPerFrame());
+}
+
+// True when the PCM ring holds at least the audio of one whole packet. Caller holds MediaLock.
+static bool PcmHasPacket(DEVICE_CONTEXT* ctx, uint32_t packetSamples)
+{
 	const ULONG frameBytes = ctx->PinBytesPerFrame;
-	if (frames == 0 || frameBytes == 0)
+	if (packetSamples == 0 || frameBytes == 0)
 	{
 		return true;
 	}
 	const RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-	return ring.ReadableBytes() >= frames * params.SamplesPerFrame() * frameBytes;
+	return ring.ReadableBytes() >= static_cast<ULONGLONG>(packetSamples) * frameBytes;
 }
 
 // SBC: pace from the endpoint clock and encode in the kernel. One packet per run; its
@@ -46,9 +52,16 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	}
 	// A packet built from less than a packet of PCM pads the rest with silence, which is a gap the
 	// listener hears. The ring runs level with the clock, so a late copy tick leaves a packet
-	// short; waiting for the next wake moves that audio from the sink's lead into the ring and
-	// costs no latency. A paused endpoint asks for nothing, so it keeps its place instead.
-	if (ctx->MediaCaughtUp && AudioStreamRunning(ctx) && !PcmHasPacket(ctx))
+	// short; waiting moves that audio from the sink's lead into the ring, and the copy wakes this
+	// work item as soon as a whole packet is there. The wait is bounded by the copy's own slack:
+	// past it the PCM is not late but missing, and holding the packet back would shrink the
+	// sink's lead for the rest of the stream without a single underrun being counted. A paused
+	// endpoint asks for nothing, so it keeps its place instead.
+	const uint32_t packetSamples = PacketSamples(ctx);
+	const ULONGLONG waitLimit = packetSamples +
+		static_cast<ULONGLONG>(ctx->Encoder.GetParams().sampleRate) * LatencyBudget::kPcmSlackMs / 1000;
+	if (ctx->MediaCaughtUp && target - ctx->MediaSamplesSent < waitLimit && AudioStreamRunning(ctx) &&
+		!PcmHasPacket(ctx, packetSamples))
 	{
 		return;
 	}

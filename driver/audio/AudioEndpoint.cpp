@@ -12,14 +12,20 @@ void AudioNotifyLinkState(_In_ DEVICE_CONTEXT* ctx)
 
 void AudioRestartRenderStream(_In_ DEVICE_CONTEXT* ctx)
 {
-	if (ctx->SinkJack == nullptr || ctx->JackFlapTimer == nullptr || ctx->JackFlapWorkItem == nullptr ||
-		ctx->JackFlap)
+	if (ctx->SinkJack == nullptr || ctx->JackFlapTimer == nullptr || ctx->JackFlapWorkItem == nullptr)
 	{
+		return;
+	}
+	// A change inside a window that is already open extends it, so the plug-in that ends the
+	// window follows the last change and Windows rebuilds the endpoint from that one.
+	if (InterlockedExchange(&ctx->JackFlap, 1) != 0)
+	{
+		WdfTimerStart(ctx->JackFlapTimer, WDF_REL_TIMEOUT_IN_MS(AudioJackFlapMs));
 		return;
 	}
 	// Presence is read from JackFlap, so this notification goes out as unplugged and the
 	// one-shot timer plugs it back in once Windows has closed the stream.
-	ctx->JackFlap = TRUE;
+	InterlockedIncrement(&ctx->JackFlaps);
 	WdfTimerStart(ctx->JackFlapTimer, WDF_REL_TIMEOUT_IN_MS(AudioJackFlapMs));
 	OA2DP_INFO(ctx, "Audio", "jack unplugged for %u ms so Windows rebuilds the endpoint", AudioJackFlapMs);
 	AcxJackChangeStateNotification(ctx->SinkJack);
@@ -37,7 +43,7 @@ void OnJackFlapTimer(_In_ WDFTIMER timer)
 void OnJackFlapWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
-	ctx->JackFlap = FALSE;
+	InterlockedExchange(&ctx->JackFlap, 0);
 	if (ctx->SinkJack != nullptr)
 	{
 		AcxJackChangeStateNotification(ctx->SinkJack);

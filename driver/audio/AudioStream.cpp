@@ -80,8 +80,15 @@ void OnStreamDestroy(_In_ WDFOBJECT object)
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 }
 
-NTSTATUS OnStreamPrepareHardware(_In_ ACXSTREAM)
+NTSTATUS OnStreamPrepareHardware(_In_ ACXSTREAM stream)
 {
+	// Release forgets the stream, and ACX can prepare the same one again without destroying it,
+	// so it is recorded here too: the pin default must not move under a stream that lives.
+	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	ctx->AudioStream = stream;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return STATUS_SUCCESS;
 }
 
@@ -117,6 +124,8 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioStartQpc = QpcNow(nullptr);
 	ctx->AudioRunStamp = KeQueryInterruptTime();
 	ctx->AudioRunning = TRUE;
+	ctx->AudioHeard = 0;
+	ctx->AudioSkippedBytes = 0;
 	ctx->AudioDroppedBytes = 0;
 	ctx->AudioTrimmedBytes = 0;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
@@ -160,4 +169,13 @@ bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx)
 	const bool running = ctx->AudioRunning != FALSE;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return running;
+}
+
+bool AudioStreamPlaying(_In_ DEVICE_CONTEXT* ctx)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const bool playing = ctx->AudioRunning != FALSE && ctx->AudioHeard != 0;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return playing;
 }

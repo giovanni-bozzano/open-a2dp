@@ -157,7 +157,15 @@ void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx)
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->AudioRunPending, 1);
-	// A stream suspended while Windows had nothing to play starts again with the audio.
+	// A new run earns the stream a fresh set of START attempts. The START itself waits for the
+	// first audio (SignalingOnAudioHeard); the edge still settles a session out of step with it.
+	InterlockedExchange(&ctx->EndpointStartAttempts, 0);
+	InterlockedExchange(&ctx->EndpointStreamPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingOnAudioHeard(_In_ DEVICE_CONTEXT* ctx)
+{
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
@@ -172,7 +180,10 @@ void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx)
 
 void SignalingOnMediaChannelOpen(_In_ DEVICE_CONTEXT* ctx)
 {
-	InterlockedExchange(&ctx->StartPending, 1);
+	// Opening the transport says nothing about whether audio is playing: the endpoint edge is
+	// what decides START, and the work item reads this through the same check as every other
+	// edge. A sink that opens the channel while Windows plays finds the stream already running.
+	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 

@@ -320,7 +320,6 @@ struct DEVICE_CONTEXT
 	// next incoming channel is accepted (through RejectRequest) as media transport.
 	volatile LONG MediaAcceptAllowed;
 	volatile LONG MediaAcceptPending;
-	volatile LONG StartPending;
 
 	// AVDTP session (signaling/). SessionLock serializes the session, the
 	// write buffer and read resubmission; all of it runs at PASSIVE_LEVEL.
@@ -351,10 +350,15 @@ struct DEVICE_CONTEXT
 	volatile LONG SignalingIncoming;
 	// Set by the ACX stream run (SignalingOnAudioRun) for the signaling work item.
 	volatile LONG AudioRunPending;
-	// Set by an endpoint pause or resume (SignalingOnAudioPause/Run). The work item makes the
-	// AVDTP stream follow the endpoint and keeps this set until the session can do that, because
+	// Set by an endpoint pause, run or first audio (SignalingOnAudioPause/Run/Heard) and by every
+	// session transition to Open or Streaming. The work item makes the AVDTP stream follow
+	// whether the endpoint plays and keeps this set until the session can do that, because
 	// SUSPEND only exists from Streaming and START only from Open.
 	volatile LONG EndpointStreamPending;
+	// STARTs the endpoint reconciliation sent since the endpoint last ran or a renegotiation
+	// began. A sink that refuses START, or a media path that fails again at once, would
+	// otherwise be restarted by every transition back to Open.
+	volatile LONG EndpointStartAttempts;
 	// Byte 0 of the SBC capabilities the sink advertised in the last discovery (rates and
 	// channel modes), 0 until one ran. Determines PCM availability independently of preferences.
 	volatile LONG SinkSbcCapabilities;
@@ -414,10 +418,10 @@ struct DEVICE_CONTEXT
 	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
 	// Windows only re-reads an endpoint's formats when it rebuilds the endpoint, so a format
-	// change while a stream runs unplugs the jack for AudioJackFlapMs and plugs it back in
+	// change unplugs the jack for AudioJackFlapMs and plugs it back in
 	// (AudioRestartRenderStream). JackFlap is set for that window, JackFlapTimer ends it and
 	// JackFlapWorkItem does the passive-level work that ending it needs.
-	BOOLEAN JackFlap;
+	volatile LONG JackFlap;
 	WDFTIMER JackFlapTimer;
 	WDFWORKITEM JackFlapWorkItem;
 	// The streaming pin and the render format objects listed on it. A changed endpoint
@@ -429,10 +433,19 @@ struct DEVICE_CONTEXT
 	ACXDATAFORMATLIST DefaultModeFormats;
 	ACXDATAFORMAT FormatObjects[AudioRenderFormatCount];
 	WDFWAITLOCK FormatLock;
-	ULONG FormatsListed;
+	// Published whole once a rebuild ends, so readers outside FormatLock (the stream validator,
+	// status) never see the empty set a rebuild passes through.
+	volatile ULONG FormatsListed;
 	// Index of the format that leads both lists. Windows opens the shared-mode stream with
 	// the first listed format, so the selection has to come first (AudioApplyEndpointFormats).
 	ULONG FirstListedIndex;
+	// Stream formats refused because the endpoint does not offer them, and the last one asked
+	// for. A refused stream is a player that never plays, so status reports both.
+	volatile LONG RefusedStreams;
+	volatile LONG JackFlaps;
+	// The last refused format as rate << 32 | channels << 16 | valid bits, written in one store
+	// so status never pairs one refusal's rate with another's depth.
+	volatile LONG64 RefusedFormat;
 	PMDL AudioMdl;
 	PUCHAR AudioBuffer;
 	ULONG AudioPacketSize;
@@ -442,6 +455,15 @@ struct DEVICE_CONTEXT
 	// Interrupt time the endpoint last started running. The audio side measures the start latency
 	// against the AVDTP START that has to complete before media can drain the ring.
 	ULONGLONG AudioRunStamp;
+	// Audio the endpoint rendered while media was stopped, which the copy skips instead of
+	// queueing; MediaStart reports and resets it.
+	ULONGLONG AudioSkippedBytes;
+	// Set once a run renders a non-silent sample. Windows runs the stream around an endpoint
+	// rebuild with nothing to play, so START waits for this rather than the run edge.
+	volatile LONG AudioHeard;
+	// PCM bytes one SBC packet consumes while an SBC stream runs, 0 otherwise. The copy wakes
+	// the media work item when the ring first holds that much.
+	volatile LONG MediaPacketPcmBytes;
 	ULONGLONG AudioBasePosition;
 	ULONGLONG AudioCopiedPosition;
 	ULONGLONG AudioCompletedPackets;
@@ -632,6 +654,10 @@ void SignalingRequestSuspend(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx);
 
+// The running endpoint rendered its first non-silent audio: the work item starts the stream.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnAudioHeard(_In_ DEVICE_CONTEXT* ctx);
+
 // The negotiated AAC bitrate does not fit the media channel's real MTU (it was chosen
 // before the channel opened): reconfigures in place once per connection at a bitrate the
 // link carries instead of leaving the stream silent.
@@ -700,6 +726,12 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 // nothing is due, so the silence a stream sends then is a pause and not a gap.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx);
+
+// True while the render stream runs and has rendered audio that is not silence in this run.
+// The AVDTP stream follows this, so a run Windows makes only to rebuild the endpoint does not
+// start it.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+bool AudioStreamPlaying(_In_ DEVICE_CONTEXT* ctx);
 
 // media/
 _IRQL_requires_(PASSIVE_LEVEL)

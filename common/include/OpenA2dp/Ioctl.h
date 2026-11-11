@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 3;
+constexpr uint32_t kAbiVersion = 4;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -228,6 +228,22 @@ struct Status {
 	uint32_t abiVersion;
 	uint32_t avdtpState; // Avdtp::SessionState
 	MediaState mediaState;
+	// 1 while Windows is clocking the render stream. A session can be Open while it does, and
+	// Streaming only ever follows it, so this is the half of the state the AVDTP lines hide.
+	uint32_t endpointRunning;
+	// How many formats the endpoint lists now, and how many stream formats it refused since the
+	// device started, with the last one refused. A player that is refused a stream is silent
+	// without any error reaching the user, so both are part of the report.
+	uint32_t listedFormats;
+	uint32_t refusedStreams;
+	uint32_t refusedRate;
+	uint32_t refusedChannels;
+	uint32_t refusedBits;
+	// Endpoint rebuilds asked for by a format change, and whether the sink jack is reported
+	// unplugged right now: Windows opens no stream at all while it is, and that is silence
+	// with nothing in the session to show for it.
+	uint32_t jackFlaps;
+	uint32_t jackUnplugged;
 	uint32_t codec;
 	uint32_t sampleRate;
 	uint32_t channels;
@@ -377,7 +393,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 288, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 320, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

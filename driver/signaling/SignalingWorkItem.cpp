@@ -30,7 +30,11 @@ static void FinishMediaOpen(DEVICE_CONTEXT* ctx)
 	{
 		if (ctx->Session.State() == Avdtp::SessionState::Open)
 		{
-			Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
+			// START is the endpoint's request, not the channel's: a renegotiation with nothing
+			// playing opens a channel for a stream that must stay suspended, and starting it
+			// would put the sink in Streaming with silence behind it and no pause to end it.
+			// The endpoint edge is what starts the stream, and it is decided below.
+			InterlockedExchange(&ctx->EndpointStreamPending, 1);
 		}
 		else
 		{
@@ -193,6 +197,8 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 static void BeginCodecSwitchClose(DEVICE_CONTEXT* ctx)
 {
 	ctx->ReconfigurePhase = ReconfigureNone;
+	// A renegotiation is a new stream, so the endpoint gets fresh START attempts for it.
+	InterlockedExchange(&ctx->EndpointStartAttempts, 0);
 	// A rediscovery after a close is the retry for an MTU mismatch, so the pending
 	// in-place reconfiguration must not also run.
 	InterlockedExchange(&ctx->MtuRenegotiate, 0);
@@ -224,6 +230,7 @@ static void BeginCodecSwitchClose(DEVICE_CONTEXT* ctx)
 static void BeginFormatSwitch(DEVICE_CONTEXT* ctx)
 {
 	ctx->ReconfigurePhase = ReconfigureNone;
+	InterlockedExchange(&ctx->EndpointStartAttempts, 0);
 	InterlockedExchange(&ctx->MtuRenegotiate, 0);
 	if (ctx->Session.State() == Avdtp::SessionState::Streaming)
 	{
@@ -279,6 +286,7 @@ static bool ReconfigureClosedStream(DEVICE_CONTEXT* ctx)
 // selector, so the request is clamped to the same range discovery would use.
 static void BeginReconfigure(DEVICE_CONTEXT* ctx)
 {
+	InterlockedExchange(&ctx->EndpointStartAttempts, 0);
 	uint8_t ie[Avdtp::kMaxCodecIe];
 	size_t ieLength = 0;
 	// A stream left without media because its AAC bitrate does not fit the real media MTU
@@ -353,6 +361,16 @@ static void ContinueReconfigure(DEVICE_CONTEXT* ctx)
 		{
 			OA2DP_WARN(ctx, "Signaling", "sink rejected the new parameters; closing to renegotiate");
 			BeginCodecSwitchClose(ctx);
+			return;
+		}
+		if (!AudioStreamPlaying(ctx))
+		{
+			// The parameters were renegotiated for a stream that is not playing - a setting
+			// changed while nothing plays, or the endpoint paused during the renegotiation. There
+			// is nothing to resume, and START here would put the sink in Streaming with silence
+			// behind it and no pause to end it. The next audio starts the stream.
+			ctx->ReconfigurePhase = ReconfigureNone;
+			OA2DP_INFO(ctx, "Signaling", "parameters applied while nothing plays; the stream stays suspended");
 			return;
 		}
 		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
@@ -539,17 +557,21 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 	BeginReconfigure(ctx);
 }
 
-// Makes the AVDTP stream follow the endpoint's run state. SUSPEND is legal only from Streaming
-// and START only from Open, so an edge that arrives mid-handshake leaves the request pending
-// and the response that settles the session runs this again.
+// Makes the AVDTP stream follow the endpoint: streaming while it plays audio, suspended
+// otherwise. Opening the transport, finishing a renegotiation and every transition to Open or
+// Streaming ask for this instead of deciding themselves: none of them says whether anything is
+// playing, and a stream started for an endpoint with nothing to play leaves the sink in
+// Streaming with silence behind it. SUSPEND is legal only from Streaming and START only from
+// Open, so an edge that arrives mid-handshake leaves the request pending and the response that
+// settles the session runs this again.
 static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 {
 	const Avdtp::SessionState state = ctx->Session.State();
-	const bool running = AudioStreamRunning(ctx);
-	if (state == Avdtp::SessionState::Streaming && !running)
+	const bool playing = AudioStreamPlaying(ctx);
+	if (state == Avdtp::SessionState::Streaming && !playing)
 	{
 		InterlockedExchange(&ctx->EndpointStreamPending, 0);
-		OA2DP_INFO(ctx, "AVDTP", "suspending stream, the endpoint paused");
+		OA2DP_INFO(ctx, "AVDTP", "suspending stream, the endpoint has nothing to play");
 		Transmit(ctx, ctx->Session.Suspend(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		if (ctx->Session.State() != Avdtp::SessionState::Suspending)
 		{
@@ -564,7 +586,7 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		}
 		return;
 	}
-	if (state == Avdtp::SessionState::Open && running)
+	if (state == Avdtp::SessionState::Open && playing)
 	{
 		// The channel and a settled command, or START would race the open or a reconfigure.
 		// Both re-enter this through their own completion.
@@ -574,18 +596,31 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 			return;
 		}
 		InterlockedExchange(&ctx->EndpointStreamPending, 0);
-		OA2DP_INFO(ctx, "AVDTP", "starting stream, the endpoint resumed");
+		// Every return to Open asks for this, so a sink that refuses START or a media path that
+		// fails again at once would be restarted forever; a run or a renegotiation re-arms it.
+		const LONG attempt = InterlockedIncrement(&ctx->EndpointStartAttempts);
+		if (attempt > kEndpointStartAttempts)
+		{
+			if (attempt == kEndpointStartAttempts + 1)
+			{
+				OA2DP_WARN(ctx, "AVDTP", "the stream did not stay up after %u starts; waiting for the next run",
+					static_cast<unsigned>(kEndpointStartAttempts));
+			}
+			return;
+		}
+		OA2DP_INFO(ctx, "AVDTP", "starting stream, the endpoint plays");
 		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		if (ctx->Session.State() != Avdtp::SessionState::Starting)
 		{
+			InterlockedDecrement(&ctx->EndpointStartAttempts);
 			InterlockedExchange(&ctx->EndpointStreamPending, 1); // the START never left
 		}
 		return;
 	}
 	// Settled and already matching, or no session to move: the request is spent. Every other
 	// state is a handshake in flight, which keeps it so the response decides.
-	const bool settled = (state == Avdtp::SessionState::Streaming && running) ||
-		(state == Avdtp::SessionState::Open && !running);
+	const bool settled = (state == Avdtp::SessionState::Streaming && playing) ||
+		(state == Avdtp::SessionState::Open && !playing);
 	const bool unusable = state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed ||
 		state == Avdtp::SessionState::Closing || state == Avdtp::SessionState::Aborting;
 	if (settled || unusable)
@@ -620,6 +655,7 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 		if (ctx->SignalingState == ChannelOpen)
 		{
 			ResetSession(ctx);
+			InterlockedExchange(&ctx->EndpointStartAttempts, 0);
 			if (InterlockedCompareExchange(&ctx->SignalingIncoming, 0, 0) != 0)
 			{
 				// The sink connected to us and normally starts its own AVDTP
@@ -684,12 +720,6 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	{
 		OA2DP_INFO(ctx, "Signaling", "audio started on a silent sink-initiated link; starting discovery");
 		Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
-	}
-
-	if (InterlockedExchange(&ctx->StartPending, 0) != 0 && ctx->Session.State() == Avdtp::SessionState::Open &&
-		ctx->MediaChannel != nullptr)
-	{
-		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	}
 
 	if (InterlockedExchange(&ctx->SuspendPending, 0) != 0 && ctx->Session.State() == Avdtp::SessionState::Streaming)

@@ -42,6 +42,7 @@ Ioctl::Status StreamingStatus()
 	status.packetsSent = 12;
 	status.pcmCapacity = 65536;
 	status.frameCapacity = 32768;
+	status.listedFormats = 4;
 	return status;
 }
 
@@ -206,6 +207,49 @@ TEST(StatusReport_ShowsAPinnedEndpointFormat)
 	const std::string report = Report(false, status, StreamingPreference());
 	CHECK(Contains(report, "endpoint format 48000 Hz, mono (pinned; offered alone)"));
 	CHECK(!Contains(report, "automatic (every sink format)"));
+}
+
+TEST(StatusReport_TellsWhetherWindowsRunsAnEndpoint)
+{
+	// The A2DP state follows the endpoint, never the other way round, so a session that says
+	// Open while Windows is already clocking a stream is only visible on this line.
+	Ioctl::Status status = StreamingStatus();
+	status.endpointRunning = 1;
+	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        running"));
+
+	status.endpointRunning = 0;
+	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        paused"));
+}
+
+TEST(StatusReport_ShowsRefusedStreamsInEveryMode)
+{
+	// A refused stream is a silent player whether or not the format is pinned.
+	Ioctl::Status status = StreamingStatus();
+	status.refusedStreams = 2;
+	status.refusedRate = 96000;
+	status.refusedChannels = 2;
+	status.refusedBits = 24;
+	CHECK(Contains(Report(false, status, StreamingPreference()), "2, last 96000 Hz 2 ch 24-bit"));
+
+	status.endpointRate = 48000;
+	status.endpointChannels = 2;
+	CHECK(Contains(Report(false, status, StreamingPreference()), "2, last 96000 Hz 2 ch 24-bit"));
+
+	status.refusedStreams = 0;
+	CHECK(!Contains(Report(false, status, StreamingPreference()), "refused streams"));
+}
+
+TEST(StatusReport_ShowsAnEndpointThatCannotOpen)
+{
+	Ioctl::Status status = StreamingStatus();
+	CHECK(!Contains(Report(false, status, StreamingPreference()), "listed formats"));
+	CHECK(!Contains(Report(false, status, StreamingPreference()), "sink jack"));
+
+	status.listedFormats = 0;
+	status.jackUnplugged = 1;
+	const std::string report = Report(false, status, StreamingPreference());
+	CHECK(Contains(report, "none (Windows cannot open a stream)"));
+	CHECK(Contains(report, "unplugged (endpoint rebuild in progress"));
 }
 
 TEST(StatusReport_NeedsAStatus)

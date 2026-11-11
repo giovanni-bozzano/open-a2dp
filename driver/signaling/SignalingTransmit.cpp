@@ -130,6 +130,16 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 					static_cast<unsigned>(ctx->Session.DiscoveryError()));
 			}
 		}
+		if (state == Avdtp::SessionState::Open || state == Avdtp::SessionState::Streaming)
+		{
+			// The sink can start or suspend the stream by itself, and a media failure suspends
+			// it, so every settled state is checked against what the endpoint plays.
+			InterlockedExchange(&ctx->EndpointStreamPending, 1);
+			if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
+			{
+				WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+			}
+		}
 		if (state == Avdtp::SessionState::Open)
 		{
 			// Nothing may keep sending into an open stream: a stream that does after a suspend

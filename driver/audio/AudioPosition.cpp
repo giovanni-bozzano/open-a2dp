@@ -30,6 +30,36 @@ ULONGLONG CurrentPositionLocked(DEVICE_CONTEXT* ctx, ULONGLONG* qpc)
 	return ctx->AudioBasePosition + frames * ctx->PinBytesPerFrame;
 }
 
+// True when the RT buffer span [from, to) holds a sample that is not silence. Only the last
+// buffer's worth is still there; silence is all-zero bytes at every depth the endpoint lists.
+// Caller holds AudioLock.
+static bool SpanHasAudio(const DEVICE_CONTEXT* ctx, ULONGLONG from, ULONGLONG to, ULONG bufferSize)
+{
+	if (to - from > bufferSize)
+	{
+		from = to - bufferSize;
+	}
+	for (ULONGLONG at = from; at < to;)
+	{
+		const ULONG offset = static_cast<ULONG>(at % bufferSize);
+		ULONG chunk = bufferSize - offset;
+		if (chunk > to - at)
+		{
+			chunk = static_cast<ULONG>(to - at);
+		}
+		const UCHAR* bytes = ctx->AudioBuffer + offset;
+		for (ULONG i = 0; i < chunk; ++i)
+		{
+			if (bytes[i] != 0)
+			{
+				return true;
+			}
+		}
+		at += chunk;
+	}
+	return false;
+}
+
 void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 {
 	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
@@ -37,15 +67,30 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 	{
 		return;
 	}
+	// The AVDTP stream starts on the first audio, not on the run edge: Windows also runs the
+	// stream around an endpoint rebuild with nothing to play. Checked before the skip below,
+	// because until START completes media is stopped.
+	if (ctx->AudioHeard == 0 && ctx->AudioRunning &&
+		SpanHasAudio(ctx, ctx->AudioCopiedPosition, position, bufferSize))
+	{
+		ctx->AudioHeard = 1;
+		SignalingOnAudioHeard(ctx);
+	}
 	// With media stopped nothing consumes the ring, and the start that follows flushes it: copying
 	// now only fills it until the bound trims the whole of it away, which is a trim per tick that
-	// means nothing. Move the reference instead, the same way the flush drops this audio once.
+	// means nothing. Move the reference instead, the same way the flush drops this audio once,
+	// and count it so MediaStart can report what the wait for the stream cost.
 	if (!ctx->MediaActive)
 	{
+		if (ctx->AudioRunning && position > ctx->AudioCopiedPosition)
+		{
+			ctx->AudioSkippedBytes += position - ctx->AudioCopiedPosition;
+		}
 		ctx->AudioCopiedPosition = position;
 		return;
 	}
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+	const ULONG readableBefore = ring.ReadableBytes();
 
 	// Never copy more than one buffer: anything older was already overwritten.
 	ULONGLONG copied = ctx->AudioCopiedPosition;
@@ -72,6 +117,15 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		copied += chunk;
 	}
 	ctx->AudioCopiedPosition = copied;
+
+	// An SBC stream waits for a whole packet of PCM; waking it when the ring first holds one
+	// means the wait ends with the audio instead of on the next timer tick.
+	const LONG packetBytes = ctx->MediaPacketPcmBytes;
+	if (packetBytes > 0 && readableBefore < static_cast<ULONG>(packetBytes) &&
+		ring.ReadableBytes() >= static_cast<ULONG>(packetBytes))
+	{
+		WdfWorkItemEnqueue(ctx->MediaWorkItem);
+	}
 
 	// Bound the backlog: the ring is a FIFO with no other trim, so after a stall (transport,
 	// service or DPC) it holds old audio that the encoder keeps draining at real time. Drop the

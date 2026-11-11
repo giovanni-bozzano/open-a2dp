@@ -251,6 +251,21 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		{
 			out->mediaState = Ioctl::MediaState::Streaming;
 		}
+		out->endpointRunning = AudioStreamRunning(ctx) ? 1 : 0;
+		out->listedFormats = 0;
+		const ULONG listed = ctx->FormatsListed;
+		for (ULONG bit = 0; bit < AudioRenderFormatCount; ++bit)
+		{
+			out->listedFormats += (listed & (1u << bit)) != 0 ? 1 : 0;
+		}
+		out->refusedStreams = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->RefusedStreams, 0, 0));
+		const ULONGLONG refused =
+			static_cast<ULONGLONG>(InterlockedCompareExchange64(&ctx->RefusedFormat, 0, 0));
+		out->refusedRate = static_cast<uint32_t>(refused >> 32);
+		out->refusedChannels = static_cast<uint32_t>((refused >> 16) & 0xFFFF);
+		out->refusedBits = static_cast<uint32_t>(refused & 0xFFFF);
+		out->jackFlaps = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->JackFlaps, 0, 0));
+		out->jackUnplugged = InterlockedCompareExchange(&ctx->JackFlap, 0, 0) != 0 ? 1 : 0;
 		out->codec = ctx->ActiveCodec;
 		out->sampleRate = ctx->ActiveSampleRate;
 		out->channels = ctx->ActiveChannels;
@@ -499,13 +514,12 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			{
 				OA2DP_WARN(ctx, "Service", "applying the endpoint format failed 0x%08X", formatStatus);
 			}
-			if (ctx->AudioStream != nullptr)
-			{
-				// A running stream keeps the format it was opened with, and Windows re-reads the
-				// offered formats only when it rebuilds the endpoint; unplugging the jack briefly
-				// makes it close the stream and open the new format.
-				AudioRestartRenderStream(ctx);
-			}
+			// Windows keeps the format it cached for the endpoint, so only a rebuilt endpoint
+			// offers the new one: without this, a player that starts afterwards asks for the
+			// old format and is refused the stream, and nothing is heard. That holds whether or
+			// not a stream is open now. A stream Windows runs around the rebuild starts the A2DP
+			// stream only once audio reaches it, so the rebuild alone does not reach Streaming.
+			AudioRestartRenderStream(ctx);
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;

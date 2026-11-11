@@ -126,7 +126,9 @@ NTSTATUS RebuildListing(_In_ DEVICE_CONTEXT* ctx, ULONG desired, ULONG startInde
 			}
 		}
 	}
-	ctx->FormatsListed = 0;
+	// Built aside and published whole below: readers outside FormatLock keep seeing the
+	// previous set rather than the empty one this rebuild passes through.
+	ULONG listed = 0;
 	for (ULONG n = 0; n < AudioRenderFormatCount; ++n)
 	{
 		const ULONG i = (startIndex + n) % AudioRenderFormatCount;
@@ -148,8 +150,9 @@ NTSTATUS RebuildListing(_In_ DEVICE_CONTEXT* ctx, ULONG desired, ULONG startInde
 			}
 			continue;
 		}
-		ctx->FormatsListed |= 1u << i;
+		listed |= 1u << i;
 	}
+	ctx->FormatsListed = listed;
 	return status;
 }
 
@@ -166,12 +169,6 @@ USHORT PcmValidBits(const KSDATAFORMAT_WAVEFORMATEX& wave)
 	}
 	return pcm.wBitsPerSample;
 }
-
-namespace
-{
-// Defined with the endpoint listing below; the validator asks it which formats are offered.
-ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx);
-} // namespace
 
 NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT format)
 {
@@ -216,14 +213,14 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	{
 		pcmFormat = pcmFormat && pcm.wFormatTag == WAVE_FORMAT_PCM;
 	}
-	const ULONG desired = DesiredFormats(ctx);
+	// Offered, not merely supported: a pinned endpoint format is offered alone, and a stream at
+	// any other format would move the pin away from the setting Windows kept using. The listing
+	// is read as one published set, and it already narrows the sink's formats to the setting.
 	const ULONG listed = ctx->FormatsListed;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
-		// Offered, not merely supported: a pinned endpoint format is offered alone, and a stream
-		// at any other format would move the pin away from the setting Windows kept using. The
-		// depth is part of the check, because 24-in-32 follows aptX HD rather than SBC.
-		if (pcmFormat && (listed & (1u << i)) != 0 && (desired & (1u << i)) != 0 &&
+		// The depth is part of the check, because 24-in-32 follows aptX HD rather than SBC.
+		if (pcmFormat && (listed & (1u << i)) != 0 &&
 			pcm.nSamplesPerSec == AudioRenderRateAt(i) && pcm.nChannels == AudioRenderChannelsAt(i) &&
 			validBits == AudioRenderValidBitsAt(i))
 		{
@@ -233,7 +230,15 @@ NTSTATUS AudioValidatePinFormat(_In_ DEVICE_CONTEXT* ctx, _In_ ACXDATAFORMAT for
 	}
 	if (!NT_SUCCESS(status))
 	{
-		OA2DP_WARN(ctx, "Audio", "stream format is not one the endpoint lists; refusing it");
+		// A refused stream is a silent player: Windows fails the stream it asked for and no
+		// error reaches the user, so the request is kept for the status report.
+		InterlockedIncrement(&ctx->RefusedStreams);
+		InterlockedExchange64(&ctx->RefusedFormat,
+			static_cast<LONG64>((static_cast<ULONGLONG>(pcm.nSamplesPerSec) << 32) |
+				(static_cast<ULONGLONG>(pcm.nChannels) << 16) | validBits));
+		OA2DP_WARN(ctx, "Audio",
+			"stream format %u Hz %u ch %u-bit is not one the endpoint lists; refusing it",
+			pcm.nSamplesPerSec, pcm.nChannels, validBits);
 	}
 	return status;
 }
@@ -519,9 +524,10 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	// Editing the lists entry by entry does not raise the pin's format-change event, and
 	// without it Windows keeps a running stream at the format it was opened with. The event
 	// makes the audio engine re-query the endpoint and rebuild the shared-mode stream at the
-	// default this list now leads with. The first build happens while the circuit is still
-	// being created, when there is no client to notify, and completing it from there would
-	// re-enter ACX.
+	// default this list now leads with. The engine answers the event by running a stream even
+	// when nothing plays, which is why the AVDTP start follows the audio and not the run edge.
+	// The first build happens while the circuit is still being created, when there is no
+	// client to notify, and completing it from there would re-enter ACX.
 	if (!firstBuild)
 	{
 		const NTSTATUS notifyStatus = AcxPinNotifyDataFormatChange(pin);

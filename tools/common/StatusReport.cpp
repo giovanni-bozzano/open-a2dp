@@ -115,6 +115,17 @@ void AppendSinkFormats(std::string& text, const Ioctl::Status& status)
 
 void AppendEndpointFormat(std::string& text, const Ioctl::Status& status)
 {
+	// A pin the sink cannot serve, or a list left empty, is why nothing plays, in either mode.
+	if (status.listedFormats == 0)
+	{
+		AppendLine(text, "listed formats", "none (Windows cannot open a stream)");
+	}
+	if (status.refusedStreams != 0)
+	{
+		AppendLine(text, "refused streams",
+				   Format("%u, last %u Hz %u ch %u-bit", status.refusedStreams, status.refusedRate,
+						  status.refusedChannels, status.refusedBits));
+	}
 	// Windows plays the first listed format and ignores the Sound-settings pick, so this line is
 	// the answer to "what will the shared-mode stream run at" whenever it is pinned.
 	if (status.endpointRate == 0)
@@ -186,6 +197,14 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.abiVersion", status.abiVersion);
 	AppendField(text, "status.avdtpState", status.avdtpState);
 	AppendField(text, "status.mediaState", static_cast<uint32_t>(status.mediaState));
+	AppendField(text, "status.endpointRunning", status.endpointRunning);
+	AppendField(text, "status.listedFormats", status.listedFormats);
+	AppendField(text, "status.refusedStreams", status.refusedStreams);
+	AppendField(text, "status.refusedRate", status.refusedRate);
+	AppendField(text, "status.refusedChannels", status.refusedChannels);
+	AppendField(text, "status.refusedBits", status.refusedBits);
+	AppendField(text, "status.jackFlaps", status.jackFlaps);
+	AppendField(text, "status.jackUnplugged", status.jackUnplugged);
 	AppendField(text, "status.codec", status.codec);
 	AppendField(text, "status.sampleRate", status.sampleRate);
 	AppendField(text, "status.channels", status.channels);
@@ -382,6 +401,15 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	}
 	AppendLine(text, "AVDTP", AvdtpStateName(status.avdtpState));
 	AppendLine(text, "media", MediaStateName(static_cast<uint32_t>(status.mediaState)));
+	// Windows runs a stream of its own around an endpoint rebuild, and only that run can start
+	// the A2DP stream, so whether the endpoint is running is half of the session state.
+	AppendLine(text, "endpoint", status.endpointRunning != 0 ? "running" : "paused");
+	// Windows opens no stream at all while it shows the endpoint unplugged, so a flap that did
+	// not end is silence with nothing in the session to show for it.
+	if (status.jackUnplugged != 0)
+	{
+		AppendLine(text, "sink jack", "unplugged (endpoint rebuild in progress; nothing can play)");
+	}
 	// What the driver holds ahead of live audio: the pacing lead plus whatever the rings still
 	// have to encode. The sink's own buffering is not reported by any A2DP profile, so this is
 	// the part we control, not the whole mouth-to-ear delay.
