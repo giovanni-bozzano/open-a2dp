@@ -167,8 +167,11 @@ its sequencing are in [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-ap
 SBC frames per packet is the other latency knob: the MTU normally decides how many frames a
 packet carries (seven at bitpool 53 and a 895-byte MTU, about 20 ms of audio), and capping it
 shortens the packet. The cap is applied when the packet is built from the value resolved at
-stream start, so a change rebuilds the stream like the other parameters. AAC and both aptX
-codecs carry one access unit per packet by design and ignore the cap.
+stream start, so a change rebuilds the stream like the other parameters. The cap trades
+latency for packet rate: one frame is 2.9 ms of audio, so the link has to carry a packet that
+often (one packet is in flight at a time), while four frames - 11.6 ms - is still shorter than
+the 20 ms a full packet carries and leaves the transport slack. AAC and both aptX codecs carry
+one access unit per packet by design and ignore the cap.
 
 The pacing lead is set from the settings window's `Pacing lead` field or
 `OpenA2dpCtl codec --preroll`: every codec is sent this far ahead of the media clock so the
