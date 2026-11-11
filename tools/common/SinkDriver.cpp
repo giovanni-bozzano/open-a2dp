@@ -477,26 +477,93 @@ bool DriverStreams(const std::string& reference)
 	return false;
 }
 
-// Whether the sink is playing is decided before anything is installed: PnP would stage the
-// driver and then veto the restart after several seconds, which is a stall that cannot end in a
-// switch either way. Both signals are needed. The audio session covers either driver, while the
-// driver still reports Streaming for the moment after a player stops, before it suspends.
-SwitchOutcome RefuseWhilePlaying(const std::string& reference, const std::string& instanceId,
-								std::string& error)
+// How long the audio engine may take to close the node's pin after the program that rendered to
+// it stops. Nothing reports that moment - the pin belongs to the engine, and PnP has no event
+// for it - so it is waited out in short steps instead of the restart being vetoed.
+constexpr int kSinkReleaseTimeoutMs = 3000;
+constexpr int kSinkReleaseStepMs = 100;
+
+bool SinkIdle(const std::string& reference, const std::string& instanceId)
 {
-	bool plays = false;
-	const bool sessionSays = SinkPlaysAudio(instanceId, plays);
-	if (!(sessionSays && plays) && !DriverStreams(reference))
-	{
-		return SwitchOutcome::Switched;
-	}
-	error = "the sink is playing, so Windows will not restart its A2DP node; stop playback (or "
-			"close the player), then try again. Nothing was changed.";
-	return SwitchOutcome::PlaysAudio;
+	SinkPlayback playback;
+	const bool sessionSays = ReadSinkPlayback(instanceId, playback);
+	return (!sessionSays || !playback.playing) && !DriverStreams(reference);
 }
 
-SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& error)
+bool WaitForSinkRelease(const std::string& reference, const std::string& instanceId)
 {
+	for (int waited = 0;; waited += kSinkReleaseStepMs)
+	{
+		if (SinkIdle(reference, instanceId))
+		{
+			return true;
+		}
+		if (waited >= kSinkReleaseTimeoutMs)
+		{
+			return false;
+		}
+		Sleep(kSinkReleaseStepMs);
+	}
+}
+
+// "spotify.exe", "spotify.exe and chrome.exe": the programs a refusal has to name.
+std::string PlayerNames(const std::vector<std::string>& players)
+{
+	std::string names;
+	for (const std::string& player : players)
+	{
+		names += names.empty() ? player : " and " + player;
+	}
+	return names;
+}
+
+// Whether the node can be restarted right now, pausing the program that holds it when one does.
+//
+// The audio engine keeps the node's pin open for as long as a program renders to the sink, so
+// pausing that program is the only way to release the node without ending its stream. Both
+// signals are needed: the audio session covers either driver, while the driver still reports
+// Streaming for the moment after a player stops, before it suspends.
+bool EnsureSinkIdle(const std::string& reference, const std::string& instanceId, std::string& paused,
+					std::string& error)
+{
+	SinkPlayback playback;
+	const bool sessionSays = ReadSinkPlayback(instanceId, playback);
+	if ((!sessionSays || !playback.playing) && !DriverStreams(reference))
+	{
+		return true;
+	}
+	const bool rendering = sessionSays && playback.playing;
+	std::string pauseError;
+	const bool asked = rendering && PauseSinkPlayback(playback.players, paused, pauseError);
+	if ((!rendering || asked) && WaitForSinkRelease(reference, instanceId))
+	{
+		return true;
+	}
+	const std::string names = PlayerNames(playback.players);
+	error.clear();
+	const std::string holder = names.empty() ? std::string("a program") : names;
+	if (!rendering)
+	{
+		error = "the sink is playing (" + holder + ") and the driver is still streaming to it";
+	}
+	else if (asked)
+	{
+		error = "the sink is playing (" + holder + ") and it did not let go after being paused";
+	}
+	else
+	{
+		error = "the sink is playing (" + holder + ") and it could not be paused" +
+				(pauseError.empty() ? std::string() : ": " + pauseError);
+	}
+	error += ", so Windows cannot restart its A2DP node. Nothing was changed: stop playback, "
+			 "then try again.";
+	return false;
+}
+
+SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, SwitchReport& report,
+							   std::string& error)
+{
+	report = {};
 	SinkDriverState state;
 	if (!ReadSinkDriver(reference, state, error))
 	{
@@ -520,8 +587,14 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 		SwitchOutcome outcome = SwitchOutcome::Switched;
 		if (NeedsRestart(dev))
 		{
-			outcome = RefuseWhilePlaying(reference, state.instanceId, error);
-			if (outcome == SwitchOutcome::Switched && !RestartNode(dev, error))
+			std::string paused;
+			const bool idle = EnsureSinkIdle(reference, state.instanceId, paused, error);
+			report.pausedPlayer = paused;
+			if (!idle)
+			{
+				outcome = SwitchOutcome::PlaysAudio;
+			}
+			else if (!RestartNode(dev, error))
 			{
 				outcome = SwitchOutcome::Failed;
 			}
@@ -535,11 +608,13 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 		error = state.problem.empty() ? "the driver package for that choice is not available" : state.problem;
 		return SwitchOutcome::Failed;
 	}
-	const SwitchOutcome allowed = RefuseWhilePlaying(reference, state.instanceId, error);
-	if (allowed != SwitchOutcome::Switched)
+	std::string paused;
+	if (!EnsureSinkIdle(reference, state.instanceId, paused, error))
 	{
-		return allowed;
+		report.pausedPlayer = paused;
+		return SwitchOutcome::PlaysAudio;
 	}
+	report.pausedPlayer = paused;
 	HDEVINFO set = INVALID_HANDLE_VALUE;
 	SP_DEVINFO_DATA dev = {};
 	if (!FindNode(reference, set, dev, error))

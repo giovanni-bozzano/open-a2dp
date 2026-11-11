@@ -64,6 +64,8 @@
 		<ClCompile>
 		  <RuntimeLibrary Condition="'$(Configuration)' == 'Debug'">MultiThreadedDebug</RuntimeLibrary>
 		  <RuntimeLibrary Condition="'$(Configuration)' == 'Release'">MultiThreaded</RuntimeLibrary>
+		  <!-- The WinRT calls the tools make report failure by throwing. -->
+		  <ExceptionHandling>Sync</ExceptionHandling>
 		</ClCompile>
 	  </ItemDefinitionGroup>
 </Project>

@@ -1779,8 +1779,8 @@ void SwitchSelectedDriver(HWND hwnd)
 	const std::string reference = state->devices[state->selected].reference;
 	const std::wstring title = SinkTitle(reference, state->deviceNames[state->selected]);
 	const std::wstring prompt = L"Switch " + title + L" to " + DriverTitle(target) +
-			L"?\n\nThe sink's A2DP device is restarted, so the audio stops for a moment, and the "
-			L"switch needs administrator rights.";
+			L"?\n\nThe sink's A2DP device is restarted, so the audio stops for a moment; a program "
+			L"playing to it is paused first. The switch needs administrator rights.";
 	if (MessageBoxW(hwnd, prompt.c_str(), L"Switch driver", MB_ICONQUESTION | MB_YESNO) != IDYES)
 	{
 		return;
@@ -1791,14 +1791,18 @@ void SwitchSelectedDriver(HWND hwnd)
 	// It is closed before the node restarts, not after.
 	CloseControl(*state);
 	std::string error;
-	const Tools::SwitchOutcome outcome = SwitchSinkDriver(reference, target, error);
+	Tools::SwitchReport report;
+	const Tools::SwitchOutcome outcome = SwitchSinkDriver(reference, target, report, error);
 	ReloadDevices(hwnd);
 	if (outcome != Tools::SwitchOutcome::Switched)
 	{
 		SetMessage(hwnd, Tools::Widen(error));
 		return;
 	}
-	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) + L".");
+	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) + L"." +
+					   (report.pausedPlayer.empty()
+								? std::wstring()
+								: L" " + Tools::Widen(report.pausedPlayer) + L" was paused."));
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)

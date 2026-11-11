@@ -61,15 +61,23 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 
 enum class SwitchOutcome {
 	Switched,   // the node now runs `target`
-	PlaysAudio, // nothing was changed: the sink is playing, so the node cannot be restarted
+	PlaysAudio, // nothing was changed: a program holds the node and could not be paused
 	Failed,     // nothing was changed, or the node kept the driver it had; `error` says why
+};
+
+struct SwitchReport
+{
+	// The program paused to free the node, as "spotify.exe"; empty when nothing had to be paused.
+	std::string pausedPlayer;
 };
 
 // Installs `target`'s package on that one devnode and restarts it, so the sink's endpoints and
 // any open stream go with it. Needs an elevated prompt; `error` names what failed. The sink
-// keeps its pairing and its other nodes. A sink that is playing is refused before anything is
-// touched (Windows could only stage the driver and veto the restart), so the caller can tell
-// the reader to stop playback and try again.
-SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& error);
+// keeps its pairing and its other nodes. A program rendering to the sink keeps the node open,
+// and Windows refuses to restart a node with an outstanding open, so that program is paused
+// first (see SinkPlayback.h): the audio engine, not the driver, owns the handle. A program that
+// cannot be paused makes the switch refuse before anything is touched, and `error` names it.
+SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, SwitchReport& report,
+							   std::string& error);
 
 } // namespace OpenA2dp::Tools

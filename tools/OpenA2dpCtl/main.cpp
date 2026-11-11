@@ -73,13 +73,13 @@ Commands:
             the other one: `driver opena2dp` takes the sink over from the inbox
             BthA2dp, `driver windows` hands it back. Only this sink's BTHENUM
             A2DP node is rebound, so other sinks keep their driver; the node
-            restarts and any open stream goes with it. While the sink is
-            playing, Windows will not restart the node, so the switch is
-            refused (exit 3) and nothing is changed: stop playback, then run
-            it again. The OpenA2dp package has
-            to be deployed once (scripts/deploy-vm.ps1) for the forward switch,
-            and the inbox driver has to still be a candidate for the node for
-            the way back.
+            restarts and any open stream goes with it. A program that renders
+            to the sink holds the node open, so it is paused first: Windows
+            cannot restart the node while a stream is open. A program that
+            cannot be paused makes the switch refuse (exit 3) and nothing is
+            changed. The OpenA2dp package has to be deployed once
+            (scripts/deploy-vm.ps1) for the forward switch, and the inbox
+            driver has to still be a candidate for the node for the way back.
   reset     Clear this sink's stored codec preference and endpoint format, so
             the automatic codec order and every sink-supported PCM format
             apply again.
@@ -802,7 +802,12 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 		return 0;
 	}
 
-	const SwitchOutcome outcome = SwitchSinkDriver(reference, target, error);
+	SwitchReport report;
+	const SwitchOutcome outcome = SwitchSinkDriver(reference, target, report, error);
+	if (!report.pausedPlayer.empty())
+	{
+		std::printf("paused %s, which was rendering to the sink\n", report.pausedPlayer.c_str());
+	}
 	if (outcome != SwitchOutcome::Switched)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());

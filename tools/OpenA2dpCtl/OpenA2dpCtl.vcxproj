@@ -15,8 +15,9 @@
 	<Link>
 	  <SubSystem>Console</SubSystem>
 	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it, cfgmgr32 restarts
-	       it, ole32 asks the audio engine whether the sink is playing. -->
-	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	       it, ole32 asks the audio engine whether the sink is playing, windowsapp pauses that
+	       program through the media transport manager. -->
+	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;ole32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	</Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -25,6 +26,7 @@
 	<ClCompile Include="..\common\ControlDevice.cpp" />
 	<ClCompile Include="..\common\SinkDriver.cpp" />
 	<ClCompile Include="..\common\SinkPlayback.cpp" />
+	<ClCompile Include="..\common\SinkPause.cpp" />
 	<ClCompile Include="..\common\Text.cpp" />
 	<ClInclude Include="..\common\StatusReport.h" />
 	<ClInclude Include="..\common\ControlDevice.h" />

@@ -8,10 +8,14 @@
 #include <cfgmgr32.h>
 #include <mmdeviceapi.h>
 
+#include <algorithm>
 #include <cwchar>
 
 namespace OpenA2dp::Tools {
 namespace {
+
+// The most players a message names: the list is for a sentence, not for a report.
+constexpr size_t kMaxPlayers = 4;
 
 // The render endpoint a device node owns: Windows creates one per audio devnode, as
 // SWD\MMDEVAPI\<endpoint id>, under the node that supplies the audio function. The endpoint id
@@ -47,9 +51,35 @@ bool DescendsFrom(DEVINST device, const std::wstring& nodeInstanceId)
 	return false;
 }
 
-// True when any session on that endpoint is active, which is audio being rendered. A paused
-// player leaves its session inactive, and the sink can be switched then.
-bool EndpointPlaying(IMMDevice* device)
+// The image name of the program that owns a session: what the reader recognises, and the end of
+// the app id a media session carries, which is how the two are matched when pausing. A session
+// of the system sounds has no process of its own, so it is not a holder that can be stopped.
+std::string ProcessName(DWORD processId)
+{
+	if (processId == 0)
+	{
+		return {};
+	}
+	const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+	if (process == nullptr)
+	{
+		return {};
+	}
+	wchar_t path[MAX_PATH] = {};
+	DWORD length = ARRAYSIZE(path);
+	std::string name;
+	if (QueryFullProcessImageNameW(process, 0, path, &length) != FALSE && length > 0)
+	{
+		const wchar_t* base = wcsrchr(path, L'\\');
+		name = Utf8(base != nullptr ? base + 1 : path);
+	}
+	CloseHandle(process);
+	return name;
+}
+
+// Reads the endpoint's sessions: whether one is active, and the programs that own them. False
+// when the session manager cannot be read at all, which leaves `playback` untouched.
+bool EndpointPlayback(IMMDevice* device, SinkPlayback& playback)
 {
 	IAudioSessionManager2* manager = nullptr;
 	if (FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
@@ -58,14 +88,13 @@ bool EndpointPlaying(IMMDevice* device)
 	{
 		return false;
 	}
-	bool playing = false;
 	IAudioSessionEnumerator* sessions = nullptr;
 	if (SUCCEEDED(manager->GetSessionEnumerator(&sessions)) && sessions != nullptr)
 	{
 		int count = 0;
 		if (SUCCEEDED(sessions->GetCount(&count)))
 		{
-			for (int index = 0; index < count && !playing; ++index)
+			for (int index = 0; index < count; ++index)
 			{
 				IAudioSessionControl* control = nullptr;
 				if (FAILED(sessions->GetSession(index, &control)) || control == nullptr)
@@ -75,7 +104,25 @@ bool EndpointPlaying(IMMDevice* device)
 				AudioSessionState state = AudioSessionStateInactive;
 				if (SUCCEEDED(control->GetState(&state)) && state == AudioSessionStateActive)
 				{
-					playing = true;
+					playback.playing = true;
+					IAudioSessionControl2* detailed = nullptr;
+					DWORD processId = 0;
+					if (SUCCEEDED(control->QueryInterface(IID_PPV_ARGS(&detailed))) &&
+						detailed != nullptr &&
+						SUCCEEDED(detailed->GetProcessId(&processId)))
+					{
+						const std::string name = ProcessName(processId);
+						if (!name.empty() && playback.players.size() < kMaxPlayers &&
+							std::find(playback.players.begin(), playback.players.end(), name) ==
+									playback.players.end())
+						{
+							playback.players.push_back(name);
+						}
+					}
+					if (detailed != nullptr)
+					{
+						detailed->Release();
+					}
 				}
 				control->Release();
 			}
@@ -83,14 +130,14 @@ bool EndpointPlaying(IMMDevice* device)
 		sessions->Release();
 	}
 	manager->Release();
-	return playing;
+	return true;
 }
 
 } // namespace
 
-bool SinkPlaysAudio(const std::string& nodeInstanceId, bool& plays)
+bool ReadSinkPlayback(const std::string& nodeInstanceId, SinkPlayback& playback)
 {
-	plays = false;
+	playback = {};
 	const std::wstring node = Widen(nodeInstanceId);
 
 	// The window may already own the apartment; either way COM has to be initialised here.
@@ -101,7 +148,6 @@ bool SinkPlaysAudio(const std::string& nodeInstanceId, bool& plays)
 		return false;
 	}
 
-	bool read = false;
 	IMMDeviceEnumerator* enumerator = nullptr;
 	if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
 								   __uuidof(IMMDeviceEnumerator),
@@ -115,7 +161,7 @@ bool SinkPlaysAudio(const std::string& nodeInstanceId, bool& plays)
 			UINT count = 0;
 			if (SUCCEEDED(endpoints->GetCount(&count)))
 			{
-				for (UINT index = 0; index < count && !plays; ++index)
+				for (UINT index = 0; index < count && !playback.known; ++index)
 				{
 					IMMDevice* device = nullptr;
 					if (FAILED(endpoints->Item(index, &device)) || device == nullptr)
@@ -127,10 +173,9 @@ bool SinkPlaysAudio(const std::string& nodeInstanceId, bool& plays)
 					{
 						DEVINST endpointNode = 0;
 						if (EndpointDevNode(id, endpointNode) &&
-							DescendsFrom(endpointNode, node))
+							DescendsFrom(endpointNode, node) && EndpointPlayback(device, playback))
 						{
-							read = true;
-							plays = EndpointPlaying(device);
+							playback.known = true;
 						}
 						CoTaskMemFree(id);
 					}
@@ -146,7 +191,7 @@ bool SinkPlaysAudio(const std::string& nodeInstanceId, bool& plays)
 	{
 		CoUninitialize();
 	}
-	return read;
+	return playback.known;
 }
 
 } // namespace OpenA2dp::Tools
