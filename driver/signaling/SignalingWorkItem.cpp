@@ -555,6 +555,13 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		{
 			InterlockedExchange(&ctx->EndpointStreamPending, 1); // the SUSPEND never left
 		}
+		else
+		{
+			// The request is queued, so this stream ends here: nothing more is sent into it, and a
+			// sink that refuses the suspend comes back through the transition to Streaming, where
+			// MediaStart builds the stream again instead of re-initialising a live one under it.
+			MediaStop(ctx);
+		}
 		return;
 	}
 	if (state == Avdtp::SessionState::Open && running)
