@@ -17,6 +17,7 @@ struct Colors
 	COLORREF border;       // the frame of a group, drawn by the window
 	COLORREF section;      // a pressed owner-drawn button's face
 	COLORREF alternateRow; // every second row of the session panel
+	COLORREF selection;    // the rows selected there, so they can be copied
 	COLORREF good;
 	COLORREF warning;
 	COLORREF error;

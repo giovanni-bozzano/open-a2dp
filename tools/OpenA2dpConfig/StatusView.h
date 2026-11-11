@@ -8,8 +8,9 @@
 // run of the window.
 //
 // It is painted by this window and not by a common control: an Explorer-themed list marks
-// the row under the cursor, and this view is a read-only report - only the divider reacts to
-// the pointer, no row can be clicked or selected.
+// the row under the cursor, and this view is a read-only report. A click selects the row under
+// it - Ctrl adds rows to the selection for a bug report - and Ctrl+C copies the selected rows,
+// or the whole pane when nothing is selected; Ctrl+A selects everything.
 //
 // The text behind it is still Tools::BuildStatusReport - the caller builds the rows from
 // that report, so the panel and `OpenA2dpCtl status` cannot disagree.

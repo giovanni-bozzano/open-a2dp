@@ -4,6 +4,10 @@
 
 #include <windowsx.h>
 
+#include <algorithm>
+#include <cstring>
+#include <string>
+
 namespace OpenA2dp::ConfigUi {
 namespace {
 
@@ -27,6 +31,7 @@ constexpr int kMaxLabelColumnWidth = 2000; // anything larger is not a width thi
 struct ViewState
 {
 	std::vector<StatusRow> rows;
+	std::vector<bool> selected; // one flag per row, so a report can be copied out
 	std::wstring emptyText;
 	int scrollTop = 0; // pixels; the view scrolls smoothly, so the last row is fully reachable
 	int rowHeight = kRowHeight;
@@ -138,16 +143,18 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width, bool 
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
 	const RECT strip = {0, y, width, y + state.rowHeight};
+	Fill(dc, strip, row.section ? ThemeColors().section
+								: (shaded ? ThemeColors().alternateRow : ThemeColors().background));
+	const bool selected = index < static_cast<int>(state.selected.size()) && state.selected[index];
+	if (selected)
+	{
+		Fill(dc, strip, ThemeColors().selection);
+	}
 	if (row.section)
 	{
-		Fill(dc, strip, ThemeColors().section);
 		// The band closes with a hairline, which is what separates one group from the next.
-		RECT line = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
+		const RECT line = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
 		Fill(dc, line, ThemeColors().border);
-	}
-	else
-	{
-		Fill(dc, strip, shaded ? ThemeColors().alternateRow : ThemeColors().background);
 	}
 	SelectObject(dc, row.section ? state.bold : state.normal);
 
@@ -178,6 +185,87 @@ void PaintDivider(HDC dc, const ViewState& state, int width, int height)
 	const COLORREF color = state.dragging || state.dividerHot ? ThemeColors().muted : ThemeColors().border;
 	RECT line = {divider, 0, divider + 1, height};
 	Fill(dc, line, color);
+}
+
+int RowAt(const ViewState& state, int y)
+{
+	const int index = (y + state.scrollTop) / state.rowHeight;
+	if (index < 0 || index >= static_cast<int>(state.rows.size()))
+	{
+		return -1;
+	}
+	return index;
+}
+
+// The selection outlives a refresh that only changes values; a different shape starts it over,
+// because the rows a flag belonged to are gone.
+void ResizeSelection(ViewState& state)
+{
+	if (state.selected.size() != state.rows.size())
+	{
+		state.selected.assign(state.rows.size(), false);
+	}
+}
+
+bool HasSelection(const ViewState& state)
+{
+	return std::find(state.selected.begin(), state.selected.end(), true) != state.selected.end();
+}
+
+// What a bug report needs: the selected rows, or every row when nothing is selected - the pane
+// is a report, so copying it whole is the common case.
+std::wstring CopyText(const ViewState& state)
+{
+	const bool onlySelected = HasSelection(state);
+	std::wstring text;
+	for (size_t i = 0; i < state.rows.size(); ++i)
+	{
+		if (onlySelected && (i >= state.selected.size() || !state.selected[i]))
+		{
+			continue;
+		}
+		const StatusRow& row = state.rows[i];
+		if (!text.empty())
+		{
+			text += L"\r\n";
+		}
+		text += row.label;
+		if (!row.section && !row.value.empty())
+		{
+			text += L": ";
+			text += row.value;
+		}
+	}
+	return text;
+}
+
+void CopyToClipboard(HWND window, const std::wstring& text)
+{
+	if (text.empty() || OpenClipboard(window) == FALSE)
+	{
+		return;
+	}
+	EmptyClipboard();
+	const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+	HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+	if (memory != nullptr)
+	{
+		void* target = GlobalLock(memory);
+		if (target != nullptr)
+		{
+			std::memcpy(target, text.c_str(), bytes);
+			GlobalUnlock(memory);
+			if (SetClipboardData(CF_UNICODETEXT, memory) != nullptr)
+			{
+				memory = nullptr; // the clipboard owns it now
+			}
+		}
+		if (memory != nullptr)
+		{
+			GlobalFree(memory);
+		}
+	}
+	CloseClipboard();
 }
 
 // The alternation a row at `index` gets, from the start of its section.
@@ -414,6 +502,27 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			InvalidateRect(window, nullptr, FALSE);
 			return 0;
 		}
+		if (state != nullptr)
+		{
+			// A click selects the row under it; Ctrl adds it to what is already selected. The
+			// view takes the focus so the copy shortcut reaches it.
+			const int index = RowAt(*state, GET_Y_LPARAM(lParam));
+			if ((wParam & MK_CONTROL) != 0 && index >= 0)
+			{
+				state->selected[index] = !state->selected[index];
+			}
+			else
+			{
+				std::fill(state->selected.begin(), state->selected.end(), false);
+				if (index >= 0)
+				{
+					state->selected[static_cast<size_t>(index)] = true;
+				}
+			}
+			SetFocus(window);
+			InvalidateRect(window, nullptr, FALSE);
+			return 0;
+		}
 		break;
 	case WM_LBUTTONUP:
 		if (state != nullptr && state->dragging)
@@ -431,6 +540,24 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
+	case WM_KEYDOWN:
+		if (state != nullptr && (GetKeyState(VK_CONTROL) & 0x8000) != 0)
+		{
+			switch (wParam)
+			{
+			case 'A':
+				ResizeSelection(*state);
+				std::fill(state->selected.begin(), state->selected.end(), true);
+				InvalidateRect(window, nullptr, FALSE);
+				return 0;
+			case 'C':
+				CopyToClipboard(window, CopyText(*state));
+				return 0;
+			default:
+				break;
+			}
+		}
+		break;
 	case WM_MOUSEWHEEL:
 		if (state != nullptr)
 		{
@@ -505,7 +632,7 @@ bool CreateStatusView(HWND parent, int id, int x, int y, int width, int height, 
 		return false;
 	}
 	const HWND window = CreateWindowExW(
-			0, kClassName, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL,
+			0, kClassName, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP,
 			x, y, width, height, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
 			GetModuleHandleW(nullptr), nullptr);
 	if (window == nullptr)
@@ -593,6 +720,7 @@ void UpdateStatusView(HWND parent, int id, const std::vector<StatusRow>& rows, c
 		row.label = emptyText;
 		state->rows.push_back(row);
 	}
+	ResizeSelection(*state);
 	UpdateColumns(window, *state);
 	UpdateScrollBar(window, *state);
 	ScrollTo(window, *state, state->scrollTop);
