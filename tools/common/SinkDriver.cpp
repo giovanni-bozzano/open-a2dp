@@ -452,12 +452,41 @@ bool EnumerateSinkNodes(std::vector<SinkNode>& nodes, std::string& error)
 	return true;
 }
 
-// Nothing is touched while the sink plays: PnP would stage the driver and then veto the restart
-// after several seconds, which is a stall that cannot end in a switch either way.
-SwitchOutcome RefuseWhilePlaying(const std::string& instanceId, std::string& error)
+// True while the driver reports a stream of its own on this sink. Only a sink on OpenA2dp has a
+// control device to ask; on the inbox driver the audio session is the only signal.
+bool DriverStreams(const std::string& reference)
+{
+	std::string error;
+	for (const Device& device : EnumerateDevices(error))
+	{
+		if (device.reference != reference)
+		{
+			continue;
+		}
+		const HANDLE handle = OpenControl(device, error);
+		if (handle == INVALID_HANDLE_VALUE)
+		{
+			return false;
+		}
+		Ioctl::Status status = {};
+		const bool read = ReadStatus(handle, status, error);
+		CloseHandle(handle);
+		return read && (status.mediaState == Ioctl::MediaState::Streaming ||
+						status.mediaState == Ioctl::MediaState::WaitingForEncoder);
+	}
+	return false;
+}
+
+// Whether the sink is playing is decided before anything is installed: PnP would stage the
+// driver and then veto the restart after several seconds, which is a stall that cannot end in a
+// switch either way. Both signals are needed. The audio session covers either driver, while the
+// driver still reports Streaming for the moment after a player stops, before it suspends.
+SwitchOutcome RefuseWhilePlaying(const std::string& reference, const std::string& instanceId,
+								std::string& error)
 {
 	bool plays = false;
-	if (!SinkPlaysAudio(instanceId, plays) || !plays)
+	const bool sessionSays = SinkPlaysAudio(instanceId, plays);
+	if (!(sessionSays && plays) && !DriverStreams(reference))
 	{
 		return SwitchOutcome::Switched;
 	}
@@ -491,7 +520,7 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 		SwitchOutcome outcome = SwitchOutcome::Switched;
 		if (NeedsRestart(dev))
 		{
-			outcome = RefuseWhilePlaying(state.instanceId, error);
+			outcome = RefuseWhilePlaying(reference, state.instanceId, error);
 			if (outcome == SwitchOutcome::Switched && !RestartNode(dev, error))
 			{
 				outcome = SwitchOutcome::Failed;
@@ -506,7 +535,7 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 		error = state.problem.empty() ? "the driver package for that choice is not available" : state.problem;
 		return SwitchOutcome::Failed;
 	}
-	const SwitchOutcome allowed = RefuseWhilePlaying(state.instanceId, error);
+	const SwitchOutcome allowed = RefuseWhilePlaying(reference, state.instanceId, error);
 	if (allowed != SwitchOutcome::Switched)
 	{
 		return allowed;
