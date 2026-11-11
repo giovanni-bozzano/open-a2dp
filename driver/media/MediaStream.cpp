@@ -102,6 +102,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->RtpSequence = 0;
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
+	ctx->MediaCaughtUp = FALSE;
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	// The PCM the endpoint queued before MediaStart predates this stream, exactly as the service
 	// encoders treat their own start: drop it, so the pacer fills the lead with silence rather

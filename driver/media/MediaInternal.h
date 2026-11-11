@@ -35,7 +35,7 @@ EVT_WDF_WORKITEM OnMediaWorkItem;
 void OnMediaTimer(_In_ WDFTIMER timer);
 bool MediaSendReady(DEVICE_CONTEXT* ctx, bool tick);
 bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length);
-ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples);
+ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples);
 ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples);
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick);
 void TickService(DEVICE_CONTEXT* ctx, bool tick);

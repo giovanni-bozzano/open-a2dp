@@ -11,12 +11,23 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	const ULONGLONG target =
 			elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * ctx->PacingLeadMs / 1000;
 
-	if (ctx->MediaSamplesSent >= target || !MediaSendReady(ctx, tick))
+	if (ctx->MediaSamplesSent >= target)
+	{
+		// Caught up with the lead once: from here a short read is starvation, not startup.
+		ctx->MediaCaughtUp = TRUE;
+		return;
+	}
+	if (!MediaSendReady(ctx, tick))
 	{
 		return;
 	}
+	// Samples the clock says are due now. A packet may carry more than that (it is built whole),
+	// and the frames past this point are legitimately audio from the future: the sink buffers
+	// them. Only what is missing inside this window is an underrun.
+	const ULONGLONG shortfall = target - ctx->MediaSamplesSent;
+	const uint32_t due = shortfall > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(shortfall);
 	uint32_t samples = 0;
-	const ULONG length = BuildSbcPacket(ctx, samples);
+	const ULONG length = BuildSbcPacket(ctx, due, samples);
 	if (length == 0)
 	{
 		OA2DP_ERROR(ctx, "Media", "packet build failed");

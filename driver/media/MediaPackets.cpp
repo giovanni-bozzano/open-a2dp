@@ -72,7 +72,7 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 // timeline, but the listener hears a gap. Count it in status.underruns and log it at most once a
 // second, so a pacing lead shorter than the sink needs is a number rather than only a sound.
 // Caller holds MediaLock.
-static void CountSbcUnderrun(DEVICE_CONTEXT* ctx, uint32_t silentFrames)
+static void CountSbcUnderrun(DEVICE_CONTEXT* ctx, uint32_t silentSamples)
 {
 	InterlockedIncrement(&ctx->Underruns);
 	const ULONGLONG now = KeQueryInterruptTime();
@@ -83,15 +83,18 @@ static void CountSbcUnderrun(DEVICE_CONTEXT* ctx, uint32_t silentFrames)
 	}
 	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
 	const ULONG silentMs =
-		rate == 0 ? 0 : static_cast<ULONG>(static_cast<uint64_t>(silentFrames) * 1000 / rate);
+		rate == 0 ? 0 : static_cast<ULONG>(static_cast<uint64_t>(silentSamples) * 1000 / rate);
 	OA2DP_WARN(ctx, "Media", "SBC underrun, %u ms of silence in this packet, %u since the last report",
 		silentMs, packets);
 	ctx->SbcUnderrunPackets = 0;
 	ctx->SbcUnderrunLogTime = now;
 }
 
-// Builds one RTP + SBC media packet into MediaBuffer. Caller holds MediaLock.
-ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
+// Builds one RTP + SBC media packet into MediaBuffer. `dueSamples` is how much of it the media
+// clock has already asked for; anything beyond that is normally unavailable because the sink is
+// meant to buffer it, so only a gap inside the due window counts as an underrun. Caller holds
+// MediaLock.
+ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples)
 {
 	const SbcFixed::Params& p = ctx->Encoder.GetParams();
 	// A stored cap shortens the packet: less audio buffered per packet, at the cost of more
@@ -112,13 +115,13 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	ctx->MediaBuffer[offset++] = SbcFixed::MediaPayloadHeader(frameCount);
 
 	const uint32_t spf = p.SamplesPerFrame();
-	uint32_t silentFrames = 0;
+	uint32_t silentSamples = 0;
 	for (size_t i = 0; i < frameCount; ++i)
 	{
 		const ULONG read = AudioReadPcm(ctx, ctx->PcmBuffer, spf);
 		if (read < spf)
 		{
-			silentFrames += spf - read;
+			silentSamples += (spf - read) * spf;
 		}
 		const size_t written = ctx->Encoder.Encode(ctx->PcmBuffer, ctx->MediaBuffer + offset, sizeof(ctx->MediaBuffer) - offset);
 		if (written == 0)
@@ -127,9 +130,16 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 		}
 		offset += written;
 	}
-	if (silentFrames != 0)
+	if (silentSamples != 0 && ctx->MediaCaughtUp)
 	{
-		CountSbcUnderrun(ctx, silentFrames);
+		// Part of the packet may lie past the media clock's target: the sink is meant to buffer
+		// that, and the ring does not have it yet. Only silence inside the due window is a gap
+		// the listener will hear, so a short tail is not an underrun.
+		const uint32_t missing = silentSamples < dueSamples ? silentSamples : dueSamples;
+		if (missing != 0)
+		{
+			CountSbcUnderrun(ctx, missing);
+		}
 	}
 
 	samples = static_cast<uint32_t>(frameCount * spf);
