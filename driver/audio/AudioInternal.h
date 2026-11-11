@@ -2,6 +2,8 @@
 
 #include "../Driver.h"
 
+#include <OpenA2dp/PcmBacklog.h>
+
 using namespace OpenA2dp;
 
 // Subsystem-private declarations; not a public driver interface.

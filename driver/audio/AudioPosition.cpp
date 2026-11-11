@@ -75,24 +75,14 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 	}
 	ctx->AudioCopiedPosition = copied;
 
-	// Bound the backlog. The ring is a FIFO with no other trim, so after a stall (transport,
-	// service or DPC) it holds old audio that the encoder keeps draining at real time and the
-	// stream stays that far behind live for the rest of its life. Drop the oldest frames
-	// instead: one skipped moment is better than a permanent offset.
+	// Bound the backlog: the ring is a FIFO with no other trim, so after a stall (transport,
+	// service or DPC) it holds old audio that the encoder keeps draining at real time. Drop the
+	// oldest frames instead: one skipped moment is better than a permanent offset.
 	const ULONG frameBytes = ctx->PinBytesPerFrame;
 	if (frameBytes != 0 && ctx->PinSampleRate != 0)
 	{
-		const ULONGLONG limit =
-			static_cast<ULONGLONG>(ctx->PinSampleRate) * frameBytes * AudioPcmBacklogMs / 1000;
-		const uint32_t readable = ring.ReadableBytes();
-		if (readable > limit + frameBytes)
-		{
-			uint32_t trim = readable - static_cast<uint32_t>(limit);
-			trim += frameBytes - 1;
-			trim -= trim % frameBytes;
-			ring.Skip(trim);
-			ctx->AudioTrimmedBytes += trim;
-		}
+		const uint32_t limit = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, AudioPcmBacklogMs);
+		ctx->AudioTrimmedBytes += PcmBacklog::Trim(ring, limit, frameBytes);
 	}
 
 	const ULONGLONG completed = position / ctx->AudioPacketSize;

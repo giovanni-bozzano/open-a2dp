@@ -32,6 +32,7 @@
 	<ClCompile Include="CommonTests.cpp" />
 	<ClCompile Include="AvdtpSourceTests.cpp" />
 	<ClCompile Include="FrameRecordTests.cpp" />
+	<ClCompile Include="PcmBacklogTests.cpp" />
 	<ClCompile Include="SbcFixedTests.cpp" />
 	<ClCompile Include="SbcFrameTests.cpp" />
 	<ClCompile Include="StatusReportTests.cpp" />
