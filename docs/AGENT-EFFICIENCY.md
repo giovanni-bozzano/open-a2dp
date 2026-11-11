@@ -1,16 +1,27 @@
 # Documentation map
 
-| File | Purpose | Update policy |
-|---|---|---|
-| `AGENTS.md` | Short, stable agent rules and code map | Only when constraints/workflows change |
-| `docs/STATUS.md` | Authoritative milestone states, blockers, priorities and exit gates | Only on plan-state changes; no diary |
-| `docs/HARDWARE-TESTS.md` | Manual hardware/Verifier test procedures | When tested behaviour or tooling changes |
-| `driver/README.md` | Map of independently compiled subsystem sources | When source layout changes |
-| Git commit messages | Individual changes, rationale, tests and validation limits | One logical change per commit |
-| `README.md` | Project introduction and build entry point | Keep status linked, not duplicated |
-| `docs/architecture/` | Indexed component, lifecycle, protocol and ABI designs | When the design changes |
-| `.agents/skills/*/SKILL.md` | On-demand operational workflows | When the workflow changes |
+## For a human
 
-Startup: read the short live status, Git status and five commit subjects. Search before reading implementation/design sections. Keep volatile state out of auto-loaded agent instructions; do not duplicate commit history in Markdown or create per-session handoffs.
+| File | What it answers |
+|---|---|
+| `README.md` | What the project is, what ships, how to build it |
+| `docs/STATUS.md` | Where the project stands: milestones, next three tasks, blockers |
+| `docs/HARDWARE-TESTS.md` | How to verify behaviour on a real sink, test by test (T1-T34) |
+| `docs/architecture/` | Why the code is shaped the way it is, one document per area ([index](architecture/README.md)) |
 
-Keep these files minimal under the budgets in `AGENTS.md`. Preserve unchanged text/order, make targeted edits only for substantive changes, and load skills on demand. Stable prefixes support cache reuse; concise files reduce context cost, but neither guarantees cache hits. Do not log token counts or cache statistics here.
+## For an agent
+
+| File | Use |
+|---|---|
+| `AGENTS.md` | Stable rules, code map, on-demand workflow list |
+| `docs/STATUS.md` | The only live plan. Read it first, with `git status --short` and `git log -n 5 --oneline` |
+| `.agents/skills/*/SKILL.md` | Operational workflows, loaded only when needed |
+| `docs/architecture/` | Design detail; load one document through its index, not the whole tree |
+
+Keep volatile state out of `AGENTS.md`, and never duplicate commit history in Markdown: Git is the
+record of what changed and why. `docs/STATUS.md` is rewritten when the plan changes, not appended
+to.
+
+Stay under the budgets in `AGENTS.md` (40 lines for `AGENTS.md` and `STATUS.md`, 30 per skill).
+Prefer replacing or removing text over adding it, and keep unchanged wording and section order so
+a stable prefix stays cache-friendly.

@@ -5,6 +5,16 @@ the encoder service and the event-driven signaling (see
 [event model](architecture/Event-Model.md)). A test passes only when every "Expect"
 holds and the [log check](#4-log-check-after-every-test) is clean.
 
+## Contents
+
+- [1. Setup](#1-setup-once): log capture, Verifier, uninstall check, baseline
+- [2. Tools](#2-tools-used-in-the-steps)
+- [3. Tests](#3-tests), by area: connection T1-T5, teardown T6-T10, power T11-T14, service
+  T15-T16, AAC and settings T17-T19 and T21-T23, window T24, handover T25-T28, latency T29-T33,
+  driver switching T34, soak T20
+- [4. Log check](#4-log-check-after-every-test)
+- [5. Reporting](#5-reporting)
+
 ## 1. Setup (once)
 
 Use the test VM (`scripts/deploy.ps1 -Vm -Build`) or a test-signing machine with a kernel
@@ -50,7 +60,7 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
 5. Turn it off when finished: `verifier /reset`, delete the `Parameters\Wdf` values,
    reboot.
 
-### 1.3 Restore check (M6 exit gate)
+### 1.3 Uninstall check
 The deploy script doubles as the restore check and needs no package, so it can run against
 whatever the VM has installed:
 
@@ -318,19 +328,11 @@ it), reattach.
    retry. If it insists, the stream never opens; `does not match the endpoint format` in
    the media log is the safety net, not the normal path.
 11. Switch codec and SBC/AAC parameters while playing: the offered list does not change
-    (a pinned format stays the only entry). The window has the same setting; CLI
-    `--rate`/`--channels` explain their removal.
-12. With old global/per-device `CodecPreferenceEndpointRate`/`EndpointChannels` values
-   already present, load the current ABI 1 development build: `GET_PREFERENCE` has no
-   rate/channel fields, those values are not read as an endpoint format, and Windows
-   still offers all sink-supported driver formats.
-   Even invalid old format values must not
-   discard valid codec parameters. On a stereo-only/44.1-only sink only those supported
-   choices appear after discovery; the initial four-format log is labelled provisional.
-13. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
+    (a pinned format stays the only entry). The window has the same setting.
+12. On a sink without an AAC SEP, `OpenA2dpCtl codec aac` is refused with `the sink does not
    advertise AAC (it offers SBC)`, and `status` lists `sink formats 44100 Hz, 48000 Hz, mono,
    stereo (SBC)`; Windows offers only the sink's formats.
-14. Discovery with an unchanged format set does not repeat `endpoint formats` or emit an
+13. Discovery with an unchanged format set does not repeat `endpoint formats` or emit an
    explicit format-change notification, and the log carries no pin-property traffic.
    `endpoint format ... (actual stream)` is the encoder input, not proof of the Windows
    mix value.
@@ -370,10 +372,10 @@ it), reattach.
    `OpenA2dpCtl status --verbose` for the same sink, one field per line, every value with
    its decimal and hex form. Use this dump for any failure found below it.
 
-### Release gate
+### Handover checks for system testing
 
-The checks the codec configuration and aptX HD work handed to system testing. All need a
-real player and a real sink; the scripted helpers in `.local/` cannot stand in for either.
+The first checks of M7. All need a real player and a real sink; the scripted helpers in
+`.local/` cannot stand in for either.
 
 **T25 Player resumes after the endpoint flap (S/A)** — while a media player streams, change
 `PCM format`.
@@ -536,6 +538,6 @@ On a hang: do not reboot. Break in with the kernel debugger and follow the
 stacks), then save a dump (`.dump /ka`).
 
 ## 5. Reporting
-Per test: id, sink, commit, Verifier on/off, pass/fail, log file and dump if any.
-Update the exit gate in [STATUS.md](STATUS.md) only when a gate passes or a blocker
-changes.
+Per test: id, sink, commit, Verifier on/off, pass/fail, log file and dump if any. Change the
+milestone table in [STATUS.md](STATUS.md) only when a gate passes or a blocker appears; the
+test log itself stays out of the repository.

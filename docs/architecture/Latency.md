@@ -19,7 +19,7 @@ Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales 
 The driver adds roughly 100–120 ms before the sink's own buffer, and the pacing lead is the
 single largest fixed part of it.
 
-## Bounded now
+## How the budget is held
 
 1. **The rings trim instead of shifting the stream late.** Both were plain FIFOs: a stall
    dropped the *new* audio and kept the old, and the encoder went on draining the backlog at
@@ -85,9 +85,9 @@ single largest fixed part of it.
    trade packets per second for a shorter packet; the default stays MTU-filled. AAC and both
    aptX codecs carry one access unit per packet, so they are already at their shortest.
 
-## Remaining risks and plan
+## What software cannot settle
 
-Every software lever in this document is now in place; what is left needs a sink and ears.
+Every software lever in this document is in place; what is left needs a sink and ears.
 
 1. **The sink's own buffering is invisible.** No A2DP profile reports it; measuring the
    audible delay needs a hardware loopback (a click track against the sink's output), and T30
@@ -102,9 +102,11 @@ Every software lever in this document is now in place; what is left needs a sink
    hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
    Windows' latency figure is a lower bound rather than the audible total.
 
-Exit gates, each read from a report line rather than an internal field. The procedure that
-takes them is [T29-T33](../HARDWARE-TESTS.md#latency), which also measures the audible delay
-against the source - the one number no report line can supply.
+## Exit gates
+
+Each gate is read from a report line rather than an internal field. The procedure that takes
+them is [T29-T33](../HARDWARE-TESTS.md#latency), which also measures the audible delay against
+the source - the one number no report line can supply.
 
 - `latency`'s buffered term (`pcmBufferedMs + frameBufferedMs`) stays under 100 ms in steady
   state at the default 60 ms lead. A longer lead makes the rings legitimately hold more, so the

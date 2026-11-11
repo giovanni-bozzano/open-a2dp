@@ -1,8 +1,39 @@
-# Codec configuration design (planned: M5b -> M6)
+# Codec and endpoint configuration
 
-Implement in order:
-1. Per-sink registry settings (`Parameters\Devices\<addr>`) and global defaults: codec priority, SBC blocks/subbands/allocation/bitpool and AAC bitrate (sink key over the global default, restored at device start). The PCM format the endpoint offers is its own per-sink setting (`SET_ENDPOINT_FORMAT`): automatic offers every sink-supported format, a rate and channel count pin the endpoint to that one format, which is then the only entry in the Windows format list. VBR stays off.
-2. Preference-aware `SbcConfig`/`AacConfig` selection with supported-value fallback. Done: `CodecPreferenceSbcBitpool` caps the selector's request and `CodecPreferenceAacBitrate` the AAC bitrate, both clamped to the sink's advertised range inside the shared selector, and `CodecTests` covers the clamps and that every bitpool still fits one RTP payload. A parameter change keeps the codec, so the signaling work item applies it in place: the encoder stops, SUSPEND brings the SEP to Open, RECONFIGURE carries the configuration the selector rebuilds from the selected SEP's advertised capabilities, and START resumes. A rejected command, or a sink-configured stream whose capabilities are unknown, falls back to close-and-rediscover. A stored block length, subband count or allocation pins the frame shape; one the sink does not advertise falls back to the selector's own order. An unadvertised forced codec is refused instead of stored. Each field stands on its own: there are no named combinations to keep in sync with a stored value.
-3. Config IOCTLs and desktop UI (`OpenA2dpConfig.exe`) for device, codec and parameters. A codec change CLOSEs and rediscovers an active stream immediately (no sink reconnect); an endpoint format change CLOSEs and re-configures the same remembered sink SEP at the new format, without discovering; parameter changes that keep the codec use SUSPEND/RECONFIGURE/START. Done: the window lists the sinks (`tools/OpenA2dpConfig`), refreshes `GET_STATUS` on a timer, shows the session, the sink formats and the MTU ceiling, and stores codec settings through `SET_PREFERENCE`; it reads the preference back after every apply, so a refused value stays visible. Both tools read the report built by `tools/common/StatusReport`: `OpenA2dpCtl status` prints it, and the window (with `StatusView`) turns its lines into a sectioned two-column list, so the window cannot show a value the CLI does not. Copy puts the report text itself on the clipboard; `--verbose` and the window's Details box add every field of `Status`, `Preference` and `VersionInfo` with its hex value. `OpenA2dpCtl` remains the script path.
-4. Multi-rate ACX: PCM at 44.1/48 kHz, mono/stereo, intersected with sink SBC capabilities. The table also holds 24-in-32, listed only for a codec that consumes it (aptX HD; [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)), so the list carries 16-bit whenever SBC, AAC or classic aptX can run and 24-in-32 while HD can. The actual stream sets `PinSampleRate`/`PinChannels`/`PinValidBits` for PCM/position math and negotiation. Windows opens the shared-mode stream with the first listed format and never queries `PROPOSEDATAFORMAT2`, so a pinned format is listed alone and nothing in the graph's probe traffic can change what is offered; hardware verification of the pin path remains. See [Codec settings](Codec-Settings.md) for default selection and diagnostic distinctions.
-5. M6: finish UI and clean install/uninstall restoring `BthA2dp.sys`.
+How a stored setting reaches the driver, a running stream and the endpoint Windows offers. The
+fields, their defaults and the registry names are in [Codec settings](Codec-Settings.md).
+
+## Storage
+
+- Per sink under `Parameters\Devices\<address>`, restored when the device starts; a global default
+  applies to a sink that has none. `Preference` carries the codec choice, the SBC frame shape, the
+  AAC bitrate and the pacing lead. `EndpointFormat` carries the PCM format the endpoint offers.
+- The endpoint format is its own setting, not a narrowing of the codec: `automatic` offers every
+  format the sink supports, and a rate plus channel count pin the endpoint to that one format,
+  which is then the only entry in the Windows format list. VBR stays off.
+- A value the sink does not advertise is refused instead of stored, so reading a preference back
+  always shows what the driver will use.
+
+## How a change applies
+
+| Change | Path |
+|---|---|
+| Codec | The active stream CLOSEs and rediscovers; the sink keeps its connection |
+| Parameter that keeps the codec (bitpool, bitrate, blocks, subbands, allocation, frames) | SUSPEND to Open, RECONFIGURE with the configuration rebuilt from the selected SEP, START; a refused RECONFIGURE falls back to CLOSE and rediscover |
+| PCM format | The jack is unplugged for 80 ms so Windows drops its cached format; the endpoint and the stream come back at the new format, without rediscovering |
+| Pacing lead | Resolved at the next `MediaStart`; the kernel pacer and the service's records both use it |
+
+## Selection
+
+`SbcConfig` and `AacConfig` are preference-aware: a stored bitpool caps the selector's request and
+a stored bitrate caps the AAC bitrate, both clamped to the sink's advertised range inside the
+shared selector. Each field stands on its own - block length, subband count, allocation and frames
+per packet are independent - so there is no named combination to keep in sync with a stored value.
+A codec the sink does not advertise, or one whose encoder provider is not registered, is refused.
+
+## Two tools, one report
+
+Both tools read `tools/common/StatusReport`, so the window, its **Copy** button and
+`OpenA2dpCtl status` cannot show different fields. `StatusView` turns the report's lines into the
+window's sectioned list; `--verbose` and the window's Details box add every field of `Status`,
+`Preference` and `VersionInfo` with its hex value. `OpenA2dpCtl` remains the script path.

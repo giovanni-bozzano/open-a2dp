@@ -1,7 +1,7 @@
 # Event model and timer policy
 
-State changes are driven by transport completions, AVDTP packets, PnP/ACX callbacks and
-service IOCTLs. Elapsed time may only drive the cases below.
+State changes are driven by transport completions, AVDTP packets, PnP/ACX callbacks and service
+IOCTLs. Elapsed time may only drive the cases below.
 
 ## Time uses that stay (verified not removable)
 | Use | Where | Why no event can replace it |
@@ -10,20 +10,31 @@ service IOCTLs. Elapsed time may only drive the cases below.
 | AVDTP response timer (3 s) | `ResponseTimer` -> `SourceSession::OnTimeout` | A connected but silent peer produces no event; AVDTP requires a signaling timeout. Expiry is delivered as a work-item event. |
 | Teardown bounds | `BrbOpRun` and send-slot cancel grace, `SignalingStop`, `SignalingAbortSession`, lock acquire bounds, service IOCTL/join bounds | PnP suspend and service stop must return when the Bluetooth stack never completes (no unbounded transport waits). Guards only; never used for steady-state transitions. |
 
-## Time-driven transitions to remove
-| Phase | Current timing | Event-driven replacement |
-|---|---|---|
-| 1 (done, `146abb2`) | 10 ms polling: teardown CLOSE wait, `RejectBusy`, service worker join | `SessionChanged`, `RejectIdle`, thread-handle waits |
-| 2 (done, `c7103ef`) | Media send waited up to 500 ms under `MediaLock`; AAC 2 s stall and 3 s pending send -> suspend | Async media send: the completion enqueues `MediaWorkItem`, the timer only raises the sample target and wakes the service. Stall and pending-send checks are diagnostics only; encoder loss (`OnFileCleanup`, ring fault) and link loss (send status, disconnect indication) end the stream. |
-| 3a (done, `3f1683c`) | Media open blocked the work item (3 s) under `SessionLock` and retried after 200 ms sleeps | `L2capStartMediaOpen` submits the BRB; its completion sets `MediaOpenCompleted` and enqueues the signaling work item, which collects it (`L2capFinishMediaOpen`) and sends START. Failure -> ABORT, rediscover on the ABORT response (3 attempts), else close. A close reclaims an open in flight: a late success is adopted and closed, an abandoned one is closed by its completion. |
-| 3b (done, `2a2ed82`) | Signaling send waited up to 1 s under `SessionLock` (timeout only logged) | `Transmit` submits to the idle slot or appends to a 4-packet FIFO under `SessionLock`; the send completion enqueues the signaling work item, which logs the status and submits the next packet. Close cancels and waits the send-cancel grace; `ResetSession` drops packets of the old session. |
-| 4a (done, `4749fe4`) | Service polled for control devices every 250 ms | The driver enables `kControlArrivalInterface` on its PnP device once the control link exists (disabled in `ServiceStop`, so each resume is a new arrival); the service enumerates on `CM_Register_Notification` arrival, at start and when a worker ends. |
-| 4b (done, `d89b328`) | Connect waited 8 x 100 ms for the service | REGISTER_ENCODER enqueues the signaling work item. Once the session settles in Streaming with SBC against a sink that advertised AAC (`SourceSession::RemoteOffers`), it sends CLOSE and rediscovers on the response. |
-| 4c (done) | 700 ms delay before discovery on sink-initiated links | Stay acceptor: the sink's own commands configure the stream. Discover only when the ACX stream runs (`SignalingOnAudioRun`, or already running at connect) while the session is still Idle. |
+## What is event-driven
 
-Phases 3-4 change interoperability behaviour and still need SBC/AAC-sink validation.
+- **Teardown.** `SessionChanged` and `RejectIdle` replace the polling loop that waited for a
+  CLOSE, and the service worker join is a thread-handle wait.
+- **Media send.** The completion enqueues `MediaWorkItem`; the timer only raises the sample target
+  and wakes the service. A stream ends on encoder loss (`OnFileCleanup`, ring fault) or link loss
+  (send status, disconnect indication), never on a stall - the stall and pending-send checks are
+  diagnostics only.
+- **Media open.** `L2capStartMediaOpen` submits the BRB and returns; the completion sets
+  `MediaOpenCompleted` and enqueues the signaling work item, which collects it and sends START.
+  A failure ABORTs, and rediscovery follows the ABORT response (three attempts, then close). A
+  close reclaims an open in flight: a late success is adopted and closed.
+- **Signaling send.** `Transmit` submits to the idle slot or appends to a 4-packet FIFO under
+  `SessionLock`; the send completion enqueues the signaling work item, which logs the status and
+  submits the next packet. Close cancels and waits the send-cancel grace; `ResetSession` drops the
+  packets of an old session.
+- **Service discovery.** The driver enables `kControlArrivalInterface` once the control link
+  exists (disabled in `ServiceStop`, so each resume is a new arrival); the service enumerates on
+  `CM_Register_Notification` arrival, at start, and when a worker ends. `REGISTER_ENCODER`
+  enqueues the signaling work item, so a late encoder is picked up without a wait.
+- **Sink-initiated links.** The sink's own commands configure the stream. Discovery starts only
+  when the ACX stream runs (`SignalingOnAudioRun`, or already running at connect) while the
+  session is still Idle.
 
-## Deadlock and ownership rules for every phase
+## Deadlock and ownership rules
 - Completion routines and timers (up to `DISPATCH_LEVEL`) never take `SessionLock` or
   `MediaLock`; they publish an interlocked flag and enqueue the owning work item.
 - Work items issue asynchronous requests and return; they never wait on the transport
@@ -38,5 +49,5 @@ Phases 3-4 change interoperability behaviour and still need SBC/AAC-sink validat
   its stopper (`MediaStop` flushes `MediaWorkItem`) after the active flag is cleared.
 - Event waits clear the event before re-checking state under the lock, so a transition
   between check and wait is never lost.
-- Validate each phase with Driver Verifier deadlock detection and a teardown during
+- Validate a change with Driver Verifier deadlock detection and a teardown during
   streaming, media open and discovery (`windbg-deadlock-check` on any hang).

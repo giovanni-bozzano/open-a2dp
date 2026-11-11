@@ -8,7 +8,7 @@ Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig
 - Prefer a forced codec when available, otherwise aptX HD > aptX > AAC > SBC. Keep scored sink candidates and fall back after rejected configuration rather than requiring reconnect.
 - Both aptX codecs are vendor codecs: SEP 3 carries vendor `0x000000D7` / codec `0x0024`, SEP 4 carries vendor `0x0000004F` / codec `0x0001`, and a sink capability is matched to a SEP by those IDs in its IE, because AVDTP has one codec type for every vendor codec. HD is selectable only as 24-bit stereo and classic only as 16-bit stereo, at 44.1 or 48 kHz. HD needs the pin at 24-in-32 (a 16-bit pin falls back to a codec that fits instead of converting); classic also takes a 24-in-32 pin, because its stream encoder narrows it the way the kernel SBC path narrows the same ring. Their IEs share the layout in `VendorAptx.h`: four-byte vendor ID, two-byte codec ID and the rate/mode byte; HD appends four reserved bytes.
 - Driver SBC capabilities match ACX: 44.1/48 kHz stereo-family modes. Default selection uses 16 blocks, 8 subbands, joint stereo/loudness and bitpool capped at 53, subject to sink support.
-- AAC format/payload limits: [service boundary](AAC-Service-Boundary.md). Broader rates and parameter overrides are [planned](Codec-Configuration.md), not current capabilities.
+- AAC format/payload limits: [service boundary](AAC-Service-Boundary.md). Endpoint format pinning and the per-codec parameter overrides are described in [codec configuration](Codec-Configuration.md).
 
 ## Packetization
 - RTP: 12-byte header, version 2, payload type 96; sequence advances per packet and timestamps in PCM samples.
