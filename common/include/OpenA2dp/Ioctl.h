@@ -244,6 +244,10 @@ struct Status {
 	uint32_t pcmBufferedMs;
 	uint32_t frameBufferedMs;
 	uint32_t pcmTrimmedBytes;
+	// Encoded records dropped by the same policy when the frame ring held a backlog: the PCM
+	// count alone does not show a stall on the service-encoded codecs, where the backlog is
+	// encoded audio rather than PCM.
+	uint32_t framesTrimmed;
 	// Pacing lead the running stream is sent ahead of the media clock by, and the worst
 	// driver-side latency (lead plus both ring fills) seen since that stream started, so a
 	// transient backlog spike is still visible after the stream trimmed back to live.
@@ -372,7 +376,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 260, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 264, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

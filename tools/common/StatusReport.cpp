@@ -191,6 +191,7 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.pcmBufferedMs", status.pcmBufferedMs);
 	AppendField(text, "status.frameBufferedMs", status.frameBufferedMs);
 	AppendField(text, "status.pcmTrimmedBytes", status.pcmTrimmedBytes);
+	AppendField(text, "status.framesTrimmed", status.framesTrimmed);
 	AppendField(text, "status.pacingLeadMs", status.pacingLeadMs);
 	AppendField(text, "status.latencyPeakMs", status.latencyPeakMs);
 	AppendField(text, "status.packetsSent", status.packetsSent);
@@ -389,7 +390,9 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	// trim. Both mean the lead is short for this sink, and both are worth seeing beside the
 	// latency they explain.
 	AppendLine(text, "underruns", Format("%u packets short of PCM", status.underruns));
-	AppendLine(text, "trimmed", Format("%u B of old audio dropped", status.pcmTrimmedBytes));
+	AppendLine(text, "trimmed",
+			   Format("%u B of PCM and %u records of old audio dropped", status.pcmTrimmedBytes,
+					  status.framesTrimmed));
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkName(text, status);

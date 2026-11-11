@@ -27,8 +27,9 @@ single largest fixed part of it.
    of permanent offset. `OnAudioTimer` now drops the oldest frames past
    `LatencyBudget::RingLimitMs` of backlog, and `FrameRecord::Trim` drops encoded records past
    that same limit; the RTP timestamp moves past the dropped span, so the sink hears one
-   gap rather than old audio. Both are counted (`status.pcmTrimmedBytes`, `framesTrimmed`
-   log) and logged once per second.
+   gap rather than old audio. Both are counted and reported (`trimmed`: PCM bytes and encoded
+   records) and logged once per second, so a stall on the service-encoded codecs is visible in
+   the panel too.
 2. **The lead is a stored setting.** `Preference.prerollMs` (registry
    `CodecPreferencePrerollMs`, `OpenA2dpCtl codec --preroll`) sets the pacing lead for every
    codec, 20–200 ms or 0 for the default. `MediaStart` resolves it once, the kernel pacer and
@@ -51,7 +52,8 @@ single largest fixed part of it.
    number behind, which is what makes a transient spike diagnosable after the fact.
    `status.underruns` counts the SBC audio the media clock asked for that the PCM ring did not
    have - they are sent as silence, so the stream keeps its place on the timeline - and the
-   driver logs it at most once a second with the silence duration. Only the due window counts:
+   driver logs it at most once a second with the silence duration. `LatencyBudget::UnderrunSamples`
+   is that rule, pinned by `LatencyBudget_UnderrunOnlyCountsDueAudio`. Only the due window counts:
    the silence a stream pads while it fills its lead, and the frames a packet carries past the
    target, are normal and would otherwise make the number noise. That is the number the exit
    gate below means: without it a lead too short for a sink was audible but invisible on the
@@ -96,6 +98,15 @@ Every software lever in this document is now in place; what is left needs a sink
    hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
    Windows' latency figure is a lower bound rather than the audible total.
 
-Exit gates: steady-state `pcmBufferedMs` + `frameBufferedMs` under 100 ms; no growth after a
-forced 500 ms transport stall (one trim, then back to steady state); no underruns logged at
-44.1 and 48 kHz stereo; A/V offset within ±20 ms once measured on hardware.
+Exit gates, each read from a report line rather than an internal field:
+
+- `latency`'s buffered term (`pcmBufferedMs + frameBufferedMs`) stays under 100 ms in steady
+  state at the default 60 ms lead. A longer lead makes the rings legitimately hold more, so the
+  gate is stated per lead, not once for every configuration.
+- After a forced 500 ms transport stall, `trimmed` grows once and then stops, and `latency peak`
+  comes back down to the lead plus a packet: the stream recovered to live audio instead of
+  playing late.
+- `underruns` stays 0 at 44.1 and 48 kHz stereo with the default lead, and rises as the lead is
+  shortened past what the sink needs - that curve is the per-sink measurement.
+- A/V offset within ±20 ms, measured on hardware with a loopback. No report line carries it:
+  it compares the sink's output with the source, so it belongs to the test, not the driver.
