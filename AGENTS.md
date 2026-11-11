@@ -7,6 +7,8 @@
 - Leave no orphaned resources (handles, work items, timers, pool, references) and create no potential deadlock or lock-order inversion. Keep code as event driven as possible instead of adding polling, timers or new waits.
 - Debug through native WinDbg MCP tools; no custom debugger scripts.
 - Commit every completed logical change separately after validation; do not batch unrelated work or include pre-existing user changes. Never push automatically. No AI attribution, co-author trailers or "generated with" lines in commit messages.
+- No absolute paths, drive letters, machine names or user accounts in code, scripts or docs; take paths from the project root.
+- Verification leaves nothing behind: no temporary sample data, forced settings, extra logging, or stray processes and windows, and never change the user's settings to test.
 
 ## Context and tracking
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
@@ -16,9 +18,9 @@
 - Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs.
 - Architecture lives in `docs/architecture/`; load only the relevant reference via its index. 
 - Keep stable rules here; designs/workflow stay on demand. Locate symbols with grep/glob, then read the relevant file/range. Split by responsibility, not arbitrary line counts.
-- Keep `AGENTS.md`, live status and skills minimal (targets: ≤40 lines here/status, ≤30 per skill). Replace or remove redundant text before adding; never omit safety constraints to meet a target.
+- Keep `AGENTS.md`, live status and skills minimal: replace or remove redundant text before adding. Never omit safety constraints to meet a target.
 - Preserve unchanged wording and section order to support prefix-cache reuse. No cosmetic rewrites, timestamps, session notes, copied tool output or duplicate instructions. Edit only affected lines when rules, plan state or workflows actually change; load only the needed skill.
-- Run build-and-test after code changes.
+- Run build-and-test after code changes. If a project cannot build on this host (a missing Windows SDK, for example), build the affected projects, run the tests they feed, and report the gap.
 - Keep file responsibilities and private interfaces narrow.
 - Prefer standard independently compiled `.cpp` files with declarations in subsystem-private `*Internal.h` headers. Namespace boundaries stay within each file.
 
