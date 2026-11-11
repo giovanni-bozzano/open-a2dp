@@ -226,6 +226,32 @@ TEST(FrameRecord_TrimToZeroEmptiesTheRing)
 	CHECK_EQ(ring.view.ReadableBytes(), uint32_t{0});
 }
 
+TEST(FrameRecord_BufferedCountsSamplesWithoutConsuming)
+{
+	TestRing ring;
+	uint8_t payload[100] = {};
+	CHECK_EQ(FrameRecord::Buffered(ring.view), uint32_t{0});
+
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0));
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0));
+	CHECK_EQ(FrameRecord::Buffered(ring.view), 2 * Ioctl::kAacSamplesPerFrame);
+	const uint32_t readable = ring.view.ReadableBytes();
+	CHECK_EQ(readable, static_cast<uint32_t>(2 * (sizeof(Ioctl::FrameRecordHeader) + sizeof(payload))));
+
+	// Reading one record takes it out of the count and leaves the other in place.
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(FrameRecord::Buffered(ring.view), Ioctl::kAacSamplesPerFrame);
+
+	// A record the read path cannot parse ends the walk: the good record before it still counts,
+	// the valid one written after it is not walked to.
+	Ioctl::FrameRecordHeader bad{0x1234, 64, Ioctl::kAacSamplesPerFrame, 0};
+	REQUIRE(ring.view.Write(&bad, sizeof(bad)));
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0));
+	CHECK_EQ(FrameRecord::Buffered(ring.view), Ioctl::kAacSamplesPerFrame);
+}
+
 TEST(FrameRecord_WrapAround)
 {
 	TestRing ring;

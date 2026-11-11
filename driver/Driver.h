@@ -513,10 +513,9 @@ struct DEVICE_CONTEXT
 	// log.
 	ULONGLONG ServiceLastFrameTime;
 	ULONGLONG ServiceLastUnderrunLog;
-	// Clock ticks between service wakes, learned from the records the service writes (0 while
-	// unknown, which wakes it on every tick), and the ticks still to skip before the next one.
-	ULONG ServiceWakeTicks;
-	ULONG ServiceWakeSkip;
+	// Samples one access unit of the service's codec covers, learned from the records it writes
+	// (0 while unknown, which wakes the service on every tick until the first one arrives).
+	ULONG ServiceUnitSamples;
 	// SBC packets the PCM ring could not fill since the last underrun log, and that log's
 	// interrupt time. Taken under MediaLock with the rest of the pacer state.
 	ULONG SbcUnderrunPackets;

@@ -47,8 +47,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->ActiveCodec = Ioctl::kCodecAac;
 	ctx->MediaBusySince = 0;
 	// Unknown until the first record arrives: every tick until then, as before.
-	ctx->ServiceWakeTicks = 0;
-	ctx->ServiceWakeSkip = 0;
+	ctx->ServiceUnitSamples = 0;
 	ctx->MediaSendUnchecked = FALSE;
 	ctx->ActiveSampleRate = params.sampleRate;
 	ctx->ActiveChannels = params.channels;

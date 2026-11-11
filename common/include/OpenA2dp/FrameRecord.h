@@ -84,6 +84,31 @@ inline ReadResult Read(RingBufferView& ring, uint8_t* storage, uint32_t storageB
 	return ReadResult::Record;
 }
 
+// Consumer side, for pacing: the samples every complete record in the ring covers, without
+// consuming any, so a caller can tell whether the producer is a whole access unit behind the
+// clock it is fed before it asks for another. A record the read path cannot parse ends the walk
+// and leaves the ring to Read, which reports it; the records before it still count.
+inline uint32_t Buffered(RingBufferView& ring) noexcept
+{
+	uint32_t total = 0;
+	uint32_t offset = 0;
+	const uint32_t readable = ring.ReadableBytes();
+	for (;;) {
+		Ioctl::FrameRecordHeader header{};
+		if (!ring.PeekAt(offset, &header, sizeof(header))) {
+			break; // fewer bytes than a header left: the records walked so far are all there is
+		}
+		if (header.magic != Ioctl::kFrameRecordMagic || header.size <= sizeof(header) ||
+			header.size > Ioctl::kMaxFrameRecordBytes || header.samples == 0 ||
+			header.size > readable - offset) {
+			break;
+		}
+		offset += header.size;
+		total += header.samples;
+	}
+	return total;
+}
+
 // Consumer side, for latency: drops the oldest records while more than `limitSamples` are
 // buffered, so a consumer that fell behind (a stalled transport) returns to live audio instead
 // of replaying the backlog at real time. Returns the number of samples dropped; the caller

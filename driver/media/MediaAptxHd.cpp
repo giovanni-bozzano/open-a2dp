@@ -34,8 +34,7 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 	ctx->ActiveCodec = Ioctl::kCodecAptxHd;
 	ctx->MediaBusySince = 0;
-	ctx->ServiceWakeTicks = 0;
-	ctx->ServiceWakeSkip = 0;
+	ctx->ServiceUnitSamples = 0;
 	ctx->MediaSendUnchecked = FALSE;
 	ctx->ActiveSampleRate = sampleRate;
 	ctx->ActiveChannels = 2;

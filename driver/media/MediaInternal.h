@@ -11,8 +11,8 @@ using namespace OpenA2dp;
 // Subsystem-private declarations; not a public driver interface.
 namespace OpenA2dpDriver::Media
 {
-// Fallback wake of the one-shot media timer, and the unit the service wake cadence is
-// counted in. A pacing stream is driven by send completions, so this is not a stream clock.
+// Fallback wake of the one-shot media timer, and how often a service-encoded stream is
+// drained. A pacing stream is driven by send completions, so this is not a stream clock.
 constexpr ULONG MediaPeriodMs = 10;
 // Service-encoded: no encoded frame for this long while the endpoint runs counts as an
 // underrun (logged once per second).
@@ -24,10 +24,6 @@ constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
 // indication). Measured in real time, because the watchdog wakes on demand.
 constexpr ULONG MediaBusyLimitMs = 3000;
 constexpr ULONGLONG MediaBusyLimit = MediaBusyLimitMs * 10000ull;
-// The service paces itself against the clock it is handed, so a wake that arrives with no
-// access unit due costs a context switch and no audio. Its records say how long one access
-// unit lasts; the skip is capped because the encoder flushes several records per wake.
-constexpr ULONG ServiceWakeMaxTicks = 3;
 
 EVT_WDF_TIMER OnMediaTimer;
 EVT_WDF_WORKITEM OnMediaWorkItem;

@@ -197,29 +197,15 @@ static void TrimFrameBacklog(DEVICE_CONTEXT* ctx)
 	}
 }
 
-// The service says how long one access unit of its codec lasts by writing records: the sample
-// count in each one. That is how often it needs to be woken, so the driver stops waking it on
-// every clock tick. Rounded up to the clock tick and capped, because a wake also flushes the
-// records that piled up (the service encodes several per wake). Caller holds MediaLock.
+// The service says how big one access unit of its codec is by writing records: the sample
+// count in each one. That is how much audio one wake has to be worth, so the driver stops
+// waking it on every clock tick. Caller holds MediaLock.
 static void NoteServiceRecord(DEVICE_CONTEXT* ctx, uint32_t samples)
 {
-	if (samples == 0 || ctx->ActiveSampleRate == 0)
+	if (samples != 0)
 	{
-		return;
+		ctx->ServiceUnitSamples = samples;
 	}
-	const ULONGLONG frameUs =
-		static_cast<ULONGLONG>(samples) * 1000000ull / ctx->ActiveSampleRate;
-	const ULONGLONG tickUs = static_cast<ULONGLONG>(MediaPeriodMs) * 1000ull;
-	ULONG ticks = static_cast<ULONG>((frameUs + tickUs - 1) / tickUs);
-	if (ticks < 1)
-	{
-		ticks = 1;
-	}
-	if (ticks > ServiceWakeMaxTicks)
-	{
-		ticks = ServiceWakeMaxTicks;
-	}
-	ctx->ServiceWakeTicks = ticks;
 }
 
 // Builds one RTP packet from the frame ring. Caller holds MediaLock. One record is one

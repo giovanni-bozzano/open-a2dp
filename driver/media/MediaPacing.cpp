@@ -1,13 +1,14 @@
 #include "MediaInternal.h"
 
+#include <OpenA2dp/FrameRecord.h>
+
 namespace OpenA2dpDriver::Media
 {
-// Samples the stream must have sent by now: the media clock plus the pacing lead. The pacer
-// and the watchdog both read it, so they cannot disagree about when the next packet is due.
-// Caller holds MediaLock.
-static ULONGLONG SbcTargetSamples(DEVICE_CONTEXT* ctx)
+// Samples the stream must have sent by now: the media clock plus the pacing lead. The pacer,
+// the watchdog and the service wake all read it, so none of them can disagree about what is
+// due. Caller holds MediaLock.
+static ULONGLONG TargetSamples(DEVICE_CONTEXT* ctx, uint32_t rate)
 {
-	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
 	const ULONGLONG elapsed = KeQueryInterruptTime() - ctx->MediaStartTime;
 	return elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * ctx->PacingLeadMs / 1000;
 }
@@ -16,7 +17,7 @@ static ULONGLONG SbcTargetSamples(DEVICE_CONTEXT* ctx)
 // completion enqueues the next run, so a backlog drains at transport speed. Caller holds MediaLock.
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 {
-	const ULONGLONG target = SbcTargetSamples(ctx);
+	const ULONGLONG target = TargetSamples(ctx, ctx->Encoder.GetParams().sampleRate);
 
 	if (ctx->MediaSamplesSent >= target)
 	{
@@ -52,9 +53,9 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	}
 }
 
-// Service-encoded codecs (AAC, aptX HD): drain the frame ring, one packet per run. The
-// service owns the media clock, so there is no target; clock ticks account underruns and,
-// at the codec's access-unit cadence, wake it. Caller holds MediaLock.
+// Service-encoded codecs (AAC, aptX): drain the frame ring, one packet per run. The service
+// owns the encoder clock; the pacer target here only decides when a wake has audio to produce
+// and accounts underruns. Caller holds MediaLock.
 void TickService(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const ULONGLONG now = KeQueryInterruptTime();
@@ -90,16 +91,20 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 	{
 		return;
 	}
-	// Wake the service when an access unit is due, not on every clock tick: it paces itself
-	// against the clock it is handed, so a wake that finds nothing due is a context switch
-	// and no audio. Its own records say how long one access unit lasts.
-	if (ctx->ServiceWakeSkip != 0)
+	// One wake produces one access unit, so it is only worth one when a further unit is due
+	// beyond what the service has already produced: the records still queued in the ring cover
+	// the rest, and a wake that arrives before that only encodes padding. The records say how
+	// big a unit is and how much is queued, both without consuming anything.
+	uint32_t queued = 0;
+	if (ctx->FrameRingHeader != nullptr)
 	{
-		--ctx->ServiceWakeSkip;
+		RingBufferView frames(ctx->FrameRingHeader, ctx->FrameRingData);
+		queued = FrameRecord::Buffered(frames);
 	}
-	else
+	const uint32_t unit = ctx->ServiceUnitSamples;
+	if (unit == 0 || ctx->ActiveSampleRate == 0 ||
+		TargetSamples(ctx, ctx->ActiveSampleRate) >= ctx->MediaSamplesSent + queued + unit)
 	{
-		ctx->ServiceWakeSkip = ctx->ServiceWakeTicks > 0 ? ctx->ServiceWakeTicks - 1 : 0;
 		ServiceTick(ctx);
 	}
 
@@ -132,7 +137,7 @@ static void ArmMediaTimer(DEVICE_CONTEXT* ctx)
 		InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeSbc)
 	{
 		const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
-		const ULONGLONG target = SbcTargetSamples(ctx);
+		const ULONGLONG target = TargetSamples(ctx, rate);
 		// A packet carries audio from past the clock; the next one is due when that audio has
 		// been played out. Waking then, instead of one fixed period later, means a wake that
 		// finds nothing due cannot happen.
