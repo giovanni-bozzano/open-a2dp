@@ -5,6 +5,7 @@
 // transport manager is the supported way to ask it to stop, and a program that publishes a media
 // session - a browser, a music app, the Media app - treats it as its own pause button.
 
+#include "SinkMatch.h"
 #include "SinkPlayback.h"
 
 #include <winrt/Windows.Foundation.Collections.h>
@@ -30,58 +31,6 @@ std::string Code(const winrt::hresult_error& failure)
 	char text[16] = {};
 	(void)std::snprintf(text, sizeof(text), "0x%08X", static_cast<unsigned>(failure.code()));
 	return text;
-}
-
-std::string LowerAscii(std::string text)
-{
-	for (char& character : text)
-	{
-		if (character >= 'A' && character <= 'Z')
-		{
-			character = static_cast<char>(character - 'A' + 'a');
-		}
-	}
-	return text;
-}
-
-// What a message calls the program a media session belongs to: the part of the app id after its
-// last separator, which is the image name for a desktop program.
-std::string AppTitle(const winrt::hstring& appId)
-{
-	std::string id = winrt::to_string(appId);
-	const size_t bang = id.rfind('!');
-	if (bang != std::string::npos)
-	{
-		id = id.substr(bang + 1);
-	}
-	const size_t separator = id.find_last_of("\\/");
-	if (separator != std::string::npos)
-	{
-		id = id.substr(separator + 1);
-	}
-	return id;
-}
-
-// True when the session belongs to one of the programs rendering to the sink. The app id holds
-// the image name for a desktop program in one form or another ("spotify.exe", its full path, or
-// an id that starts with it), so the name without its extension identifies the player.
-bool IsPlayer(const winrt::hstring& appId, const std::vector<std::string>& players)
-{
-	const std::string id = LowerAscii(winrt::to_string(appId));
-	constexpr const char* kExe = ".exe";
-	for (const std::string& player : players)
-	{
-		std::string name = LowerAscii(player);
-		if (name.size() > 4 && name.compare(name.size() - 4, 4, kExe) == 0)
-		{
-			name.resize(name.size() - 4);
-		}
-		if (!name.empty() && id.find(name) != std::string::npos)
-		{
-			return true;
-		}
-	}
-	return false;
 }
 
 // The pause itself, on a thread of its own: the window runs a single-threaded apartment and must
@@ -110,7 +59,7 @@ void PauseOnWorker(const std::vector<std::string>& players, std::string& paused,
 				{
 					continue;
 				}
-				if (IsPlayer(session.SourceAppUserModelId(), players))
+				if (AppIdMatchesPlayer(winrt::to_string(session.SourceAppUserModelId()), players))
 				{
 					matching.push_back(session);
 				}
@@ -130,7 +79,7 @@ void PauseOnWorker(const std::vector<std::string>& players, std::string& paused,
 				{
 					continue;
 				}
-				const std::string title = AppTitle(session.SourceAppUserModelId());
+				const std::string title = PlayerTitleFromAppId(winrt::to_string(session.SourceAppUserModelId()));
 				if (title.empty())
 				{
 					continue;

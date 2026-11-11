@@ -23,6 +23,7 @@
 	<ClCompile Include="Main.cpp" />
 	<ClCompile Include="SbcReferenceDecoder.cpp" />
 	<ClCompile Include="SbcTests.cpp" />
+	<ClCompile Include="SinkMatchTests.cpp" />
 	<ClCompile Include="AacTests.cpp" />
 	<ClCompile Include="AptxTests.cpp" />
 	<ClCompile Include="AptxHdTests.cpp" />
@@ -38,6 +39,7 @@
 	<ClCompile Include="SbcFrameTests.cpp" />
 	<ClCompile Include="StatusReportTests.cpp" />
 	<!-- The report the CLI and the settings window share. -->
+	<ClCompile Include="..\..\tools\common\SinkMatch.cpp" />
 	<ClCompile Include="..\..\tools\common\StatusReport.cpp" />
 	<ClCompile Include="..\..\tools\common\Text.cpp" />
   </ItemGroup>

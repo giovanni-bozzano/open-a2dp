@@ -15,15 +15,15 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M5 Encoder service + streaming | Done | — |
 | M5b Codec configuration | Done | — |
 | M5c aptX + aptX HD | Done | — |
-| M6 Config UI + install/uninstall | In progress | Automated coverage of the window's driver switch; today only the CLI path is exercised |
+| M6 Config UI + install/uninstall | In progress | The window's switch sequence end to end; the matches it decides on are covered by tests |
 | M7 System testing | In progress | The procedures are scripted; their runs and logs stay outside the repository |
 | M8 Signing + release | Not started | A signed package and its install path |
 
 ## Next
 
-1. **Coverage for the pause-then-switch path in `tools/common`**, which only a real player
-   exercises today.
-2. **A first scripted pass** of the hardware procedures, kept with the build it ran on.
+1. **A first scripted pass** of the hardware procedures, kept with the build it ran on: it is the
+   only run that exercises the pause-then-switch sequence, whose matches are now covered by
+   `tests/CodecTests/SinkMatchTests.cpp`.
 
 ## Blockers
 

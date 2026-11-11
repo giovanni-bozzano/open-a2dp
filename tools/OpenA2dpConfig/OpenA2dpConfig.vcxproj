@@ -30,6 +30,7 @@
 	<ClCompile Include="..\common\StatusReport.cpp" />
 	<ClCompile Include="..\common\ControlDevice.cpp" />
 	<ClCompile Include="..\common\SinkDriver.cpp" />
+	<ClCompile Include="..\common\SinkMatch.cpp" />
 	<ClCompile Include="..\common\SinkPlayback.cpp" />
 	<ClCompile Include="..\common\SinkPause.cpp" />
 	<ClCompile Include="..\common\Text.cpp" />
@@ -38,6 +39,7 @@
 	<ClInclude Include="..\common\StatusReport.h" />
 	<ClInclude Include="..\common\ControlDevice.h" />
 	<ClInclude Include="..\common\SinkDriver.h" />
+	<ClInclude Include="..\common\SinkMatch.h" />
 	<ClInclude Include="..\common\SinkPlayback.h" />
 	<ClInclude Include="..\common\Text.h" />
   </ItemGroup>

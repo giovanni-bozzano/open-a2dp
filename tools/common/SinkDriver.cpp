@@ -1,6 +1,7 @@
 #include "SinkDriver.h"
 
 #include "ControlDevice.h"
+#include "SinkMatch.h"
 #include "SinkPlayback.h"
 #include "Text.h"
 
@@ -18,30 +19,6 @@
 
 namespace OpenA2dp::Tools {
 namespace {
-
-// The AudioSink service UUID: the only BTHENUM node a sink's A2DP source driver can be
-// replaced on. The radio and the other profile nodes are never candidates.
-constexpr wchar_t kA2dpNodeMarker[] = L"{0000110B-";
-
-bool ContainsNoCase(const std::wstring& text, const wchar_t* needle)
-{
-	for (size_t i = 0; i + 1 <= text.size(); ++i)
-	{
-		size_t j = 0;
-		for (; needle[j] != L'\0'; ++j)
-		{
-			if (i + j >= text.size() || towupper(text[i + j]) != towupper(needle[j]))
-			{
-				break;
-			}
-		}
-		if (needle[j] == L'\0')
-		{
-			return true;
-		}
-	}
-	return false;
-}
 
 std::wstring InstanceIdOf(HDEVINFO set, SP_DEVINFO_DATA& dev)
 {
@@ -76,28 +53,6 @@ std::wstring StringProperty(HDEVINFO set, SP_DEVINFO_DATA& dev, DWORD property)
 		return {};
 	}
 	return std::wstring(reinterpret_cast<const wchar_t*>(buffer.data()));
-}
-
-// A BTHENUM instance id carries the remote address, in the order the stack wrote it: some
-// builds write it as the address reads, others byte-reversed, so both forms identify a sink.
-bool MatchesAddress(const std::wstring& instanceId, const std::string& reference)
-{
-	const std::string address = Upper(reference);
-	if (address.size() != 12)
-	{
-		return false;
-	}
-	const std::string id = Upper(Utf8(instanceId));
-	if (id.find(address) != std::string::npos)
-	{
-		return true;
-	}
-	std::string reversed;
-	for (int pair = 5; pair >= 0; --pair)
-	{
-		reversed += address.substr(static_cast<size_t>(pair) * 2, 2);
-	}
-	return id.find(reversed) != std::string::npos;
 }
 
 // The INF a driver entry installs from. The driver store reports these as bare names
@@ -167,16 +122,6 @@ bool CollectDriverEntries(HDEVINFO set, SP_DEVINFO_DATA& dev, std::vector<Driver
 	return true;
 }
 
-// True for the A2DP source service itself as a driver entry's matching id: the UUID and nothing
-// after its closing brace. The same node also offers `..._GENERIC`, which is what the Bluetooth
-// enumerator's own package matches for every profile, and `..._LOCALMFG&nnnn`, which says what
-// the sink is rather than which package drives it. Both carry an A2DP driver's name next to the
-// real one in a node's compatible list, so only this form identifies the inbox A2DP source.
-bool IsA2dpServiceId(const std::wstring& id)
-{
-	return !id.empty() && id.back() == L'}' && ContainsNoCase(id, kA2dpNodeMarker);
-}
-
 // Opens the A2DP node for a sink. `error` is set only when the enumeration itself fails.
 bool FindNode(const std::string& reference, HDEVINFO& set, SP_DEVINFO_DATA& dev, std::string& error)
 {
@@ -196,7 +141,7 @@ bool FindNode(const std::string& reference, HDEVINFO& set, SP_DEVINFO_DATA& dev,
 		}
 		const std::wstring instanceId = InstanceIdOf(set, dev);
 		if (instanceId.empty() || !ContainsNoCase(instanceId, kA2dpNodeMarker) ||
-			!MatchesAddress(instanceId, reference))
+			!MatchesSinkAddress(instanceId, reference))
 		{
 			continue;
 		}
@@ -316,41 +261,6 @@ SinkDriver OtherDriver(SinkDriver driver)
 
 namespace {
 
-SinkDriver DriverOfService(const std::wstring& service)
-{
-	if (ContainsNoCase(service, L"OpenA2dp"))
-	{
-		return SinkDriver::OpenA2dp;
-	}
-	if (ContainsNoCase(service, L"BthA2dp"))
-	{
-		return SinkDriver::Windows;
-	}
-	return SinkDriver::Unknown;
-}
-
-// The address a BTHENUM id carries, as the last run of 12 hex digits: the same form the
-// control device is named after, in the order the stack wrote it.
-std::string AddressOf(const std::wstring& instanceId)
-{
-	const std::string id = Upper(Utf8(instanceId));
-	std::string address;
-	for (size_t i = 0; i < id.size();)
-	{
-		size_t length = 0;
-		while (i + length < id.size() && isxdigit(static_cast<unsigned char>(id[i + length])) != 0)
-		{
-			++length;
-		}
-		if (length == 12)
-		{
-			address = id.substr(i, 12);
-		}
-		i += length == 0 ? 1 : length;
-	}
-	return address;
-}
-
 } // namespace
 
 bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::string& error)
@@ -374,7 +284,7 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	SetupDiDestroyDeviceInfoList(set);
 
 	state.instanceId = Utf8(instanceId);
-	state.current = DriverOfService(service);
+	state.current = DriverOfServiceName(service);
 	// Only the entry matched by the service id is the A2DP source driver. A package the node
 	// also lists through `..._GENERIC` is the enumerator's catch-all, and installing it is not a
 	// move to the Windows driver, so it is not offered as one.
@@ -437,12 +347,12 @@ bool EnumerateSinkNodes(std::vector<SinkNode>& nodes, std::string& error)
 			continue;
 		}
 		SinkNode node;
-		node.reference = AddressOf(instanceId);
+		node.reference = AddressInInstanceId(instanceId);
 		if (node.reference.empty())
 		{
 			continue;
 		}
-		node.driver = DriverOfService(StringProperty(set, dev, SPDRP_SERVICE));
+		node.driver = DriverOfServiceName(StringProperty(set, dev, SPDRP_SERVICE));
 		node.instanceId = Utf8(instanceId);
 		nodes.push_back(node);
 	}
