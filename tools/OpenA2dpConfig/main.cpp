@@ -1790,21 +1790,12 @@ void SwitchSelectedDriver(HWND hwnd)
 	// after its node is gone, and a later switch back then fails until a reboot (problem 38).
 	// It is closed before the node restarts, not after.
 	CloseControl(*state);
-	std::string holder;
 	std::string error;
-	const bool switched = SwitchSinkDriver(reference, target, holder, error);
+	const Tools::SwitchOutcome outcome = SwitchSinkDriver(reference, target, error);
 	ReloadDevices(hwnd);
-	if (!switched)
+	if (outcome != Tools::SwitchOutcome::Switched)
 	{
 		SetMessage(hwnd, Tools::Widen(error));
-		return;
-	}
-	if (!holder.empty())
-	{
-		SetMessage(hwnd, DriverTitle(target) + L" is installed for " + title + L", but " +
-							 Tools::Widen(holder) +
-							 L" keeps the device from restarting. Stop playback there, then press "
-							 L"Finish driver switch.");
 		return;
 	}
 	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) + L".");

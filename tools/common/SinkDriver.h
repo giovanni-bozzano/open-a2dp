@@ -59,11 +59,17 @@ bool EnumerateSinkNodes(std::vector<SinkNode>& nodes, std::string& error);
 // is installed and no node is touched.
 bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::string& error);
 
+enum class SwitchOutcome {
+	Switched,   // the node now runs `target`
+	PlaysAudio, // nothing was changed: the sink is playing, so the node cannot be restarted
+	Failed,     // nothing was changed, or the node kept the driver it had; `error` says why
+};
+
 // Installs `target`'s package on that one devnode and restarts it, so the sink's endpoints and
-// any open stream go with it. Needs an elevated prompt; `error` names what failed. When the
-// restart is refused the driver stays installed but not loaded, and `pendingHolder` names what
-// refused it; calling this again once that is closed finishes the switch without a reboot.
-bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& pendingHolder,
-					  std::string& error);
+// any open stream go with it. Needs an elevated prompt; `error` names what failed. The sink
+// keeps its pairing and its other nodes. A sink that is playing is refused before anything is
+// touched (Windows could only stage the driver and veto the restart), so the caller can tell
+// the reader to stop playback and try again.
+SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& error);
 
 } // namespace OpenA2dp::Tools

@@ -73,7 +73,10 @@ Commands:
             the other one: `driver opena2dp` takes the sink over from the inbox
             BthA2dp, `driver windows` hands it back. Only this sink's BTHENUM
             A2DP node is rebound, so other sinks keep their driver; the node
-            restarts and any open stream goes with it. The OpenA2dp package has
+            restarts and any open stream goes with it. While the sink is
+            playing, Windows will not restart the node, so the switch is
+            refused (exit 3) and nothing is changed: stop playback, then run
+            it again. The OpenA2dp package has
             to be deployed once (scripts/deploy-vm.ps1) for the forward switch,
             and the inbox driver has to still be a candidate for the node for
             the way back.
@@ -799,18 +802,11 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 		return 0;
 	}
 
-	std::string holder;
-	if (!SwitchSinkDriver(reference, target, holder, error))
+	const SwitchOutcome outcome = SwitchSinkDriver(reference, target, error);
+	if (outcome != SwitchOutcome::Switched)
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
-		return 1;
-	}
-	if (!holder.empty())
-	{
-		std::printf("%s: %s is installed on the sink's A2DP node, but %s keeps the node from "
-					"restarting.\n  Stop playback there (or close it), then run this command again.\n",
-					FormatAddress(reference).c_str(), SinkDriverName(target), holder.c_str());
-		return 3;
+		return outcome == SwitchOutcome::PlaysAudio ? 3 : 1;
 	}
 	std::printf("%s: %s installed on the sink's A2DP node.\n", FormatAddress(reference).c_str(),
 				SinkDriverName(target));

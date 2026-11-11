@@ -14,9 +14,9 @@
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
-	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it, cfgmgr32 restarts it,
-	       bthprops re-adds its Bluetooth service when the restart is vetoed. -->
-	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;bthprops.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it, cfgmgr32 restarts
+	       it, ole32 asks the audio engine whether the sink is playing. -->
+	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	</Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -24,10 +24,12 @@
 	<ClCompile Include="..\common\StatusReport.cpp" />
 	<ClCompile Include="..\common\ControlDevice.cpp" />
 	<ClCompile Include="..\common\SinkDriver.cpp" />
+	<ClCompile Include="..\common\SinkPlayback.cpp" />
 	<ClCompile Include="..\common\Text.cpp" />
 	<ClInclude Include="..\common\StatusReport.h" />
 	<ClInclude Include="..\common\ControlDevice.h" />
 	<ClInclude Include="..\common\SinkDriver.h" />
+	<ClInclude Include="..\common\SinkPlayback.h" />
 	<ClInclude Include="..\common\Text.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

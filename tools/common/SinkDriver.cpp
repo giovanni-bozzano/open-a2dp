@@ -1,11 +1,11 @@
 #include "SinkDriver.h"
 
 #include "ControlDevice.h"
+#include "SinkPlayback.h"
 #include "Text.h"
 
 #include <windows.h>
 
-#include <bluetoothapis.h>
 #include <cfgmgr32.h>
 #include <newdev.h>
 #include <setupapi.h>
@@ -22,8 +22,6 @@ namespace {
 // The AudioSink service UUID: the only BTHENUM node a sink's A2DP source driver can be
 // replaced on. The radio and the other profile nodes are never candidates.
 constexpr wchar_t kA2dpNodeMarker[] = L"{0000110B-";
-// The same AudioSink service as a GUID, for the Bluetooth API.
-constexpr GUID kA2dpSinkService = {0x0000110B, 0x0000, 0x1000, {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
 
 bool ContainsNoCase(const std::wstring& text, const wchar_t* needle)
 {
@@ -236,98 +234,43 @@ bool InstallDriverEntry(HDEVINFO set, SP_DEVINFO_DATA& dev, const DriverEntry& e
 	return true;
 }
 
-// Drops and re-adds the sink's A2DP service in the Bluetooth stack. The enumerator then reports
-// the node missing, which PnP handles as a surprise removal that no handle holder can veto -
-// unlike a restart, which the audio engine refuses while it holds the inbox driver's endpoint
-// (Kernel-PnP 225 from audiodg.exe). The node comes back with the driver installed on it.
-bool ReaddA2dpService(const std::string& reference, std::string& error)
+// Stops the node so the driver installed on it can be replaced. A restart asks every holder of
+// the node for its consent first, and the audio engine refuses while it plays to the sink, which
+// is what left a switch half applied; disabling does not consult anybody. Returns false and
+// changes nothing when a holder refuses anyway.
+bool StopNode(SP_DEVINFO_DATA& dev, std::string& error)
 {
-	BLUETOOTH_FIND_RADIO_PARAMS radioParams = {sizeof(radioParams)};
-	HANDLE radio = nullptr;
-	const HBLUETOOTH_RADIO_FIND find = BluetoothFindFirstRadio(&radioParams, &radio);
-	if (find == nullptr)
+	const CONFIGRET status = CM_Disable_DevNode(dev.DevInst, CM_DISABLE_UI_NOT_OK);
+	if (status == CR_SUCCESS)
 	{
-		error = Win32Error("BluetoothFindFirstRadio", GetLastError());
-		return false;
+		return true;
 	}
-	(void)BluetoothFindRadioClose(find);
-
-	BLUETOOTH_DEVICE_INFO info = {sizeof(info)};
-	info.Address.ullLong = std::stoull(reference, nullptr, 16);
-	DWORD result = BluetoothGetDeviceInfo(radio, &info);
-	if (result == ERROR_SUCCESS)
-	{
-		GUID service = kA2dpSinkService;
-		result = BluetoothSetServiceState(radio, &info, &service, BLUETOOTH_SERVICE_DISABLE);
-		if (result == ERROR_SUCCESS)
-		{
-			result = BluetoothSetServiceState(radio, &info, &service, BLUETOOTH_SERVICE_ENABLE);
-			if (result != ERROR_SUCCESS)
-			{
-				error = Win32Error("re-enabling the sink's A2DP service", result) +
-						"; reconnect the sink in Bluetooth settings";
-			}
-		}
-		else
-		{
-			error = Win32Error("BluetoothSetServiceState", result);
-		}
-	}
-	else
-	{
-		error = Win32Error("BluetoothGetDeviceInfo", result);
-	}
-	CloseHandle(radio);
-	return result == ERROR_SUCCESS;
+	error = status == CR_REMOVE_VETOED
+			? std::string("the sink's A2DP node is still in use, so it was not restarted; close the "
+						  "audio device and try again")
+			: "the sink's A2DP node could not be stopped (CONFIGRET " + std::to_string(status) + ")";
+	return false;
 }
 
-// Restarts the node so the driver installed on it binds now. PnP asks every holder of the node
-// first; when one refuses, the A2DP service is re-added instead, which needs nobody's consent.
-// Only when that fails too is the holder named in `holder`, with the installed driver left on
-// the node so a later retry only has to restart it.
-bool RestartNode(const std::string& reference, HDEVINFO set, SP_DEVINFO_DATA& dev, std::string& holder,
-				 std::string& error)
+// Starts the node again, on the driver that is installed on it now.
+bool StartNode(SP_DEVINFO_DATA& dev, std::string& error)
 {
-	const std::wstring instanceId = InstanceIdOf(set, dev);
-	PNP_VETO_TYPE vetoType = PNP_VetoTypeUnknown;
-	wchar_t vetoName[MAX_PATH] = {};
-	const CONFIGRET removed =
-		CM_Query_And_Remove_SubTreeW(dev.DevInst, &vetoType, vetoName, MAX_PATH, CM_REMOVE_UI_NOT_OK);
-	if (removed == CR_REMOVE_VETOED)
+	const CONFIGRET status = CM_Enable_DevNode(dev.DevInst, 0);
+	if (status == CR_SUCCESS)
 	{
-		std::string readdError;
-		if (ReaddA2dpService(reference, readdError))
-		{
-			return true;
-		}
-		holder = vetoName[0] != L'\0' ? Utf8(std::wstring(vetoName)) : std::string("another program");
-		if (vetoType == PNP_VetoOutstandingOpen)
-		{
-			holder += " (has the sink's audio device open)";
-		}
-		holder += "; re-adding the Bluetooth service failed too: " + readdError;
-		return false;
+		return true;
 	}
-	if (removed != CR_SUCCESS)
-	{
-		error = "restarting the sink's A2DP node failed (CONFIGRET " + std::to_string(removed) + ")";
-		return false;
-	}
-	// The removed node is still known to PnP; starting it again loads the driver now installed.
-	DEVINST node = 0;
-	CONFIGRET started = CM_Locate_DevNodeW(&node, const_cast<DEVINSTID_W>(instanceId.c_str()),
-										   CM_LOCATE_DEVNODE_PHANTOM);
-	if (started == CR_SUCCESS)
-	{
-		started = CM_Setup_DevNode(node, CM_SETUP_DEVNODE_READY);
-	}
-	if (started != CR_SUCCESS)
-	{
-		error = "the sink's A2DP node was stopped but did not start again (CONFIGRET " +
-				std::to_string(started) + "); reconnect the sink";
-		return false;
-	}
-	return true;
+	// Never leave the node stopped: that takes the sink out of the stack entirely.
+	(void)CM_Enable_DevNode(dev.DevInst, 0);
+	error = "the sink's A2DP node was stopped but did not start again (CONFIGRET " +
+			std::to_string(status) + "); reconnect the sink";
+	return false;
+}
+
+// Restarts the node so the driver installed on it binds now.
+bool RestartNode(SP_DEVINFO_DATA& dev, std::string& error)
+{
+	return StopNode(dev, error) && StartNode(dev, error);
 }
 
 // True when the node carries a driver it has not loaded yet: an install whose restart was refused.
@@ -509,19 +452,31 @@ bool EnumerateSinkNodes(std::vector<SinkNode>& nodes, std::string& error)
 	return true;
 }
 
-bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& pendingHolder,
-					  std::string& error)
+// Nothing is touched while the sink plays: PnP would stage the driver and then veto the restart
+// after several seconds, which is a stall that cannot end in a switch either way.
+SwitchOutcome RefuseWhilePlaying(const std::string& instanceId, std::string& error)
 {
-	pendingHolder.clear();
+	bool plays = false;
+	if (!SinkPlaysAudio(instanceId, plays) || !plays)
+	{
+		return SwitchOutcome::Switched;
+	}
+	error = "the sink is playing, so Windows will not restart its A2DP node; stop playback (or "
+			"close the player), then try again. Nothing was changed.";
+	return SwitchOutcome::PlaysAudio;
+}
+
+SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& error)
+{
 	SinkDriverState state;
 	if (!ReadSinkDriver(reference, state, error))
 	{
-		return false;
+		return SwitchOutcome::Failed;
 	}
 	if (target == SinkDriver::Unknown)
 	{
 		error = "choose opena2dp or windows";
-		return false;
+		return SwitchOutcome::Failed;
 	}
 	if (state.current == target)
 	{
@@ -531,34 +486,43 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::stri
 		SP_DEVINFO_DATA dev = {};
 		if (!FindNode(reference, set, dev, error))
 		{
-			return false;
+			return SwitchOutcome::Failed;
 		}
-		bool ok = true;
+		SwitchOutcome outcome = SwitchOutcome::Switched;
 		if (NeedsRestart(dev))
 		{
-			ok = RestartNode(reference, set, dev, pendingHolder, error) || error.empty();
+			outcome = RefuseWhilePlaying(state.instanceId, error);
+			if (outcome == SwitchOutcome::Switched && !RestartNode(dev, error))
+			{
+				outcome = SwitchOutcome::Failed;
+			}
 		}
 		SetupDiDestroyDeviceInfoList(set);
-		return ok;
+		return outcome;
 	}
 	const std::string& inf = target == SinkDriver::OpenA2dp ? state.openA2dpInf : state.windowsInf;
 	if (inf.empty())
 	{
 		error = state.problem.empty() ? "the driver package for that choice is not available" : state.problem;
-		return false;
+		return SwitchOutcome::Failed;
+	}
+	const SwitchOutcome allowed = RefuseWhilePlaying(state.instanceId, error);
+	if (allowed != SwitchOutcome::Switched)
+	{
+		return allowed;
 	}
 	HDEVINFO set = INVALID_HANDLE_VALUE;
 	SP_DEVINFO_DATA dev = {};
 	if (!FindNode(reference, set, dev, error))
 	{
-		return false;
+		return SwitchOutcome::Failed;
 	}
 	std::vector<DriverEntry> entries;
 	if (!CollectDriverEntries(set, dev, entries))
 	{
 		error = Win32Error("SetupDiBuildDriverInfoList", GetLastError());
 		SetupDiDestroyDeviceInfoList(set);
-		return false;
+		return SwitchOutcome::Failed;
 	}
 	// The package the store offered for this choice, and within it the model that matched the
 	// service id: the same node also lists the enumerator's `_GENERIC` catch-all, and installing
@@ -588,17 +552,16 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::stri
 	{
 		bool rebootRequired = false;
 		switched = InstallDriverEntry(set, dev, *chosen, rebootRequired, error);
-		// SetupAPI asks for a reboot when something refused the node's restart. The driver is on
-		// the node already, so restarting it ourselves either finishes the switch now or names
-		// what holds it.
+		// SetupAPI asks for a reboot when the node's restart was refused. The driver is on the
+		// node already, so restarting the node ourselves finishes the switch now.
 		if (switched && rebootRequired)
 		{
-			switched = RestartNode(reference, set, dev, pendingHolder, error) || error.empty();
+			switched = RestartNode(dev, error);
 		}
 	}
 	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
 	SetupDiDestroyDeviceInfoList(set);
-	return switched;
+	return switched ? SwitchOutcome::Switched : SwitchOutcome::Failed;
 }
 
 } // namespace OpenA2dp::Tools

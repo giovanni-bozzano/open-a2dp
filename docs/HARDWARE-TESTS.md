@@ -502,7 +502,10 @@ other package on that node, which restarts it.
 **T34 Per-sink driver switch (S/A)** — needs `OpenA2dp.inf` deployed and an elevated prompt.
 1. With one sink connected on `BthA2dp` and a second in range on `OpenA2dp`, run
    `OpenA2dpCtl driver`: one line per A2DP node with its driver, including the sink that has no
-   control device.
+   control device. Then play to a sink and run a switch: it is refused (`exit 3`, the sink and
+   its audio untouched). Stop playback, wait for `media Suspended` in `status`, and run it
+   again: the switch takes a second or two, the sink stays paired and playing resumes when the
+   player reopens the endpoint.
 2. `OpenA2dpCtl driver windows --device <BthA2dp address>` reports `already on BthA2dp`;
    `driver opena2dp --device <address>` installs the package on that node. The node restarts,
    then `driver` and `OpenA2dpCtl list` report `OpenA2dp` and `status` returns a report.
