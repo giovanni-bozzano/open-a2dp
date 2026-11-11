@@ -54,8 +54,9 @@ single largest fixed part of it.
    have - they are sent as silence, so the stream keeps its place on the timeline - and the
    driver logs it at most once a second with the silence duration. `LatencyBudget::UnderrunSamples`
    is that rule, pinned by `LatencyBudget_UnderrunOnlyCountsDueAudio`, and it applies only while
-   the endpoint runs (`AudioStreamRunning`): a stream Windows has paused is sent silence to keep
-   its place on the timeline, and that is a pause, not a gap. Only the due window counts:
+   the endpoint runs (`AudioStreamRunning`): a paused endpoint suspends the stream instead (see
+   [driver lifecycle](Driver-Lifecycle.md#acx-audio)), so its silence is a pause, not a gap.
+   Only the due window counts:
    the silence a stream pads while it fills its lead, and the frames a packet carries past the
    target, are normal and would otherwise make the number noise. That is the number the exit
    gate below means: without it a lead too short for a sink was audible but invisible on the

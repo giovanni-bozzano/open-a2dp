@@ -428,6 +428,10 @@ measured delay and that number is the sink's buffering.
 4. Apply `--preroll 20`: the total drops by 180 ms. This lead is under one packet plus margin,
    so `underruns` may climb; record the number, T31 is what calibrates it.
 5. Repeat with `--preroll 60` on AAC and aptX (service running): same lines, same shape.
+6. Pause playback for a minute and leave it paused. The driver suspends the stream (`suspending
+   stream, the endpoint paused`), and `underruns` stays where it was: a paused endpoint asks for
+   no audio, so nothing counts as missing. Resume: `starting stream, the endpoint resumed`,
+   audio returns, and the counters are still unchanged a few seconds later.
 
 **T30 Audible latency measured against the source (S/A)** — the measurement that closes the
 model, and the only one that sees the sink's buffer.
