@@ -23,4 +23,17 @@ constexpr uint32_t RingLimitMs(uint32_t leadMs, uint32_t slackMs) noexcept
 	return leadMs + slackMs;
 }
 
+// PCM the media clock asked for that the ring did not have - the gap a listener hears.
+//
+// A packet carries more samples than the clock has asked for, because it is built whole, and
+// the frames past the due point are normally not in the ring yet: that audio is what the sink
+// is meant to buffer, so a short tail is not a fault. Nor is the silence a stream pads while
+// it fills its lead at start, which is why `caughtUp` has to be true before anything counts;
+// otherwise every healthy stream would report an underrun of one lead.
+constexpr uint32_t UnderrunSamples(uint32_t silentSamples, uint32_t dueSamples, bool caughtUp) noexcept
+{
+	if (!caughtUp || dueSamples == 0) return 0;
+	return silentSamples < dueSamples ? silentSamples : dueSamples;
+}
+
 } // namespace OpenA2dp::LatencyBudget

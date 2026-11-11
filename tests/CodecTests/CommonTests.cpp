@@ -202,6 +202,29 @@ TEST(LatencyBudget_TrimLimitsNeverCapTheLead)
 	}
 }
 
+// An underrun is audio the media clock asked for that the ring did not have. Two kinds of
+// silence are normal and must not count, or the number the panel shows would fire on a stream
+// with nothing wrong with it: the lead a stream pads at start, and the tail of a packet, which
+// is built whole and therefore reaches past the clock into audio the sink is meant to buffer.
+TEST(LatencyBudget_UnderrunOnlyCountsDueAudio)
+{
+	using namespace LatencyBudget;
+	constexpr uint32_t kPacket = 7 * 128;
+
+	// Filling the lead at start: silence, but the stream has not caught up yet.
+	CHECK_EQ(UnderrunSamples(kPacket, kPacket, false), uint32_t{0});
+	// Caught up and nothing at all in the ring: the whole packet is a gap.
+	CHECK_EQ(UnderrunSamples(kPacket, kPacket, true), kPacket);
+	// Only 128 samples are due, so 300 missing is still a 128-sample gap: the rest is the tail
+	// the sink buffers.
+	CHECK_EQ(UnderrunSamples(300, 128, true), uint32_t{128});
+	// A short tail inside the window counts exactly what is missing.
+	CHECK_EQ(UnderrunSamples(40, 128, true), uint32_t{40});
+	// Nothing missing, or nothing due, is not an underrun.
+	CHECK_EQ(UnderrunSamples(0, 128, true), uint32_t{0});
+	CHECK_EQ(UnderrunSamples(64, 0, true), uint32_t{0});
+}
+
 TEST(RingBuffer_WrapAround)
 {
 	RingHeader header;

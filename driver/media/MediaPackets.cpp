@@ -130,16 +130,13 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 		}
 		offset += written;
 	}
-	if (silentSamples != 0 && ctx->MediaCaughtUp)
+	// Only silence inside the pacing window is a gap the listener hears; LatencyBudget decides
+	// what counts, because a packet's tail lies past the clock and is meant to be buffered.
+	const uint32_t missing =
+		LatencyBudget::UnderrunSamples(silentSamples, dueSamples, ctx->MediaCaughtUp != FALSE);
+	if (missing != 0)
 	{
-		// Part of the packet may lie past the media clock's target: the sink is meant to buffer
-		// that, and the ring does not have it yet. Only silence inside the due window is a gap
-		// the listener will hear, so a short tail is not an underrun.
-		const uint32_t missing = silentSamples < dueSamples ? silentSamples : dueSamples;
-		if (missing != 0)
-		{
-			CountSbcUnderrun(ctx, missing);
-		}
+		CountSbcUnderrun(ctx, missing);
 	}
 
 	samples = static_cast<uint32_t>(frameCount * spf);
