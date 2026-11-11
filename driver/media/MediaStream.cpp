@@ -107,6 +107,9 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaCaughtUp = FALSE;
+	// Per stream, like the counters next to it: a status line that mixes a stream's packet
+	// count with a device's lifetime underrun total cannot say whether a gap just happened.
+	InterlockedExchange64(&ctx->Underruns, 0);
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	// The PCM the endpoint queued before MediaStart predates this stream, exactly as the service
 	// encoders treat their own start: drop it, so the pacer fills the lead with silence rather
