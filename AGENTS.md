@@ -10,7 +10,7 @@
 
 ## Context and tracking
 - Start with `docs/STATUS.md`, `git status --short`, and `git log -n 5 --oneline`. Read commit bodies only for relevant changes.
-- `docs/STATUS.md` is the only live plan: milestone state, blockers, next priorities and exit gates. Update it only when these change; replace stale state rather than append a diary.
+- `docs/STATUS.md` is the only live plan: milestone state, blockers, next priorities. A milestone is done when its code and host tests are; a hardware run is evidence for a build, never the gate that closes it. Update it only when this changes; replace stale state rather than append a diary.
 - See `docs/AGENT-EFFICIENCY.md` for reference locations.
 - Use Git for historical evidence. Do not log validation, build, and test status in Git commit messages.
 - Use Conventional Commits: `<type>(<scope>): <summary>` (`feat`, `fix`, `refactor`, `docs`, `test`, `build`, `chore`). Record rationale, tests/results and deployment/hardware limits in the body, not Markdown change logs.

@@ -10,4 +10,4 @@
 | [AAC service boundary](AAC-Service-Boundary.md) | Shared rings, IOCTLs, lifetime, encoder pacing and why the encoder is Windows' |
 | [Codec configuration](Codec-Configuration.md) | Stored codec/endpoint settings, how a change applies, and the two tools that read them |
 | [Codec settings](Codec-Settings.md) | Configurable fields per codec, defaults, registry names and what a change does |
-| [Codec licensing](Codec-Licensing.md) | What may live in-tree per codec, and the aptX family and AAC obligations of a shipped product |
+| [Codec licensing](Codec-Licensing.md) | The codec licence position: what ships and what each codec obliges a distributor to do |

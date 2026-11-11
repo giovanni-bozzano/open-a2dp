@@ -374,8 +374,7 @@ it), reattach.
 
 ### Handover checks for system testing
 
-The first checks of M7. All need a real player and a real sink; the scripted helpers in
-`.local/` cannot stand in for either.
+These need a real player and a real sink: no scripted helper can stand in for either.
 
 **T25 Player resumes after the endpoint flap (S/A)** — while a media player streams, change
 `PCM format`.
@@ -538,6 +537,6 @@ On a hang: do not reboot. Break in with the kernel debugger and follow the
 stacks), then save a dump (`.dump /ka`).
 
 ## 5. Reporting
-Per test: id, sink, commit, Verifier on/off, pass/fail, log file and dump if any. Change the
-milestone table in [STATUS.md](STATUS.md) only when a gate passes or a blocker appears; the
-test log itself stays out of the repository.
+Per test: id, sink, commit, Verifier on/off, pass/fail, log file and dump if any. A run is
+evidence for the build it was made on and stays out of the repository; it does not change
+[STATUS.md](STATUS.md), which tracks code, though a blocker it exposes does.

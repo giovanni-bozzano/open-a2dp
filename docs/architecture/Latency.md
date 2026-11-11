@@ -102,15 +102,15 @@ Every software lever in this document is in place; what is left needs a sink and
    hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
    Windows' latency figure is a lower bound rather than the audible total.
 
-## Exit gates
+## What the report has to show
 
-Each gate is read from a report line rather than an internal field. The procedure that takes
-them is [T29-T33](../HARDWARE-TESTS.md#latency), which also measures the audible delay against
-the source - the one number no report line can supply.
+Each expectation is read from a report line rather than an internal field. The procedure that
+takes them is [T29-T33](../HARDWARE-TESTS.md#latency), which also measures the audible delay
+against the source - the one number no report line can supply.
 
 - `latency`'s buffered term (`pcmBufferedMs + frameBufferedMs`) stays under 100 ms in steady
   state at the default 60 ms lead. A longer lead makes the rings legitimately hold more, so the
-  gate is stated per lead, not once for every configuration.
+  expectation is stated per lead, not once for every configuration.
 - After a forced 500 ms transport stall, `trimmed` grows once and then stops, and `latency peak`
   comes back down to the lead plus a packet: the stream recovered to live audio instead of
   playing late.
