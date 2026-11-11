@@ -23,10 +23,6 @@ constexpr int kColumnGap = 8;    // between the divider and the text on either s
 constexpr int kSplitterGrab = 3; // pixels either side of the divider that start a drag
 // Rows per wheel notch, like a list that scrolls by items.
 constexpr int kWheelRows = 3;
-// The column width the user chose lives in their own settings, so it survives a restart.
-constexpr wchar_t kSettingsKey[] = L"Software\\OpenA2dp\\ConfigUi";
-constexpr wchar_t kLabelWidthValue[] = L"LabelWidth";
-constexpr int kMaxLabelColumnWidth = 2000; // anything larger is not a width this panel had
 
 struct ViewState
 {
@@ -92,69 +88,44 @@ void ClampLabelWidth(HWND window, ViewState& state)
 	}
 }
 
-// A missing or nonsensical value leaves the automatic width in charge.
-int LoadLabelWidth()
+// The divider is only there when there are two columns to separate.
+bool HasColumns(const ViewState& state)
 {
-	HKEY key = nullptr;
-	if (RegOpenKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
-	{
-		return 0;
-	}
-	DWORD width = 0;
-	DWORD bytes = sizeof(width);
-	DWORD type = 0;
-	const bool read = RegQueryValueExW(key, kLabelWidthValue, nullptr, &type,
-							 reinterpret_cast<LPBYTE>(&width), &bytes) == ERROR_SUCCESS;
-	RegCloseKey(key);
-	if (!read || type != REG_DWORD || width < static_cast<DWORD>(kMinLabelColumnWidth) ||
-		width > static_cast<DWORD>(kMaxLabelColumnWidth))
-	{
-		return 0;
-	}
-	return static_cast<int>(width);
-}
-
-// The width is written when a drag ends, not while it runs: every pixel of the drag would
-// otherwise be a registry write.
-void SaveLabelWidth(int width)
-{
-	HKEY key = nullptr;
-	if (RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key,
-						nullptr) != ERROR_SUCCESS)
-	{
-		return;
-	}
-	const DWORD value = static_cast<DWORD>(width);
-	(void)RegSetValueExW(key, kLabelWidthValue, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value),
-					 sizeof(value));
-	RegCloseKey(key);
+	return !state.rows.empty() && state.emptyText.empty();
 }
 
 bool OnDivider(const ViewState& state, int x)
 {
+	if (!HasColumns(state))
+	{
+		return false;
+	}
 	const int divider = DividerX(state);
 	return x >= divider - kSplitterGrab && x <= divider + kSplitterGrab;
 }
 
-// One row: section headers span the whole width as a band, a value row has two columns.
-// `shaded` is the alternation inside the current section; the section header starts it over,
-// so each group reads as its own block instead of one continuous stripe.
-void PaintRow(HDC dc, const ViewState& state, int index, int y, int width, bool shaded)
+// One row: section headers span the whole width as a band, a value row has two columns. Value
+// rows share the window background, so the only thing that changes between groups is the band
+// that names them.
+void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
 	const RECT strip = {0, y, width, y + state.rowHeight};
-	Fill(dc, strip, row.section ? ThemeColors().section
-								: (shaded ? ThemeColors().alternateRow : ThemeColors().background));
-	const bool selected = index < static_cast<int>(state.selected.size()) && state.selected[index];
+	Fill(dc, strip, row.section ? ThemeColors().section : ThemeColors().background);
+	const bool selected = !row.section && index < static_cast<int>(state.selected.size()) &&
+						  state.selected[index];
 	if (selected)
 	{
 		Fill(dc, strip, ThemeColors().selection);
 	}
 	if (row.section)
 	{
-		// The band closes with a hairline, which is what separates one group from the next.
-		const RECT line = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
-		Fill(dc, line, ThemeColors().border);
+		// The band is bounded by a hairline on both sides, which is what separates one group
+		// from the previous one; the last band keeps its rule on the bottom edge only.
+		const RECT top = {0, y, width, y + 1};
+		Fill(dc, top, ThemeColors().border);
+		const RECT bottom = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
+		Fill(dc, bottom, ThemeColors().border);
 	}
 	SelectObject(dc, row.section ? state.bold : state.normal);
 
@@ -178,7 +149,7 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width, bool 
 void PaintDivider(HDC dc, const ViewState& state, int width, int height)
 {
 	const int divider = DividerX(state);
-	if (divider >= width)
+	if (!HasColumns(state) || divider >= width)
 	{
 		return;
 	}
@@ -205,6 +176,12 @@ void ResizeSelection(ViewState& state)
 	{
 		state.selected.assign(state.rows.size(), false);
 	}
+}
+
+// A section band names the rows below it; only those rows are content a report can quote.
+bool SelectableRow(const ViewState& state, int index)
+{
+	return index >= 0 && index < static_cast<int>(state.rows.size()) && !state.rows[static_cast<size_t>(index)].section;
 }
 
 bool HasSelection(const ViewState& state)
@@ -268,17 +245,6 @@ void CopyToClipboard(HWND window, const std::wstring& text)
 	CloseClipboard();
 }
 
-// The alternation a row at `index` gets, from the start of its section.
-bool ShadedAt(const ViewState& state, int index)
-{
-	bool shaded = false;
-	for (int i = 0; i < index; ++i)
-	{
-		shaded = state.rows[static_cast<size_t>(i)].section ? false : !shaded;
-	}
-	return shaded;
-}
-
 void Paint(HWND window, ViewState& state)
 {
 	PAINTSTRUCT paint = {};
@@ -298,12 +264,10 @@ void Paint(HWND window, ViewState& state)
 		// The offset is continuous, so the last row can be scrolled fully into view.
 		const int first = state.scrollTop / state.rowHeight;
 		int y = first * state.rowHeight - state.scrollTop;
-		bool shaded = ShadedAt(state, first);
 		for (int index = first; index < static_cast<int>(state.rows.size()) && y < height;
 			 ++index, y += state.rowHeight)
 		{
-			PaintRow(memory, state, index, y, width, shaded);
-			shaded = state.rows[static_cast<size_t>(index)].section ? false : !shaded;
+			PaintRow(memory, state, index, y, width);
 		}
 		PaintDivider(memory, state, width, height);
 	}
@@ -421,13 +385,7 @@ void DragLabelWidth(HWND window, ViewState& state, int x)
 	InvalidateRect(window, nullptr, FALSE);
 }
 
-// Ends a drag wherever it ends - the button, or another window taking the capture - and keeps
-// the width that was chosen.
-void EndDrag(ViewState& state)
-{
-	state.dragging = false;
-	SaveLabelWidth(state.labelWidth);
-}
+
 
 void SetDividerHot(HWND window, ViewState& state, bool hot)
 {
@@ -507,14 +465,14 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			// A click selects the row under it; Ctrl adds it to what is already selected. The
 			// view takes the focus so the copy shortcut reaches it.
 			const int index = RowAt(*state, GET_Y_LPARAM(lParam));
-			if ((wParam & MK_CONTROL) != 0 && index >= 0)
+			if ((wParam & MK_CONTROL) != 0 && SelectableRow(*state, index))
 			{
 				state->selected[index] = !state->selected[index];
 			}
 			else
 			{
 				std::fill(state->selected.begin(), state->selected.end(), false);
-				if (index >= 0)
+				if (SelectableRow(*state, index))
 				{
 					state->selected[static_cast<size_t>(index)] = true;
 				}
@@ -527,7 +485,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_LBUTTONUP:
 		if (state != nullptr && state->dragging)
 		{
-			EndDrag(*state);
+			state->dragging = false;
 			ReleaseCapture();
 			InvalidateRect(window, nullptr, FALSE);
 			return 0;
@@ -536,7 +494,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_CAPTURECHANGED:
 		if (state != nullptr && state->dragging)
 		{
-			EndDrag(*state);
+			state->dragging = false;
 			InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
@@ -547,7 +505,10 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			{
 			case 'A':
 				ResizeSelection(*state);
-				std::fill(state->selected.begin(), state->selected.end(), true);
+				for (size_t i = 0; i < state->rows.size(); ++i)
+				{
+					state->selected[i] = !state->rows[i].section;
+				}
 				InvalidateRect(window, nullptr, FALSE);
 				return 0;
 			case 'C':
@@ -642,12 +603,6 @@ bool CreateStatusView(HWND parent, int id, int x, int y, int width, int height, 
 	auto* state = new ViewState();
 	state->normal = font;
 	state->bold = CreateBoldFont(font);
-	const int savedWidth = LoadLabelWidth();
-	if (savedWidth > 0)
-	{
-		state->labelWidth = savedWidth;
-		state->labelWidthChosen = true;
-	}
 	// Rows follow the font, so a larger system font does not squeeze the text.
 	const HDC dc = GetDC(window);
 	if (dc != nullptr)

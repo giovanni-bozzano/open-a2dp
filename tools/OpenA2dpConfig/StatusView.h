@@ -1,16 +1,16 @@
 #pragma once
 
 // The session view of the settings window: a two-column panel instead of a wall of text.
-// Rows are grouped under section bands, each group restarts the row shading and closes with a
-// hairline, and a value that reports a failure is coloured, so the state is readable without
-// parsing every line. The divider between the columns is draggable; until it is dragged the
-// label column follows the widest label, and the width it is dragged to is kept for the next
-// run of the window.
+// Rows are grouped under full-width section bands, ruled above and below, and a value that
+// reports a failure is coloured, so the state is readable without parsing every line. The
+// divider between the columns is draggable; until it is dragged the label column follows the
+// widest label, and a window with nothing to report has no columns and so no divider.
 //
 // It is painted by this window and not by a common control: an Explorer-themed list marks
-// the row under the cursor, and this view is a read-only report. A click selects the row under
-// it - Ctrl adds rows to the selection for a bug report - and Ctrl+C copies the selected rows,
-// or the whole pane when nothing is selected; Ctrl+A selects everything.
+// the row under the cursor, and this view is a read-only report. A click selects the value row
+// under it - Ctrl adds rows to the selection for a bug report - and Ctrl+C copies the selected
+// rows, or the whole pane when nothing is selected. A section band names the rows below it, so
+// it is never selected itself; Ctrl+A selects every value row.
 //
 // The text behind it is still Tools::BuildStatusReport - the caller builds the rows from
 // that report, so the panel and `OpenA2dpCtl status` cannot disagree.
