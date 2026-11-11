@@ -783,7 +783,8 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 
 	if (target == SinkDriver::Unknown)
 	{
-		std::printf("%s: %s\n", FormatAddress(reference).c_str(), SinkDriverName(state.current));
+		std::printf("%s: %s%s\n", FormatAddress(reference).c_str(), SinkDriverName(state.current),
+					state.restartPending ? " (installed, waiting for the node to restart)" : "");
 		std::printf("  node      %s\n", state.instanceId.c_str());
 		std::printf("  switch    %s\n",
 					state.switchable ? "`driver opena2dp` or `driver windows` moves this sink"
@@ -791,21 +792,28 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 		return 0;
 	}
 
-	if (state.current == target)
+	if (state.current == target && !state.restartPending)
 	{
 		std::printf("%s: already on %s, nothing to change.\n", FormatAddress(reference).c_str(),
 					SinkDriverName(target));
 		return 0;
 	}
 
-	bool reboot = false;
-	if (!SwitchSinkDriver(reference, target, reboot, error))
+	std::string holder;
+	if (!SwitchSinkDriver(reference, target, holder, error))
 	{
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
 	}
-	std::printf("%s: %s installed on the sink's A2DP node%s.\n", FormatAddress(reference).c_str(),
-				SinkDriverName(target), reboot ? "; it takes effect after a reboot" : "");
+	if (!holder.empty())
+	{
+		std::printf("%s: %s is installed on the sink's A2DP node, but %s keeps the node from "
+					"restarting.\n  Stop playback there (or close it), then run this command again.\n",
+					FormatAddress(reference).c_str(), SinkDriverName(target), holder.c_str());
+		return 3;
+	}
+	std::printf("%s: %s installed on the sink's A2DP node.\n", FormatAddress(reference).c_str(),
+				SinkDriverName(target));
 
 	// The node restarts as part of the install; reading it back says what Windows settled on.
 	SinkDriverState applied;

@@ -5,12 +5,14 @@
 
 #include <windows.h>
 
+#include <cfgmgr32.h>
 #include <newdev.h>
 #include <setupapi.h>
 
 #include <algorithm>
 #include <cwchar>
 #include <cwctype>
+#include <string>
 #include <vector>
 
 namespace OpenA2dp::Tools {
@@ -231,6 +233,61 @@ bool InstallDriverEntry(HDEVINFO set, SP_DEVINFO_DATA& dev, const DriverEntry& e
 	return true;
 }
 
+// Restarts the node so the driver installed on it binds now. PnP asks every holder of the node
+// first, and one that refuses - typically the audio engine or a player with the endpoint open -
+// is named in `holder` instead of the switch being left to a reboot. The installed driver stays
+// on the node either way, so a later retry only has to restart it.
+bool RestartNode(HDEVINFO set, SP_DEVINFO_DATA& dev, std::string& holder, std::string& error)
+{
+	const std::wstring instanceId = InstanceIdOf(set, dev);
+	PNP_VETO_TYPE vetoType = PNP_VetoTypeUnknown;
+	wchar_t vetoName[MAX_PATH] = {};
+	const CONFIGRET removed =
+		CM_Query_And_Remove_SubTreeW(dev.DevInst, &vetoType, vetoName, MAX_PATH, CM_REMOVE_UI_NOT_OK);
+	if (removed == CR_REMOVE_VETOED)
+	{
+		holder = vetoName[0] != L'\0' ? Utf8(std::wstring(vetoName)) : std::string("another program");
+		if (vetoType == PNP_VetoOutstandingOpen)
+		{
+			holder += " (has the sink's audio device open)";
+		}
+		return false;
+	}
+	if (removed != CR_SUCCESS)
+	{
+		error = "restarting the sink's A2DP node failed (CONFIGRET " + std::to_string(removed) + ")";
+		return false;
+	}
+	// The removed node is still known to PnP; starting it again loads the driver now installed.
+	DEVINST node = 0;
+	CONFIGRET started = CM_Locate_DevNodeW(&node, const_cast<DEVINSTID_W>(instanceId.c_str()),
+										   CM_LOCATE_DEVNODE_PHANTOM);
+	if (started == CR_SUCCESS)
+	{
+		started = CM_Setup_DevNode(node, CM_SETUP_DEVNODE_READY);
+	}
+	if (started != CR_SUCCESS)
+	{
+		error = "the sink's A2DP node was stopped but did not start again (CONFIGRET " +
+				std::to_string(started) + "); reconnect the sink";
+		return false;
+	}
+	return true;
+}
+
+// True when the node carries a driver it has not loaded yet: an install whose restart was refused.
+bool NeedsRestart(const SP_DEVINFO_DATA& dev)
+{
+	ULONG status = 0;
+	ULONG problem = 0;
+	if (CM_Get_DevNode_Status(&status, &problem, dev.DevInst, 0) != CR_SUCCESS)
+	{
+		return false;
+	}
+	return (status & DN_NEED_RESTART) != 0 || problem == CM_PROB_NEED_RESTART ||
+		   problem == CM_PROB_DRIVER_FAILED_PRIOR_UNLOAD;
+}
+
 } // namespace
 
 const char* SinkDriverName(SinkDriver driver)
@@ -315,6 +372,7 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
 	const std::wstring instanceId = InstanceIdOf(set, dev);
 	const std::wstring service = StringProperty(set, dev, SPDRP_SERVICE);
+	state.restartPending = NeedsRestart(dev);
 	SetupDiDestroyDeviceInfoList(set);
 
 	state.instanceId = Utf8(instanceId);
@@ -396,10 +454,10 @@ bool EnumerateSinkNodes(std::vector<SinkNode>& nodes, std::string& error)
 	return true;
 }
 
-bool SwitchSinkDriver(const std::string& reference, SinkDriver target, bool& rebootRequired,
+bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& pendingHolder,
 					  std::string& error)
 {
-	rebootRequired = false;
+	pendingHolder.clear();
 	SinkDriverState state;
 	if (!ReadSinkDriver(reference, state, error))
 	{
@@ -412,14 +470,29 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, bool& reb
 	}
 	if (state.current == target)
 	{
-		return true;
+		// Already installed, but possibly not loaded: a previous switch whose restart was refused
+		// finishes here, without a reboot.
+		HDEVINFO set = INVALID_HANDLE_VALUE;
+		SP_DEVINFO_DATA dev = {};
+		if (!FindNode(reference, set, dev, error))
+		{
+			return false;
+		}
+		bool ok = true;
+		if (NeedsRestart(dev))
+		{
+			ok = RestartNode(set, dev, pendingHolder, error) || error.empty();
+		}
+		SetupDiDestroyDeviceInfoList(set);
+		return ok;
 	}
 	const std::string& inf = target == SinkDriver::OpenA2dp ? state.openA2dpInf : state.windowsInf;
 	if (inf.empty())
 	{
 		error = state.problem.empty() ? "the driver package for that choice is not available" : state.problem;
 		return false;
-	}	HDEVINFO set = INVALID_HANDLE_VALUE;
+	}
+	HDEVINFO set = INVALID_HANDLE_VALUE;
 	SP_DEVINFO_DATA dev = {};
 	if (!FindNode(reference, set, dev, error))
 	{
@@ -458,7 +531,15 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, bool& reb
 	}
 	else
 	{
+		bool rebootRequired = false;
 		switched = InstallDriverEntry(set, dev, *chosen, rebootRequired, error);
+		// SetupAPI asks for a reboot when something refused the node's restart. The driver is on
+		// the node already, so restarting it ourselves either finishes the switch now or names
+		// what holds it.
+		if (switched && rebootRequired)
+		{
+			switched = RestartNode(set, dev, pendingHolder, error) || error.empty();
+		}
 	}
 	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
 	SetupDiDestroyDeviceInfoList(set);

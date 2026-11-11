@@ -90,6 +90,7 @@ constexpr wchar_t kApplyText[] = L"Apply";
 // The switch names the driver the sink is not on, so the caption reads as the action.
 constexpr wchar_t kUseWindowsText[] = L"Use Windows driver";
 constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
+constexpr wchar_t kFinishSwitchText[] = L"Finish driver switch";
 constexpr wchar_t kSessionGroupText[] = L"Session";
 constexpr wchar_t kCodecGroupText[] = L"Codec";
 constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
@@ -190,6 +191,8 @@ struct SinkState
 	// a sink on the inbox driver has no control device to open at all.
 	SinkDriver driver = SinkDriver::Unknown;
 	bool driverSwitchable = false;
+	// The driver is installed on the node but its restart was refused; the button finishes it.
+	bool driverRestartPending = false;
 	std::wstring driverProblem;
 	Ioctl::Status status = {};
 	Ioctl::Preference preference = {};
@@ -742,7 +745,8 @@ void ApplyLayout(HWND hwnd)
 	// button's width, so the switch cannot squeeze the outcome of the last action out of view.
 	const int applyWidth = TextWidth(dc, kApplyText) + gap * 4;
 	const int applyHeight = rowHeight + 4;
-	const int driverWidth = MaxOf(TextWidth(dc, kUseWindowsText), TextWidth(dc, kUseOpenA2dpText)) + gap * 4;
+	const int driverWidth = MaxOf(MaxOf(TextWidth(dc, kUseWindowsText), TextWidth(dc, kUseOpenA2dpText)),
+								  TextWidth(dc, kFinishSwitchText)) + gap * 4;
 	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + margin;
 
 	int width = contentWidth + (margin + inset) * 2;
@@ -1080,8 +1084,10 @@ void UpdateDriverButton(HWND hwnd)
 	{
 		return;
 	}
-	SetWindowTextW(button, state->driver == SinkDriver::OpenA2dp ? kUseWindowsText : kUseOpenA2dpText);
-	EnableWindow(button, state->driverSwitchable);
+	SetWindowTextW(button, state->driverRestartPending		   ? kFinishSwitchText
+						   : state->driver == SinkDriver::OpenA2dp ? kUseWindowsText
+																   : kUseOpenA2dpText);
+	EnableWindow(button, state->driverSwitchable || state->driverRestartPending);
 }
 
 // Reads which driver owns the sink, and whether the other one is there to switch to.
@@ -1098,12 +1104,14 @@ void ReadSelectedDriver(HWND hwnd)
 	{
 		state->driver = driver.current;
 		state->driverSwitchable = driver.switchable;
+		state->driverRestartPending = driver.restartPending;
 		state->driverProblem = Tools::Widen(driver.problem);
 	}
 	else
 	{
 		state->driver = SinkDriver::Unknown;
 		state->driverSwitchable = false;
+		state->driverRestartPending = false;
 		state->driverProblem = Tools::Widen(error);
 	}
 	UpdateDriverButton(hwnd);
@@ -1123,6 +1131,7 @@ void OpenSelected(HWND hwnd)
 	{
 		state->driver = SinkDriver::Unknown;
 		state->driverSwitchable = false;
+		state->driverRestartPending = false;
 		UpdateDriverButton(hwnd);
 		state->message = L"No sink found: connect a paired A2DP sink, then press Refresh.";
 		SetMessage(hwnd, state->message);
@@ -1758,7 +1767,9 @@ void SwitchSelectedDriver(HWND hwnd)
 	{
 		return;
 	}
-	const SinkDriver target = Tools::OtherDriver(state->driver);
+	// A switch whose restart was refused is finished on the driver already installed.
+	const SinkDriver target =
+		state->driverRestartPending ? state->driver : Tools::OtherDriver(state->driver);
 	if (target == SinkDriver::Unknown)
 	{
 		SetMessage(hwnd, L"The A2DP node this sink is on was not found: reconnect it, then Refresh.");
@@ -1775,20 +1786,28 @@ void SwitchSelectedDriver(HWND hwnd)
 		return;
 	}
 
-	bool reboot = false;
+	// The window's own handle on the control device would keep the old OpenA2dp image loaded
+	// after its node is gone, and a later switch back then fails until a reboot (problem 38).
+	// It is closed before the node restarts, not after.
+	CloseControl(*state);
+	std::string holder;
 	std::string error;
-	if (!SwitchSinkDriver(reference, target, reboot, error))
+	const bool switched = SwitchSinkDriver(reference, target, holder, error);
+	ReloadDevices(hwnd);
+	if (!switched)
 	{
 		SetMessage(hwnd, Tools::Widen(error));
 		return;
 	}
-
-	// The control device the window held belongs to the install that just went away, so it is
-	// dropped before the list is read again; the sink stays selected across that reload.
-	CloseControl(*state);
-	ReloadDevices(hwnd);
-	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) +
-						 (reboot ? L"; it takes effect after a reboot." : L"."));
+	if (!holder.empty())
+	{
+		SetMessage(hwnd, DriverTitle(target) + L" is installed for " + title + L", but " +
+							 Tools::Widen(holder) +
+							 L" keeps the device from restarting. Stop playback there, then press "
+							 L"Finish driver switch.");
+		return;
+	}
+	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) + L".");
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)

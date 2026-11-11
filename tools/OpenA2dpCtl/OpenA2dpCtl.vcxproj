@@ -14,8 +14,8 @@
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
-	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it. -->
-	  <AdditionalDependencies>setupapi.lib;newdev.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it, cfgmgr32 restarts it. -->
+	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	</Link>
   </ItemDefinitionGroup>
   <ItemGroup>

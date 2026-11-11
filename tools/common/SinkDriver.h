@@ -30,6 +30,8 @@ struct SinkDriverState
 	SinkDriver current = SinkDriver::Unknown;
 	// The other package is in the driver store, so the sink can be moved to it.
 	bool switchable = false;
+	// `current` is installed on the node but not loaded yet: its restart was refused.
+	bool restartPending = false;
 	// The A2DP devnode carrying this sink's address.
 	std::string instanceId;
 	std::string windowsInf; // full path to the inbox A2DP INF; empty when it is not a candidate
@@ -57,10 +59,11 @@ bool EnumerateSinkNodes(std::vector<SinkNode>& nodes, std::string& error);
 // is installed and no node is touched.
 bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::string& error);
 
-// Installs `target`'s package on that one devnode. The node restarts, so the sink's endpoints
-// and any open stream go with it. Needs an elevated prompt; `error` names what failed, and
-// `rebootRequired` reports a package that only takes effect after a reboot.
-bool SwitchSinkDriver(const std::string& reference, SinkDriver target, bool& rebootRequired,
+// Installs `target`'s package on that one devnode and restarts it, so the sink's endpoints and
+// any open stream go with it. Needs an elevated prompt; `error` names what failed. When the
+// restart is refused the driver stays installed but not loaded, and `pendingHolder` names what
+// refused it; calling this again once that is closed finishes the switch without a reboot.
+bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::string& pendingHolder,
 					  std::string& error);
 
 } // namespace OpenA2dp::Tools
