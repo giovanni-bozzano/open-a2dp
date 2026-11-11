@@ -33,6 +33,14 @@ void AppendField(std::string& text, const char* name, uint32_t value)
 	text += line;
 }
 
+// The counters are 64-bit: a stream can send more packets than 32 bits hold in a few hours.
+void AppendField(std::string& text, const char* name, uint64_t value)
+{
+	char line[128] = {};
+	std::snprintf(line, sizeof(line), "  %-28s %llu (0x%llX)\n", name, value, value);
+	text += line;
+}
+
 std::string Format(const char* format, ...)
 {
 	char buffer[256] = {};
@@ -389,9 +397,9 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	// the stream ran dry is an underrun; audio discarded to stay near live after a stall is a
 	// trim. Both mean the lead is short for this sink, and both are worth seeing beside the
 	// latency they explain.
-	AppendLine(text, "underruns", Format("%u packets short of PCM", status.underruns));
+	AppendLine(text, "underruns", Format("%llu packets short of PCM", status.underruns));
 	AppendLine(text, "trimmed",
-			   Format("%u B of PCM and %u records of old audio dropped", status.pcmTrimmedBytes,
+			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,
 					  status.framesTrimmed));
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
@@ -409,7 +417,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendLine(text, "capacity",
 			   Format("PCM %u B, frames %u B", status.pcmCapacity, status.frameCapacity));
 	AppendLine(text, "counters",
-			   Format("packets %u, dropped %u, underruns %u, send failures %u, trimmed %u B",
+			   Format("packets %llu, dropped %llu, underruns %llu, send failures %llu, trimmed %llu B",
 					  status.packetsSent, status.framesDropped, status.underruns, status.sendFailures,
 					  status.pcmTrimmedBytes));
 	AppendLine(text, "last error", status.lastError != 0 ? Format("0x%08X", status.lastError) : "none");

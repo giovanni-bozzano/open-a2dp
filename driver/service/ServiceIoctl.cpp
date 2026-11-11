@@ -237,7 +237,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		{
 			out->mediaState = Ioctl::MediaState::Idle;
 		}
-		else if (mode == MediaModeService && ctx->RtpSequence == 0)
+		else if (mode == MediaModeService && ctx->PacketsSent == 0)
 		{
 			out->mediaState = Ioctl::MediaState::WaitingForEncoder;
 		}
@@ -261,10 +261,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			out->frameBufferedBytes = RingBufferView(ctx->FrameRingHeader, ctx->FrameRingData).ReadableBytes();
 		}
 		out->frameCapacity = Ioctl::kFrameRingBytes;
-		out->packetsSent = ctx->RtpSequence;
-		out->framesDropped = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->FramesDropped, 0, 0));
-		out->underruns = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->Underruns, 0, 0));
-		out->sendFailures = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SendFailures, 0, 0));
+		out->packetsSent = ctx->PacketsSent;
+		out->framesDropped = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->FramesDropped, 0, 0));
+		out->underruns = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->Underruns, 0, 0));
+		out->sendFailures = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->SendFailures, 0, 0));
 		out->lastError = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->LastMediaError, 0, 0));
 		// What the bitrate is allowed to be: one access unit per media packet, so the
 		// ceiling follows the negotiated MTU and the endpoint's sample rate.
@@ -288,8 +288,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			out->frameBufferedMs =
 				static_cast<uint32_t>(static_cast<uint64_t>(out->frameBufferedBytes) * 8000 / out->bitrate);
 		}
-		out->pcmTrimmedBytes = static_cast<uint32_t>(ctx->AudioTrimmedBytes);
-		out->framesTrimmed = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->FramesTrimmed, 0, 0));
+		out->pcmTrimmedBytes = ctx->AudioTrimmedBytes;
+		out->framesTrimmed = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->FramesTrimmed, 0, 0));
 		out->pacingLeadMs = ctx->PacingLeadMs;
 		out->latencyPeakMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->LatencyPeakMs, 0, 0));
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;

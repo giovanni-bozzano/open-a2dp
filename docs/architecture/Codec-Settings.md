@@ -116,8 +116,8 @@ One preference per sink, kept in the registry and restored when the device start
 All values are `REG_DWORD`, `0` means "driver default", `OpenA2dpCtl codec` writes the codec
 fields through `SET_PREFERENCE` and `OpenA2dpCtl format` writes the endpoint format through
 `SET_ENDPOINT_FORMAT`. Deleting the sink subkey returns it to auto. The driver reads it in
-`OnDeviceAdd`, before the endpoint exists. The development ABI baseline (2) removes the
-obsolete format preference and fallback fields:`Preference` is 40 bytes, `EndpointFormat` 16 bytes, `Status` 264 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
+`OnDeviceAdd`, before the endpoint exists. The development ABI baseline (3) removes the
+obsolete format preference and fallback fields and widens `Status`'s counters to 64 bits, so a soak outlives the 16-bit RTP sequence:`Preference` is 40 bytes, `EndpointFormat` 16 bytes, `Status` 288 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
 Rebuild the tools, driver and service together; earlier development layouts are
 incompatible, even if they reported the same version.
 `status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows

@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 2;
+constexpr uint32_t kAbiVersion = 3;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -243,20 +243,11 @@ struct Status {
 	// so a non-zero value means the stream recovered from a stall instead of playing late.
 	uint32_t pcmBufferedMs;
 	uint32_t frameBufferedMs;
-	uint32_t pcmTrimmedBytes;
-	// Encoded records dropped by the same policy when the frame ring held a backlog: the PCM
-	// count alone does not show a stall on the service-encoded codecs, where the backlog is
-	// encoded audio rather than PCM.
-	uint32_t framesTrimmed;
 	// Pacing lead the running stream is sent ahead of the media clock by, and the worst
 	// driver-side latency (lead plus both ring fills) seen since that stream started, so a
 	// transient backlog spike is still visible after the stream trimmed back to live.
 	uint32_t pacingLeadMs;
 	uint32_t latencyPeakMs;
-	uint32_t packetsSent;
-	uint32_t framesDropped;
-	uint32_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
-	uint32_t sendFailures;
 	uint32_t lastError; // NTSTATUS of the last media failure, 0 if none
 	// Codec chosen by the last AVDTP negotiation (0 = none yet). It is valid
 	// before streaming starts, unlike `codec`, which is set by MediaStart.
@@ -281,6 +272,16 @@ struct Status {
 	// without a second IOCTL.
 	uint32_t endpointRate;
 	uint32_t endpointChannels;
+	// Counters, 64-bit because a stream outlives a 32-bit count: the wire RTP sequence is 16
+	// bits (minutes), and a soak reports audio discarded and packets sent over hours. They are
+	// grouped past the byte, format and setting fields so each keeps 8-byte alignment without
+	// padding the record.
+	uint64_t pcmTrimmedBytes;
+	uint64_t framesTrimmed;
+	uint64_t packetsSent;
+	uint64_t framesDropped;
+	uint64_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
+	uint64_t sendFailures;
 	// The sink's Bluetooth name, so a tool can show the sink as "name (address)" without
 	// asking the Bluetooth stack; empty until the sink reported one.
 	wchar_t sinkName[kSinkNameChars];
@@ -376,7 +377,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 264, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 288, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

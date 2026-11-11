@@ -39,9 +39,9 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 		return;
 	}
 	ctx->MediaSamplesSent += samples;
-	if ((ctx->RtpSequence & 0xFF) == 0)
+	if ((ctx->PacketsSent & 0xFF) == 0)
 	{
-		OA2DP_INFO(ctx, "Media", "%u packets sent", ctx->RtpSequence);
+		OA2DP_INFO(ctx, "Media", "%I64u packets sent", ctx->PacketsSent);
 	}
 }
 
@@ -98,7 +98,7 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 	if (idle >= UnderrunTimeout && now - ctx->ServiceLastUnderrunLog >= UnderrunLogInterval)
 	{
 		ctx->ServiceLastUnderrunLog = now;
-		InterlockedIncrement(&ctx->Underruns);
+		InterlockedIncrement64(&ctx->Underruns);
 		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)", CodecValueName(ctx->ActiveCodec),
 			idle / 10000ull);
 	}

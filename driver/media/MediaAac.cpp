@@ -52,6 +52,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->ActiveBitrate = params.bitrate;
 	ctx->ActiveObjectType = params.objectType;
 	ctx->RtpSequence = 0;
+	ctx->PacketsSent = 0;
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaStartTime = KeQueryInterruptTime();

@@ -63,7 +63,7 @@ ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _O
 	}
 	if (result == FrameRecord::ReadResult::Dropped)
 	{
-		InterlockedIncrement(&ctx->FramesDropped);
+		InterlockedIncrement64(&ctx->FramesDropped);
 		return 0;
 	}
 	if (result != FrameRecord::ReadResult::Record)

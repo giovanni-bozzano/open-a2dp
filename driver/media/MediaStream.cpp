@@ -100,6 +100,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->ActiveBitrate = SbcFixed::Bitrate(params);
 	ctx->ActiveObjectType = 0;
 	ctx->RtpSequence = 0;
+	ctx->PacketsSent = 0;
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaCaughtUp = FALSE;
@@ -149,7 +150,7 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 	const LONG mode = InterlockedExchange(&ctx->MediaMode, MediaModeNone);
 	if (wasActive)
 	{
-		OA2DP_INFO(ctx, "Media", "stopped after %u packets", ctx->RtpSequence);
+		OA2DP_INFO(ctx, "Media", "stopped after %I64u packets", ctx->PacketsSent);
 	}
 	WdfWaitLockRelease(ctx->MediaLock);
 	// Send completions may still enqueue the work item; such a run sees MediaActive

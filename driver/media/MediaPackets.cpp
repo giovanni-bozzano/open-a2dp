@@ -16,12 +16,12 @@ static void MediaSendFailed(DEVICE_CONTEXT* ctx, NTSTATUS status)
 {
 	if (IsLinkLoss(ctx, status))
 	{
-		OA2DP_INFO(ctx, "Media", "stopped, sink link is down (0x%08X) after %u packets", status, ctx->RtpSequence);
+		OA2DP_INFO(ctx, "Media", "stopped, sink link is down (0x%08X) after %I64u packets", status, ctx->PacketsSent);
 	}
 	else
 	{
-		OA2DP_ERROR(ctx, "Media", "send failed 0x%08X after %u packets", status, ctx->RtpSequence);
-		InterlockedIncrement(&ctx->SendFailures);
+		OA2DP_ERROR(ctx, "Media", "send failed 0x%08X after %I64u packets", status, ctx->PacketsSent);
+		InterlockedIncrement64(&ctx->SendFailures);
 		InterlockedExchange(&ctx->LastMediaError, status);
 	}
 	ctx->MediaActive = FALSE;
@@ -75,7 +75,7 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 // Caller holds MediaLock.
 static void CountSbcUnderrun(DEVICE_CONTEXT* ctx, uint32_t silentSamples)
 {
-	InterlockedIncrement(&ctx->Underruns);
+	InterlockedIncrement64(&ctx->Underruns);
 	const ULONGLONG now = KeQueryInterruptTime();
 	const ULONG packets = ++ctx->SbcUnderrunPackets;
 	if (now - ctx->SbcUnderrunLogTime < UnderrunLogInterval)
@@ -147,6 +147,7 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 
 	samples = static_cast<uint32_t>(frameCount * spf);
 	++ctx->RtpSequence;
+	++ctx->PacketsSent;
 	ctx->RtpTimestamp += samples;
 	return static_cast<ULONG>(offset);
 }
@@ -174,14 +175,14 @@ static void TrimFrameBacklog(DEVICE_CONTEXT* ctx)
 		return;
 	}
 	ctx->RtpTimestamp += trimmedSamples;
-	InterlockedIncrement(&ctx->FramesTrimmed);
+	InterlockedIncrement64(&ctx->FramesTrimmed);
 	const ULONGLONG now = KeQueryInterruptTime();
 	if (now - ctx->FrameTrimLogTime >= UnderrunLogInterval)
 	{
 		ctx->FrameTrimLogTime = now;
-		OA2DP_WARN(ctx, "Media", "dropped %I64u ms of buffered %s to stay live (%u records trimmed)",
+		OA2DP_WARN(ctx, "Media", "dropped %I64u ms of buffered %s to stay live (%I64u records trimmed)",
 			trimmedSamples * 1000 / ctx->ActiveSampleRate, CodecValueName(ctx->ActiveCodec),
-			static_cast<unsigned>(InterlockedCompareExchange(&ctx->FramesTrimmed, 0, 0)));
+			static_cast<ULONGLONG>(InterlockedCompareExchange64(&ctx->FramesTrimmed, 0, 0)));
 	}
 }
 
@@ -210,6 +211,7 @@ ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 
 	samples = frameSamples;
 	++ctx->RtpSequence;
+	++ctx->PacketsSent;
 	ctx->RtpTimestamp += frameSamples;
 	return static_cast<ULONG>(offset + length);
 }

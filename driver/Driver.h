@@ -380,7 +380,10 @@ struct DEVICE_CONTEXT
 	volatile BOOLEAN MediaActive;
 	ULONGLONG MediaStartTime;
 	ULONGLONG MediaSamplesSent;
+	// The RTP field is 16 bits and wraps there, so the packet count status reports is kept
+	// apart from it: a stream sends 2^16 packets in minutes.
 	USHORT RtpSequence;
+	ULONGLONG PacketsSent;
 	ULONG RtpTimestamp;
 	OpenA2dp::SbcFixed::Encoder Encoder;
 	INT16 PcmBuffer[16 * 8 * 2];
@@ -484,13 +487,15 @@ struct DEVICE_CONTEXT
 	volatile uint32_t ActiveBitrate;
 	volatile uint32_t ActiveObjectType;
 	volatile LONG StreamFault;
-	volatile LONG FramesDropped;
+	// Counters a long stream keeps counting past what 32 bits hold: status reports them as
+	// they are, and a soak is the case that reads them.
+	volatile LONG64 FramesDropped;
 	// Buffered records the driver discarded to keep the stream near live after a stall, and the
 	// interrupt time of the last such event so the log stays bounded.
-	volatile LONG FramesTrimmed;
+	volatile LONG64 FramesTrimmed;
 	ULONGLONG FrameTrimLogTime;
-	volatile LONG Underruns;
-	volatile LONG SendFailures;
+	volatile LONG64 Underruns;
+	volatile LONG64 SendFailures;
 	volatile LONG LastMediaError;
 	// How far ahead of the media clock this stream is sent, from the stored preference at
 	// MediaStart. The kernel pacer and the service both use it, and the presentation position
