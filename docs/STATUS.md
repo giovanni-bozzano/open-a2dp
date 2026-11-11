@@ -14,17 +14,16 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M4 ACX endpoint + rings | Done | — |
 | M5 Encoder service + streaming | Done | — |
 | M5b Codec configuration | Done | — |
-| M5c aptX + aptX HD | In progress | A reference codeword vector per encoder, and host coverage of the in-stream switch |
+| M5c aptX + aptX HD | Done | — |
 | M6 Config UI + install/uninstall | In progress | Automated coverage of the window's driver switch; today only the CLI path is exercised |
 | M7 System testing | In progress | The procedures are scripted; their runs and logs stay outside the repository |
 | M8 Signing + release | Not started | A signed package and its install path |
 
 ## Next
 
-1. **A reference codeword vector per aptX encoder**, the remaining code-side item of M5c.
-2. **Coverage for the pause-then-switch path in `tools/common`**, which only a real player
+1. **Coverage for the pause-then-switch path in `tools/common`**, which only a real player
    exercises today.
-3. **A first scripted pass** of the hardware procedures, kept with the build it ran on.
+2. **A first scripted pass** of the hardware procedures, kept with the build it ran on.
 
 ## Blockers
 

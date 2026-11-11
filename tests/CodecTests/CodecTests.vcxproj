@@ -26,6 +26,7 @@
 	<ClCompile Include="AacTests.cpp" />
 	<ClCompile Include="AptxTests.cpp" />
 	<ClCompile Include="AptxHdTests.cpp" />
+	<ClCompile Include="AptxReferenceVectors.cpp" />
 	<ClCompile Include="AacStreamEncoderTests.cpp" />
 	<ClCompile Include="AptxStreamEncoderTests.cpp" />
 	<ClCompile Include="AptxHdStreamEncoderTests.cpp" />
