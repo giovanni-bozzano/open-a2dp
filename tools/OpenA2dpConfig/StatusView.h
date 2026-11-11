@@ -1,12 +1,14 @@
 #pragma once
 
 // The session view of the settings window: a two-column panel instead of a wall of text.
-// Rows are grouped under section headers, alternating rows are shaded and a value that
-// reports a failure is coloured, so the state is readable without parsing every line.
+// Rows are grouped under section bands, each group restarts the row shading and closes with a
+// hairline, and a value that reports a failure is coloured, so the state is readable without
+// parsing every line. The divider between the columns is draggable; until it is dragged the
+// label column follows the widest label.
 //
 // It is painted by this window and not by a common control: an Explorer-themed list marks
-// the row under the cursor, and this view is a read-only report - nothing in it can be
-// clicked or selected.
+// the row under the cursor, and this view is a read-only report - only the divider reacts to
+// the pointer, no row can be clicked or selected.
 //
 // The text behind it is still Tools::BuildStatusReport - the caller builds the rows from
 // that report, so the panel and `OpenA2dpCtl status` cannot disagree.

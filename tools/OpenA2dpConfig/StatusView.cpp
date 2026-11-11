@@ -2,13 +2,21 @@
 
 #include "Theme.h"
 
+#include <windowsx.h>
+
 namespace OpenA2dp::ConfigUi {
 namespace {
 
 constexpr wchar_t kClassName[] = L"OpenA2dpStatusView";
 constexpr int kRowHeight = 24;
 constexpr int kLabelColumnWidth = 120;
+constexpr int kMinLabelColumnWidth = 96;
+// What the value column keeps, so dragging the divider cannot squeeze it away.
+constexpr int kMinValueColumnWidth = 140;
 constexpr int kTextInset = 10;
+constexpr int kRowIndent = 10;   // a value row sits under its section header
+constexpr int kColumnGap = 8;    // between the divider and the text on either side
+constexpr int kSplitterGrab = 3; // pixels either side of the divider that start a drag
 // Rows per wheel notch, like a list that scrolls by items.
 constexpr int kWheelRows = 3;
 
@@ -19,6 +27,10 @@ struct ViewState
 	int scrollTop = 0; // pixels; the view scrolls smoothly, so the last row is fully reachable
 	int rowHeight = kRowHeight;
 	int labelWidth = kLabelColumnWidth;
+	// The user dragged the divider, so the column stops following the widest label.
+	bool labelWidthChosen = false;
+	bool dragging = false;
+	bool dividerHot = false;
 	HFONT normal = nullptr;
 	HFONT bold = nullptr;
 };
@@ -39,25 +51,68 @@ COLORREF ToneColor(RowTone tone)
 	}
 }
 
-// One row: section headers span the whole width, a value row has two columns.
-void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
+void Fill(HDC dc, const RECT& rect, COLORREF color)
+{
+	SetDCBrushColor(dc, color);
+	FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+}
+
+int DividerX(const ViewState& state)
+{
+	return kTextInset + state.labelWidth;
+}
+
+int MaxLabelWidth(int clientWidth)
+{
+	const int maximum = clientWidth - (kTextInset + kColumnGap) - kMinValueColumnWidth;
+	return maximum < kMinLabelColumnWidth ? kMinLabelColumnWidth : maximum;
+}
+
+void ClampLabelWidth(HWND window, ViewState& state)
+{
+	RECT client = {};
+	GetClientRect(window, &client);
+	const int maximum = MaxLabelWidth(client.right);
+	if (state.labelWidth > maximum)
+	{
+		state.labelWidth = maximum;
+	}
+	if (state.labelWidth < kMinLabelColumnWidth)
+	{
+		state.labelWidth = kMinLabelColumnWidth;
+	}
+}
+
+bool OnDivider(const ViewState& state, int x)
+{
+	const int divider = DividerX(state);
+	return x >= divider - kSplitterGrab && x <= divider + kSplitterGrab;
+}
+
+// One row: section headers span the whole width as a band, a value row has two columns.
+// `shaded` is the alternation inside the current section; the section header starts it over,
+// so each group reads as its own block instead of one continuous stripe.
+void PaintRow(HDC dc, const ViewState& state, int index, int y, int width, bool shaded)
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
-	RECT strip = {0, y, width, y + state.rowHeight};
-	// A group starts at a hairline and its label is set in bold; the row keeps the shading it
-	// would have anywhere else, so the alternation reads as one column across every group.
-	SetDCBrushColor(dc, (index % 2) == 0 ? ThemeColors().background : ThemeColors().alternateRow);
-	FillRect(dc, &strip, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-	if (row.section && index > 0)
+	const RECT strip = {0, y, width, y + state.rowHeight};
+	if (row.section)
 	{
-		RECT line = {kTextInset, y, width - kTextInset, y + 1};
-		SetDCBrushColor(dc, ThemeColors().border);
-		FillRect(dc, &line, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+		Fill(dc, strip, ThemeColors().section);
+		// The band closes with a hairline, which is what separates one group from the next.
+		RECT line = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
+		Fill(dc, line, ThemeColors().border);
+	}
+	else
+	{
+		Fill(dc, strip, shaded ? ThemeColors().alternateRow : ThemeColors().background);
 	}
 	SelectObject(dc, row.section ? state.bold : state.normal);
 
-	RECT label = {kTextInset, y, kTextInset + state.labelWidth, y + state.rowHeight};
-	RECT value = {kTextInset + state.labelWidth, y, width - kTextInset, y + state.rowHeight};
+	const int divider = DividerX(state);
+	const int left = kTextInset + (row.section ? 0 : kRowIndent);
+	RECT label = {left, y, divider - kColumnGap, y + state.rowHeight};
+	RECT value = {divider + kColumnGap, y, width - kTextInset, y + state.rowHeight};
 	const UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
 	SetBkMode(dc, TRANSPARENT);
 	SetTextColor(dc, ThemeColors().text);
@@ -67,6 +122,31 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 		SetTextColor(dc, ToneColor(row.tone));
 		DrawTextW(dc, row.value.c_str(), -1, &value, format);
 	}
+}
+
+// The column edge itself: a line the whole height of the panel, so the two columns stay
+// legible as columns and the divider is findable without a header row.
+void PaintDivider(HDC dc, const ViewState& state, int width, int height)
+{
+	const int divider = DividerX(state);
+	if (divider >= width)
+	{
+		return;
+	}
+	const COLORREF color = state.dragging || state.dividerHot ? ThemeColors().muted : ThemeColors().border;
+	RECT line = {divider, 0, divider + 1, height};
+	Fill(dc, line, color);
+}
+
+// The alternation a row at `index` gets, from the start of its section.
+bool ShadedAt(const ViewState& state, int index)
+{
+	bool shaded = false;
+	for (int i = 0; i < index; ++i)
+	{
+		shaded = state.rows[static_cast<size_t>(i)].section ? false : !shaded;
+	}
+	return shaded;
 }
 
 void Paint(HWND window, ViewState& state)
@@ -88,11 +168,14 @@ void Paint(HWND window, ViewState& state)
 		// The offset is continuous, so the last row can be scrolled fully into view.
 		const int first = state.scrollTop / state.rowHeight;
 		int y = first * state.rowHeight - state.scrollTop;
+		bool shaded = ShadedAt(state, first);
 		for (int index = first; index < static_cast<int>(state.rows.size()) && y < height;
 			 ++index, y += state.rowHeight)
 		{
-			PaintRow(memory, state, index, y, width);
+			PaintRow(memory, state, index, y, width, shaded);
+			shaded = state.rows[static_cast<size_t>(index)].section ? false : !shaded;
 		}
+		PaintDivider(memory, state, width, height);
 	}
 	if (bitmap != nullptr)
 	{
@@ -152,30 +235,70 @@ void ScrollTo(HWND window, ViewState& state, int scrollTop)
 }
 
 // The label column follows the widest label, so the values start as far left as the text
-// allows instead of at a guessed coordinate.
+// allows instead of at a guessed coordinate. Once the divider has been dragged the width is
+// the user's, and only the room left for the value column limits it.
 void UpdateColumns(HWND window, ViewState& state)
 {
-	int widest = kLabelColumnWidth;
-	const HDC dc = GetDC(window);
-	if (dc != nullptr)
+	if (!state.labelWidthChosen)
 	{
-		const HGDIOBJ previous = state.normal != nullptr ? SelectObject(dc, state.normal) : nullptr;
-		for (const StatusRow& row : state.rows)
+		int widest = kLabelColumnWidth;
+		const HDC dc = GetDC(window);
+		if (dc != nullptr)
 		{
-			SIZE size = {};
-			if (GetTextExtentPoint32W(dc, row.label.c_str(), static_cast<int>(row.label.size()), &size) != FALSE &&
-				size.cx > widest)
+			const HGDIOBJ previous = state.normal != nullptr ? SelectObject(dc, state.normal) : nullptr;
+			for (const StatusRow& row : state.rows)
 			{
-				widest = size.cx;
+				SIZE size = {};
+				if (GetTextExtentPoint32W(dc, row.label.c_str(), static_cast<int>(row.label.size()), &size) != FALSE &&
+					size.cx > widest)
+				{
+					widest = size.cx;
+				}
 			}
+			if (previous != nullptr)
+			{
+				SelectObject(dc, previous);
+			}
+			ReleaseDC(window, dc);
 		}
-		if (previous != nullptr)
-		{
-			SelectObject(dc, previous);
-		}
-		ReleaseDC(window, dc);
+		state.labelWidth = widest + kRowIndent + kColumnGap;
 	}
-	state.labelWidth = widest + kTextInset;
+	ClampLabelWidth(window, state);
+}
+
+// Dragging the divider: the label column takes the x the pointer is at, minus the panel's inset,
+// bounded so neither column can be squeezed away.
+void DragLabelWidth(HWND window, ViewState& state, int x)
+{
+	RECT client = {};
+	GetClientRect(window, &client);
+	int width = x - kTextInset;
+	const int maximum = MaxLabelWidth(client.right);
+	if (width > maximum)
+	{
+		width = maximum;
+	}
+	if (width < kMinLabelColumnWidth)
+	{
+		width = kMinLabelColumnWidth;
+	}
+	if (width == state.labelWidth)
+	{
+		return;
+	}
+	state.labelWidth = width;
+	state.labelWidthChosen = true;
+	InvalidateRect(window, nullptr, FALSE);
+}
+
+void SetDividerHot(HWND window, ViewState& state, bool hot)
+{
+	if (state.dividerHot == hot)
+	{
+		return;
+	}
+	state.dividerHot = hot;
+	InvalidateRect(window, nullptr, FALSE);
 }
 
 LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -193,8 +316,68 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_SIZE:
 		if (state != nullptr)
 		{
+			ClampLabelWidth(window, *state);
 			UpdateScrollBar(window, *state);
 			ScrollTo(window, *state, state->scrollTop);
+			InvalidateRect(window, nullptr, FALSE);
+		}
+		return 0;
+	case WM_SETCURSOR:
+		if (state != nullptr && LOWORD(lParam) == HTCLIENT)
+		{
+			POINT point = {};
+			GetCursorPos(&point);
+			ScreenToClient(window, &point);
+			SetCursor(LoadCursorW(nullptr, state->dragging || OnDivider(*state, point.x) ? IDC_SIZEWE : IDC_ARROW));
+			return TRUE;
+		}
+		break;
+	case WM_MOUSEMOVE:
+		if (state != nullptr)
+		{
+			const int x = GET_X_LPARAM(lParam);
+			if (state->dragging)
+			{
+				DragLabelWidth(window, *state, x);
+				return 0;
+			}
+			SetDividerHot(window, *state, OnDivider(*state, x));
+			// The highlight ends when the pointer leaves, which the window has to ask for.
+			TRACKMOUSEEVENT track = {};
+			track.cbSize = sizeof(track);
+			track.dwFlags = TME_LEAVE;
+			track.hwndTrack = window;
+			TrackMouseEvent(&track);
+		}
+		return 0;
+	case WM_MOUSELEAVE:
+		if (state != nullptr)
+		{
+			SetDividerHot(window, *state, false);
+		}
+		return 0;
+	case WM_LBUTTONDOWN:
+		if (state != nullptr && OnDivider(*state, GET_X_LPARAM(lParam)))
+		{
+			state->dragging = true;
+			SetCapture(window);
+			InvalidateRect(window, nullptr, FALSE);
+			return 0;
+		}
+		break;
+	case WM_LBUTTONUP:
+		if (state != nullptr && state->dragging)
+		{
+			state->dragging = false;
+			ReleaseCapture();
+			InvalidateRect(window, nullptr, FALSE);
+			return 0;
+		}
+		break;
+	case WM_CAPTURECHANGED:
+		if (state != nullptr && state->dragging)
+		{
+			state->dragging = false;
 			InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
