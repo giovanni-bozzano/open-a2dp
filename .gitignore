@@ -8,3 +8,4 @@ obj/
 *.binlog
 tests/output/
 .local/
+tests/HardwareTests/results/
