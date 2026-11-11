@@ -14,8 +14,9 @@
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
-	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it, cfgmgr32 restarts it. -->
-	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <!-- setupapi finds the sink's A2DP node, newdev installs a driver on it, cfgmgr32 restarts it,
+	       bthprops re-adds its Bluetooth service when the restart is vetoed. -->
+	  <AdditionalDependencies>setupapi.lib;newdev.lib;cfgmgr32.lib;bthprops.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	</Link>
   </ItemDefinitionGroup>
   <ItemGroup>
