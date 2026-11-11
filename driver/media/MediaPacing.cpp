@@ -13,6 +13,21 @@ static ULONGLONG TargetSamples(DEVICE_CONTEXT* ctx, uint32_t rate)
 	return elapsed * rate / 10000000ull + static_cast<ULONGLONG>(rate) * ctx->PacingLeadMs / 1000;
 }
 
+// True when the PCM ring holds at least the audio of one whole packet. Caller holds MediaLock.
+static bool PcmHasPacket(DEVICE_CONTEXT* ctx)
+{
+	const SbcFixed::Params& params = ctx->Encoder.GetParams();
+	const size_t frames =
+		SbcFixed::FramesPerPacket(params, ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket);
+	const ULONG frameBytes = ctx->PinBytesPerFrame;
+	if (frames == 0 || frameBytes == 0)
+	{
+		return true;
+	}
+	const RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+	return ring.ReadableBytes() >= frames * params.SamplesPerFrame() * frameBytes;
+}
+
 // SBC: pace from the endpoint clock and encode in the kernel. One packet per run; its
 // completion enqueues the next run, so a backlog drains at transport speed. Caller holds MediaLock.
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
@@ -26,6 +41,14 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 		return;
 	}
 	if (!MediaSendReady(ctx, tick))
+	{
+		return;
+	}
+	// A packet built from less than a packet of PCM pads the rest with silence, which is a gap the
+	// listener hears. The ring runs level with the clock, so a late copy tick leaves a packet
+	// short; waiting for the next wake moves that audio from the sink's lead into the ring and
+	// costs no latency. A paused endpoint asks for nothing, so it keeps its place instead.
+	if (ctx->MediaCaughtUp && AudioStreamRunning(ctx) && !PcmHasPacket(ctx))
 	{
 		return;
 	}
