@@ -56,6 +56,9 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	ctx->PinChannels = AudioChannels;
 	ctx->PinValidBits = 16;
 	ctx->PinBytesPerFrame = static_cast<USHORT>(ctx->PinChannels * sizeof(INT16));
+	// Until a stream starts and reads the stored preference: the default lead, so a status
+	// report or a position query before then still describes the pacing that will be used.
+	ctx->PacingLeadMs = Ioctl::kPrerollMs;
 	// RenderFormats was filled once in DriverEntry; the table is shared by every endpoint and
 	// must not be rewritten here, or two device adds could expose a half-built format.
 	// The PCM ring lives in the service block and is initialized by ServiceInitialize.

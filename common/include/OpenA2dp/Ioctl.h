@@ -44,8 +44,15 @@ constexpr uint32_t kMaxFramePayload = kMediaMaxMtu - static_cast<uint32_t>(Rtp::
 
 // Real time sent ahead of the clock so the sink's jitter buffer fills before it runs dry.
 // The kernel paces SBC with it and the service's AAC pacing centres the encoder on it, so
-// both sides of a stream start the same distance ahead.
+// both sides of a stream start the same distance ahead. The stored preference can shorten it
+// for a low-latency profile; 0 there means this default.
 constexpr uint32_t kPrerollMs = 60;
+constexpr uint32_t kMinPrerollMs = 20;
+constexpr uint32_t kMaxPrerollMs = 200;
+constexpr uint32_t EffectivePrerollMs(uint32_t preferred) noexcept
+{
+	return preferred == 0 ? kPrerollMs : preferred;
+}
 
 // Ring capacities, bytes (powers of two). PCM holds ~370 ms of 44.1 kHz stereo;
 // the frame ring holds ~1.6 s at 320 kbps.
@@ -208,7 +215,9 @@ struct WaitEventOut {
 	uint32_t bitrate;
 	uint32_t objectType;
 	uint32_t pcmValidBits; // depth the PCM ring carries, as in RegisterEncoderOut
-	uint32_t reserved;
+	// Pacing lead the service must centre its records on, from the stored preference. It is
+	// the same distance the kernel paces SBC with, so the two paths behave alike.
+	uint32_t prerollMs;
 };
 
 // Length of Status.sinkName, UTF-16 including the terminator. The driver captured the name
@@ -235,6 +244,8 @@ struct Status {
 	uint32_t pcmBufferedMs;
 	uint32_t frameBufferedMs;
 	uint32_t pcmTrimmedBytes;
+	// Pacing lead the running stream is sent ahead of the media clock by.
+	uint32_t pacingLeadMs;
 	uint32_t packetsSent;
 	uint32_t framesDropped;
 	uint32_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
@@ -277,7 +288,10 @@ struct Preference {
 	uint32_t sbcBlocks;        // 0 = driver default; 4, 8, 12 or 16 blocks per frame
 	uint32_t sbcSubbands;      // 0 = driver default; 4 or 8 subbands
 	uint32_t sbcAllocation;    // 0 = driver default; kSbcAllocation*
-	uint32_t reserved;
+	// Pacing lead in milliseconds: how far ahead of the media clock the stream is sent. 0 is
+	// kPrerollMs, otherwise kMinPrerollMs..kMaxPrerollMs. A shorter lead lowers latency by
+	// spending the sink's jitter margin.
+	uint32_t prerollMs;
 };
 
 // The PCM format the render endpoint offers Windows. Windows opens the shared-mode stream
@@ -323,6 +337,11 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	{
 		return false;
 	}
+	if (preference.prerollMs != 0 &&
+		(preference.prerollMs < kMinPrerollMs || preference.prerollMs > kMaxPrerollMs))
+	{
+		return false;
+	}
 	if ((preference.flags & kPreferenceForceCodec) == 0)
 	{
 		return true;
@@ -337,7 +356,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 252, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 256, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

@@ -137,6 +137,10 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	{
 		AppendLine(text, "AAC bitrate", Format("%u bps", preference.aacBitrate));
 	}
+	if (preference.prerollMs != 0)
+	{
+		AppendLine(text, "pacing lead", Format("%u ms (stored)", preference.prerollMs));
+	}
 	if (preference.sbcBlocks != 0 || preference.sbcSubbands != 0 || preference.sbcAllocation != 0)
 	{
 		AppendLine(text, "SBC frame",
@@ -183,6 +187,7 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.pcmBufferedMs", status.pcmBufferedMs);
 	AppendField(text, "status.frameBufferedMs", status.frameBufferedMs);
 	AppendField(text, "status.pcmTrimmedBytes", status.pcmTrimmedBytes);
+	AppendField(text, "status.pacingLeadMs", status.pacingLeadMs);
 	AppendField(text, "status.packetsSent", status.packetsSent);
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
@@ -203,10 +208,10 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "preference.codec", preference.codec);
 	AppendField(text, "preference.aacBitrate", preference.aacBitrate);
 	AppendField(text, "preference.sbcBitpool", preference.sbcBitpool);
+	AppendField(text, "preference.prerollMs", preference.prerollMs);
 	AppendField(text, "preference.sbcBlocks", preference.sbcBlocks);
 	AppendField(text, "preference.sbcSubbands", preference.sbcSubbands);
 	AppendField(text, "preference.sbcAllocation", preference.sbcAllocation);
-	AppendField(text, "preference.reserved", preference.reserved);
 	if (version != nullptr)
 	{
 		AppendField(text, "version.abiVersion", version->abiVersion);
@@ -371,6 +376,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
 	// Buffered milliseconds are what matters for latency: the bytes alone do not say how far
 	// behind live the stream runs at a given format or bitrate.
+	AppendLine(text, "pacing lead", Format("%u ms ahead of the media clock", status.pacingLeadMs));
 	AppendLine(text, "buffered",
 			   Format("PCM %u ms of %u B, frames %u ms of %u B", status.pcmBufferedMs,
 					  status.pcmBufferedBytes, status.frameBufferedMs, status.frameBufferedBytes));

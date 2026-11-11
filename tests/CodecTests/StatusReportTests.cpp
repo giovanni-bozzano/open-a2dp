@@ -128,12 +128,12 @@ TEST(StatusReport_VerboseListsEveryField)
 	status.lastError = 0xC000009A;
 	const std::string report = Report(true, status, StreamingPreference());
 	CHECK(Contains(report, "-- raw fields --"));
-	// Counters and masks that the formatted lines hide, plus the reserved field that shows
-	// whether a caller wrote the whole structure.
+	// Counters and masks that the formatted lines hide, so a value the report does not call
+	// out is still visible to whoever reads the dump.
 	for (const char* const field : {"status.avdtpState", "status.objectType", "status.pcmBufferedBytes",
 									"status.frameCapacity", "status.underruns", "status.negotiatedCodec",
 									"status.preferenceFlags", "status.sinkCodecs", "preference.sbcBlocks",
-									"preference.reserved",
+									"preference.prerollMs", "status.pacingLeadMs",
 									"version.maxFramePayload"})
 	{
 		CHECK(Contains(report, field));

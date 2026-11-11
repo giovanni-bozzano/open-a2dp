@@ -488,6 +488,10 @@ struct DEVICE_CONTEXT
 	volatile LONG Underruns;
 	volatile LONG SendFailures;
 	volatile LONG LastMediaError;
+	// How far ahead of the media clock this stream is sent, from the stored preference at
+	// MediaStart. The kernel pacer and the service both use it, and the presentation position
+	// subtracts it.
+	volatile ULONG PacingLeadMs;
 	// Service-encoded pacing: interrupt time of the last sent frame and of the last underrun
 	// log.
 	ULONGLONG ServiceLastFrameTime;

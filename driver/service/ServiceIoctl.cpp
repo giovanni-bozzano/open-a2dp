@@ -289,6 +289,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				static_cast<uint32_t>(static_cast<uint64_t>(out->frameBufferedBytes) * 8000 / out->bitrate);
 		}
 		out->pcmTrimmedBytes = static_cast<uint32_t>(ctx->AudioTrimmedBytes);
+		out->pacingLeadMs = ctx->PacingLeadMs;
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
 		out->bitrateLimit = AacConfig::MaxBitrateForMtu(out->mediaMtu - Rtp::kHeaderSize, sampleRate);
 		// SBC PCM capabilities are the baseline, not the AAC capability set or Windows mix format.
@@ -376,7 +377,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 								ctx->Preference.sbcBlocks != in->sbcBlocks ||
 								ctx->Preference.sbcSubbands != in->sbcSubbands ||
 								ctx->Preference.sbcAllocation != in->sbcAllocation ||
-								ctx->Preference.aacBitrate != in->aacBitrate;
+								ctx->Preference.aacBitrate != in->aacBitrate ||
+								ctx->Preference.prerollMs != in->prerollMs;
 			changed = selectionChanged || parametersChanged;
 			ctx->Preference = *in;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
@@ -391,9 +393,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			}
 			OA2DP_INFO(ctx, "Service",
 				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, blocks %u, subbands %u, "
-				"allocation 0x%02X, AAC bitrate %u)",
+				"allocation 0x%02X, AAC bitrate %u, preroll %u ms)",
 				in->flags, static_cast<unsigned>(in->codec), in->sbcBitpool, in->sbcBlocks, in->sbcSubbands,
-				in->sbcAllocation, in->aacBitrate);
+				in->sbcAllocation, in->aacBitrate, in->prerollMs);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
 			ConfigSavePreference(ctx);

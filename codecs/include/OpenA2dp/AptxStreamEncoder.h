@@ -31,6 +31,9 @@ struct AptxStreamParams {
 	uint16_t channels = 2;
 	// Depth of the PCM in the ring: 16 for a 16-bit endpoint, 24 for 24-in-32.
 	uint16_t bitsPerSample = Aptx::kBitsPerSample;
+	// Real time the pacing sends ahead of the clock, from the stored preference; 0 keeps the
+	// default. A shorter lead lowers latency by spending the sink's jitter margin.
+	uint32_t prerollMs = 0;
 };
 
 struct AptxStreamStats {

@@ -14,6 +14,8 @@ void ServiceStreamStart(_In_ DEVICE_CONTEXT* ctx)
 	ctx->WaitState.bitrate = ctx->ActiveBitrate;
 	ctx->WaitState.objectType = ctx->ActiveObjectType;
 	ctx->WaitState.pcmValidBits = ctx->PinValidBits;
+	// The service centres its records on the same lead the kernel paces SBC with.
+	ctx->WaitState.prerollMs = ctx->PacingLeadMs;
 	KeReleaseSpinLock(&ctx->WaitLock, irql);
 
 	LatchEvents(ctx, Ioctl::kEventStreamStart);

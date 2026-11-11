@@ -150,6 +150,21 @@ TEST(Ioctl_PreferenceValidation)
 	preference.sbcAllocation = Ioctl::kSbcAllocationSnr;
 	CHECK(Ioctl::ValidPreference(preference));
 
+	// The pacing lead is stored in the same preference: 0 keeps the default, and anything
+	// outside the range the sink could survive would be a glitch profile.
+	preference.prerollMs = Ioctl::kMinPrerollMs;
+	CHECK(Ioctl::ValidPreference(preference));
+	CHECK_EQ(Ioctl::EffectivePrerollMs(preference.prerollMs), Ioctl::kMinPrerollMs);
+	preference.prerollMs = Ioctl::kMaxPrerollMs;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.prerollMs = Ioctl::kMinPrerollMs - 1;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.prerollMs = Ioctl::kMaxPrerollMs + 1;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.prerollMs = 0;
+	CHECK(Ioctl::ValidPreference(preference));
+	CHECK_EQ(Ioctl::EffectivePrerollMs(0), Ioctl::kPrerollMs);
+
 }
 
 TEST(RingBuffer_WrapAround)

@@ -118,7 +118,7 @@ fields through `SET_PREFERENCE` and `OpenA2dpCtl format` writes the endpoint for
 `SET_ENDPOINT_FORMAT`. Deleting the sink subkey returns it to auto. The driver reads it in
 `OnDeviceAdd`, before the endpoint exists. The development ABI baseline (2) removes the
 obsolete format preference and fallback fields: `Preference` is 36 bytes, `EndpointFormat`
-16 bytes, `Status` 240 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
+16 bytes, `Status` 256 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
 Rebuild the tools, driver and service together; earlier development layouts are
 incompatible, even if they reported the same version.
 `status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows
@@ -133,6 +133,7 @@ advertise them.
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
 | SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and to the media MTU | highest the sink accepts, up to the MTU ceiling |
+| Pacing lead | `CodecPreferencePrerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
 | Endpoint format | `SelectedSampleRate`, `SelectedChannels` | `format [auto\|<rate> <channels>]` | automatic, or 44100/48000 Hz with 1 or 2 channels the sink advertises | automatic (every sink format) |
 
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
@@ -162,6 +163,13 @@ SBC, classic aptX and the Media Foundation encoder take 16-bit input (AAC's enco
 one of them is narrowed with the rounded downconvert. Forcing classic aptX narrows the
 16-bit list to the formats it can run, just as forcing HD pins 24-in-32. The decision and
 its sequencing are in [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd).
+
+The pacing lead is the one timing setting a user owns: every codec is sent this far ahead of
+the media clock so the sink's jitter buffer fills before it runs dry. The kernel pacer (SBC)
+and the service's record pacing both read it at stream start - the service through
+`WaitEventOut.prerollMs` - and `OnGetPresentationPosition` subtracts the same distance, so the
+reported position stays what the listener hears. A shorter lead lowers audible latency by
+spending that jitter margin; the 60 ms default keeps the headroom a typical sink needs.
 
 A value the sink does not advertise falls back to the selector's own order instead of
 failing the negotiation; a bitpool is lifted to the sink's minimum and capped at its
@@ -208,7 +216,8 @@ the shared-mode default, which this endpoint ignores.
 
 - Codec change while streaming: CLOSE, then rediscover and configure the other codec; the
   sink connection is kept.
-- Parameter change while streaming (bitpool, blocks, subbands, allocation, AAC bitrate):
+- Parameter change while streaming (bitpool, blocks, subbands, allocation, AAC bitrate,
+  pacing lead):
   the encoder stops, SUSPEND brings the stream to `Open`, the session rebuilds the
   configuration from the sink's advertised capabilities and sends RECONFIGURE, then START.
   A refused suspend, a rejected command, or a sink-configured stream whose capabilities are

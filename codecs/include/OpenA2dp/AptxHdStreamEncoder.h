@@ -27,6 +27,9 @@ namespace OpenA2dp {
 struct AptxHdStreamParams {
 	uint32_t sampleRate = 48000;
 	uint16_t channels = 2;
+	// Real time the pacing sends ahead of the clock, from the stored preference; 0 keeps the
+	// default. A shorter lead lowers latency by spending the sink's jitter margin.
+	uint32_t prerollMs = 0;
 };
 
 struct AptxHdStreamStats {

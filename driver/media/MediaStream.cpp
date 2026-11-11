@@ -39,6 +39,15 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		OA2DP_WARN(ctx, "Media", "not starting, the link is closing");
 		return;
 	}
+	// Take the pacing lead once per stream: the kernel pacer, the service event and the
+	// presentation position then all describe the same distance ahead of the media clock.
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+		const uint32_t preferred = ctx->Preference.prerollMs;
+		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+		ctx->PacingLeadMs = Ioctl::EffectivePrerollMs(preferred);
+	}
 	if (codec == Avdtp::CodecType::Aac)
 	{
 		StartAac(ctx, ie, ieLength);

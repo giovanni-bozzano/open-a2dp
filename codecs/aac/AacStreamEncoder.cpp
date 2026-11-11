@@ -13,7 +13,7 @@ namespace {
 
 uint64_t PrerollSamples(const AacStreamParams& params) noexcept
 {
-	return static_cast<uint64_t>(params.sampleRate) * Ioctl::kPrerollMs / 1000;
+	return static_cast<uint64_t>(params.sampleRate) * Ioctl::EffectivePrerollMs(params.prerollMs) / 1000;
 }
 
 } // namespace

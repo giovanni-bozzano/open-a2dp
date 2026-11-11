@@ -128,6 +128,19 @@ TEST(AacStream_TargetIncludesPreroll)
 	CHECK_EQ(stream.TargetSamples(1001000), uint64_t{2646 + 44100});
 }
 
+TEST(AacStream_PacingLeadComesFromParams)
+{
+	TestRing pcm(64 * 1024);
+	auto encoder = MakeEncoder();
+	AacStreamEncoder stream;
+	AacStreamParams params;
+	params.prerollMs = Ioctl::kMinPrerollMs; // 20 ms of 44.1 kHz = 882 samples
+	REQUIRE(stream.Start(std::move(encoder), params, pcm.view, 1000));
+
+	CHECK_EQ(stream.TargetSamples(1000), uint64_t{882});
+	CHECK_EQ(stream.TargetSamples(1001000), uint64_t{882 + 44100});
+}
+
 TEST(AacStream_StartDiscardsBufferedPcm)
 {
 	TestRing pcm(64 * 1024);

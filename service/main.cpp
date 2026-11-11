@@ -365,6 +365,7 @@ void DeviceLoop(const std::wstring& linkName)
 				AptxHdStreamParams params;
 				params.sampleRate = ev.sampleRate;
 				params.channels = static_cast<uint16_t>(ev.channels);
+				params.prerollMs = ev.prerollMs;
 				if (!hdStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
 					Log("[svc] AptxHdStreamEncoder::Start failed");
 				}
@@ -405,6 +406,7 @@ void DeviceLoop(const std::wstring& linkName)
 				params.sampleRate = ev.sampleRate;
 				params.channels = static_cast<uint16_t>(ev.channels);
 				params.bitsPerSample = static_cast<uint16_t>(ev.pcmValidBits);
+				params.prerollMs = ev.prerollMs;
 				if (!aptxStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
 					Log("[svc] AptxStreamEncoder::Start failed");
 				}
@@ -437,6 +439,7 @@ void DeviceLoop(const std::wstring& linkName)
 			params.bitrate = ev.bitrate;
 			params.objectType = ev.objectType;
 			params.bitsPerSample = static_cast<uint16_t>(ev.pcmValidBits);
+			params.prerollMs = ev.prerollMs;
 
 			if (!streamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
 				Log("[svc] AacStreamEncoder::Start failed");

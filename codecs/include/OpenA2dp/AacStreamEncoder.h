@@ -24,7 +24,8 @@
 namespace OpenA2dp {
 
 // Samples of real time sent ahead of the clock so the sink's jitter buffer
-// fills. Ioctl::kPrerollMs is the same distance the kernel paces SBC with.
+// fills. Ioctl::EffectivePrerollMs(params.prerollMs) is the same distance the
+// kernel paces SBC with.
 
 struct AacStreamParams {
 	uint32_t sampleRate = 44100;
@@ -34,6 +35,9 @@ struct AacStreamParams {
 	// Depth the PCM ring carries: 16 (int16) or 24 (24-in-32). AAC takes 16-bit input, so a
 	// 24-bit ring is truncated to the top 16 bits per sample here.
 	uint16_t bitsPerSample = 16;
+	// Real time the pacing sends ahead of the clock, from the stored preference; 0 keeps the
+	// default. A shorter lead lowers latency by spending the sink's jitter margin.
+	uint32_t prerollMs = 0;
 };
 
 struct AacStreamStats {
