@@ -44,10 +44,16 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
 	RECT strip = {0, y, width, y + state.rowHeight};
-	// A section header is only set in bold: it is shaded like the row it lands on, so the
-	// alternation reads as one column instead of breaking around every group.
+	// A group starts at a hairline and its label is set in bold; the row keeps the shading it
+	// would have anywhere else, so the alternation reads as one column across every group.
 	SetDCBrushColor(dc, (index % 2) == 0 ? ThemeColors().background : ThemeColors().alternateRow);
 	FillRect(dc, &strip, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+	if (row.section && index > 0)
+	{
+		RECT line = {kTextInset, y, width - kTextInset, y + 1};
+		SetDCBrushColor(dc, ThemeColors().border);
+		FillRect(dc, &line, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+	}
 	SelectObject(dc, row.section ? state.bold : state.normal);
 
 	RECT label = {kTextInset, y, kTextInset + state.labelWidth, y + state.rowHeight};
