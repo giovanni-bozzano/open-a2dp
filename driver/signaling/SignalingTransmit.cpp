@@ -132,12 +132,12 @@ void Transmit(DEVICE_CONTEXT* ctx, size_t length)
 		}
 		if (state == Avdtp::SessionState::Open)
 		{
-			// Leaving Streaming stops the stream whether this driver suspended it or the
-			// sink did; a stream that keeps sending after a suspend breaks the session.
-			if (previous == Avdtp::SessionState::Streaming)
-			{
-				MediaStop(ctx);
-			}
+			// Nothing may keep sending into an open stream: a stream that does after a suspend
+			// breaks the session. Open is reached from Streaming directly, or through Suspending
+			// when this driver paused (or reconfigured) the stream itself, so the stop is not
+			// conditioned on the state just left. MediaStop is idempotent, and the case that has
+			// no stream to stop (the first OPEN after configuration) costs nothing.
+			MediaStop(ctx);
 			const uint8_t* ie = ctx->Session.SelectedIe();
 			OA2DP_INFO(ctx, "AVDTP", "configured codec %s IE %02X %02X %02X %02X",
 				CodecName(ctx->Session.SelectedCodec()), ie[0], ie[1], ie[2], ie[3]);

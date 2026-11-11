@@ -196,6 +196,12 @@ static void BeginCodecSwitchClose(DEVICE_CONTEXT* ctx)
 	// A rediscovery after a close is the retry for an MTU mismatch, so the pending
 	// in-place reconfiguration must not also run.
 	InterlockedExchange(&ctx->MtuRenegotiate, 0);
+	if (ctx->Session.State() == Avdtp::SessionState::Streaming)
+	{
+		// The CLOSE ends this stream, and a codec change cannot be applied in place: nothing
+		// more may be sent under the configuration the sink is being told to drop.
+		MediaStop(ctx);
+	}
 	Transmit(ctx, ctx->Session.Close(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 	ctx->CodecSwitchClosing = ctx->Session.State() == Avdtp::SessionState::Closing;
 	if (ctx->CodecSwitchClosing)
