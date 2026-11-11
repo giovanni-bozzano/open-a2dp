@@ -8,8 +8,8 @@ Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales 
 
 | Stage | Set by | Typical |
 |---|---|---|
-| Windows engine buffer | ACX RT packets; `AudioMaxPacketCount = 2` (`AudioInternal.h`), packet size chosen by the engine | 2 × 10 ms = 20 ms |
-| Driver copy granularity | `AudioPeriodMs = 10`, `OnAudioTimer` (`AudioPosition.cpp`) | 0–10 ms |
+| Windows engine buffer | ACX RT packets; size and count chosen by the engine, bounded by `AudioMaxBufferBytes` (`AudioInternal.h`) | 2 × 10 ms = 20 ms |
+| Driver copy granularity | `AudioPeriodMs = 10` in `OnAudioTimer`, plus one copy per released packet in `OnSetRenderPacket` (`AudioPosition.cpp`) | 0–10 ms, shorter buffer only |
 | PCM ring backlog | `AudioPcmBacklogMs = 80`, `Ioctl::kPcmRingBytes` = 64 KB | under 10 ms |
 | Encoder pacing lead | `Ioctl::kPrerollMs = 60` as the default, overridable per sink through `Preference.prerollMs` (20–200 ms) | 60 ms, or as configured |
 | Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`), or fewer with `Preference.sbcFramesPerPacket`; AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
@@ -49,6 +49,16 @@ single largest fixed part of it.
    the media clock, so `OnGetPresentationPosition` subtracts that lead (clamped at the start)
    instead of claiming audio the sink is still buffering. Without it, an app syncing video to
    the position led the audio by 60 ms; the sink's own buffer remains unknown to us.
+5. **The reported hardware latency is the lead.** ACX measures `OnGetHwLatency`'s delay from
+   `NotifyPacketComplete` to the moment that packet's last sample is heard, which for this
+   stream is exactly the pacing lead; it was reported as 0 and a 128-byte FIFO that nothing
+   behind it corresponded to. Windows' own latency estimate now agrees with the driver's, and
+   `fifoSize` is 0 because the buffered audio is the delay, not a separate FIFO.
+6. **The engine's buffer shape is its own choice.** A packet count above the old limit of 2
+   was refused, which fails the endpoint for a stream that asks for more (ACX's timer-driven
+   mode does); the allocation is bounded by bytes instead, and the copy also runs when the
+   engine releases a packet, so a buffer shorter than the 10 ms tick is no longer copied once
+   per tick and dropped in between.
 
 ## Remaining risks and plan
 
@@ -62,8 +72,9 @@ single largest fixed part of it.
 3. **The trims are verified in user mode only.** Both policies live in shared headers and are
    covered by `FrameRecord_Trim*` and `PcmBacklog_*` in `tests/CodecTests/`, but whether the
    sink hears one gap rather than a dropout needs hardware.
-4. **`OnGetHwLatency` claims a 128-byte FIFO with no delay** (`AudioPackets.cpp`). Harmless as
-   long as the engine keeps its own packets queued; leave it alone unless glitches appear.
+4. **The sink's buffer still starts where ours ends.** The delay we report covers the lead we
+   hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
+   Windows' latency figure is a lower bound rather than the audible total.
 
 Exit gates: steady-state `pcmBufferedMs` + `frameBufferedMs` under 100 ms; no growth after a
 forced 500 ms transport stall (one trim, then back to steady state); no underruns logged at

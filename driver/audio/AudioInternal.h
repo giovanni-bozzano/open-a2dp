@@ -17,11 +17,19 @@ constexpr ULONG AudioPcmBacklogMs = 80;
 // How long the jack reports unplugged while Windows is made to rebuild the endpoint after a
 // format change; long enough for the audio engine to close the stream it was using.
 constexpr ULONG AudioJackFlapMs = 80;
-constexpr ULONG AudioMaxPacketCount = 2;
+// The engine chooses the packet count for its own buffering mode (two for ordinary shared mode,
+// more for a timer-driven stream), so the allocation is bounded by what it maps, not by the
+// count: refusing a count the engine asked for costs the user the whole endpoint.
+constexpr ULONG AudioMaxPacketCount = 64;
+constexpr ULONG AudioMaxBufferBytes = 1u << 20;
 constexpr ULONG StreamingPinId = 0;
 constexpr ULONG BridgePinId = 1;
 
 DECLARE_CONST_UNICODE_STRING(RenderCircuitName, L"Speaker0");
+
+// Moves the PCM the clock has consumed from the RT buffer into the PCM ring and bounds the
+// backlog. Caller holds AudioLock.
+void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position);
 
 struct STREAM_CONTEXT
 {

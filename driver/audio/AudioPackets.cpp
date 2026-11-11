@@ -6,15 +6,17 @@ NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_
 {
 	*packets = nullptr;
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	const ULONGLONG total = static_cast<ULONGLONG>(packetSize) * packetCount;
 	if (packetCount == 0 || packetCount > AudioMaxPacketCount || packetSize == 0 ||
-		ctx->PinBytesPerFrame == 0 || packetSize % ctx->PinBytesPerFrame != 0)
+		ctx->PinBytesPerFrame == 0 || packetSize % ctx->PinBytesPerFrame != 0 ||
+		total > AudioMaxBufferBytes)
 	{
 		OA2DP_WARN(ctx, "Audio", "allocate %u packets of %u bytes rejected", packetCount, packetSize);
 		return STATUS_NOT_SUPPORTED;
 	}
 
 	// Whole pages, zeroed, so no stale kernel memory is mapped to user mode.
-	const SIZE_T bufferSize = ROUND_TO_PAGES(static_cast<SIZE_T>(packetSize) * packetCount);
+	const SIZE_T bufferSize = ROUND_TO_PAGES(static_cast<SIZE_T>(total));
 
 	auto* rtPackets = static_cast<PACX_RTPACKET>(
 		ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ACX_RTPACKET) * packetCount, OpenA2dpPoolTag));
@@ -92,15 +94,33 @@ void OnFreeRtPackets(_In_ ACXSTREAM stream, _In_ PACX_RTPACKET packets, _In_ ULO
 	ExFreePoolWithTag(packets, OpenA2dpPoolTag);
 }
 
-NTSTATUS OnGetHwLatency(_In_ ACXSTREAM, _Out_ ULONG* fifoSize, _Out_ ULONG* delay)
+// ACX defines the delay as the time between NotifyPacketComplete and the moment that packet's
+// last sample is rendered. The stream is sent PacingLeadMs ahead of the media clock, so a packet
+// reported complete is heard that much later; a stream that claimed 0 made Windows' own latency
+// estimate disagree with the position the driver reports. There is no DMA FIFO behind the copy,
+// so no bytes are claimed for one - the buffered audio is the delay.
+NTSTATUS OnGetHwLatency(_In_ ACXSTREAM stream, _Out_ ULONG* fifoSize, _Out_ ULONG* delay)
 {
-	*fifoSize = 128;
-	*delay = 0;
+	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	*fifoSize = 0;
+	*delay = ctx->PacingLeadMs * 10000; // 100 ns units
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM, _In_ ULONG, _In_ ULONG, _In_ ULONG)
+// The engine released a packet, so its data is queued and part of it is due now. Copying here
+// keeps the PCM ring current between timer ticks, which matters when the engine picks a buffer
+// shorter than AudioPeriodMs: the copy is still bounded by the media clock, so it never reads a
+// packet the engine has not written yet.
+NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM stream, _In_ ULONG, _In_ ULONG, _In_ ULONG)
 {
+	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	if (ctx->AudioRunning && ctx->AudioBuffer != nullptr)
+	{
+		CopyConsumedLocked(ctx, CurrentPositionLocked(ctx, nullptr));
+	}
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return STATUS_SUCCESS;
 }
 

@@ -30,23 +30,13 @@ ULONGLONG CurrentPositionLocked(DEVICE_CONTEXT* ctx, ULONGLONG* qpc)
 	return ctx->AudioBasePosition + frames * ctx->PinBytesPerFrame;
 }
 
-// Moves newly consumed bytes from the RT buffer into the PCM ring and reports
-// completed packets to ACX.
-void OnAudioTimer(_In_ WDFTIMER timer)
+void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 {
-	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
-
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	if (!ctx->AudioRunning || ctx->AudioBuffer == nullptr)
+	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
+	if (bufferSize == 0 || ctx->AudioBuffer == nullptr)
 	{
-		KeReleaseSpinLock(&ctx->AudioLock, irql);
 		return;
 	}
-
-	ULONGLONG qpc;
-	const ULONGLONG position = CurrentPositionLocked(ctx, &qpc);
-	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 
 	// Never copy more than one buffer: anything older was already overwritten.
@@ -86,7 +76,7 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 
 		// Peak driver-side latency for this stream. An instantaneous reading hides the spike a
 		// stall caused, so the worst the lead and both rings have been is kept until the next
-		// stream starts. Sampled here, on the copy tick, because that is when the PCM ring moves.
+		// stream starts. Sampled wherever the PCM ring moves.
 		const uint32_t pcmMs = static_cast<uint32_t>(static_cast<uint64_t>(ring.ReadableBytes()) * 1000 /
 												 (static_cast<uint64_t>(ctx->PinSampleRate) * frameBytes));
 		uint32_t frameMs = 0;
@@ -103,6 +93,26 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 			ctx->LatencyPeakMs = static_cast<LONG>(latency);
 		}
 	}
+}
+
+// Reports completed packets to ACX. The copy itself also runs when the engine releases a packet
+// (see OnSetRenderPacket): an engine buffer shorter than AudioPeriodMs would otherwise fall more
+// than a buffer behind between ticks, and the oldest audio would be dropped every tick.
+void OnAudioTimer(_In_ WDFTIMER timer)
+{
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
+
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	if (!ctx->AudioRunning || ctx->AudioBuffer == nullptr)
+	{
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		return;
+	}
+
+	ULONGLONG qpc;
+	const ULONGLONG position = CurrentPositionLocked(ctx, &qpc);
+	CopyConsumedLocked(ctx, position);
 
 	const ULONGLONG completed = position / ctx->AudioPacketSize;
 	const BOOLEAN notify = completed > ctx->AudioCompletedPackets;
