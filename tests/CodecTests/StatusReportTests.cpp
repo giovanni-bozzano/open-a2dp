@@ -161,6 +161,25 @@ TEST(StatusReport_ShowsTheDriverSideLatency)
 	CHECK(Contains(spiked, "latency peak    180 ms (worst since this stream started)"));
 }
 
+TEST(StatusReport_ShowsWhatTheLatencyCost)
+{
+	// The counters that explain the latency number sit next to it, in the same session section
+	// of the window: silence where the ring ran dry, and old audio dropped to stay near live.
+	Ioctl::Status status = StreamingStatus();
+	status.underruns = 3;
+	status.pcmTrimmedBytes = 2048;
+	const std::string report = Report(false, status, StreamingPreference());
+	CHECK(Contains(report, "underruns       3 packets of silence"));
+	CHECK(Contains(report, "trimmed         2048 B of old audio dropped"));
+
+	// A clean stream says so, so the absence of the warning tone means something.
+	status.underruns = 0;
+	status.pcmTrimmedBytes = 0;
+	const std::string clean = Report(false, status, StreamingPreference());
+	CHECK(Contains(clean, "underruns       0 packets of silence"));
+	CHECK(Contains(clean, "trimmed         0 B of old audio dropped"));
+}
+
 TEST(StatusReport_ShowsAPinnedEndpointFormat)
 {
 	// The one format the endpoint offers is the answer to "what will the shared-mode stream

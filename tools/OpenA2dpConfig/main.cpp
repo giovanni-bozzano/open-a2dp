@@ -305,7 +305,7 @@ void Place(HWND control, int x, int y, int width, int height)
 const wchar_t* SectionForLabel(const std::string& label)
 {
 	if (label == "AVDTP" || label == "media" || label == "codec" || label == "media MTU" ||
-		label == "latency" || label == "latency peak")
+		label == "latency" || label == "latency peak" || label == "underruns" || label == "trimmed")
 	{
 		return L"Session";
 	}
@@ -337,6 +337,12 @@ RowTone ToneForLabel(const std::string& label, const std::string& value)
 	if (label == "driver" && value.find("does not match") != std::string::npos)
 	{
 		return RowTone::Error;
+	}
+	// A stream that lost audio to a short lead is a warning, not a failure: it plays, but the
+	// listener heard the gap. The values start with the count, which is zero in the good case.
+	if ((label == "underruns" || label == "trimmed") && !value.empty() && value[0] != '0')
+	{
+		return RowTone::Warning;
 	}
 	if (label == "media" || label == "AVDTP")
 	{

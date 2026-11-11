@@ -384,6 +384,12 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	// this stream is reported next to it; it is reset when the next stream starts.
 	AppendLine(text, "latency peak",
 			   Format("%u ms (worst since this stream started)", status.latencyPeakMs));
+	// What the delay cost, per sink: audio the driver could not deliver in time. Silence where
+	// the stream ran dry is an underrun; audio discarded to stay near live after a stall is a
+	// trim. Both mean the lead is short for this sink, and both are worth seeing beside the
+	// latency they explain.
+	AppendLine(text, "underruns", Format("%u packets of silence", status.underruns));
+	AppendLine(text, "trimmed", Format("%u B of old audio dropped", status.pcmTrimmedBytes));
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkName(text, status);

@@ -39,8 +39,10 @@ single largest fixed part of it.
    the buffered duration from the ring fills (PCM by the depth it carries, frames by the codec
    bitrate). The report's `latency` line adds the two to the pacing lead - the audio the driver
    holds ahead of live - and says so, because the sink's own buffering is not reported by any
-   A2DP profile. Both the CLI status and the settings window's session panel show it, so a
-   growing backlog and the effect of a shorter lead are visible before they are audible.
+   A2DP profile. Both the CLI status and the settings window's session panel show it, next to
+   `underruns` (silence sent where the ring ran dry) and `trimmed` (old audio dropped after a
+   stall) - the two ways a lead that is too short for this sink shows up - so a growing backlog
+   and the effect of a shorter lead are visible before they are audible.
    Next to it the report shows `latency peak`: the worst lead-plus-rings value sampled on the
    audio copy tick since the stream started (`status.latencyPeakMs`, reset by the next
    `MediaStart`). A stall that trimmed the backlog before anyone polled still leaves that
