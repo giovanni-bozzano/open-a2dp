@@ -143,6 +143,20 @@ TEST(StatusReport_VerboseListsEveryField)
 	CHECK(Contains(report, "last error      0xC000009A"));
 }
 
+TEST(StatusReport_ShowsTheDriverSideLatency)
+{
+	Ioctl::Status status = StreamingStatus();
+	status.pacingLeadMs = 30;
+	status.pcmBufferedMs = 12;
+	status.frameBufferedMs = 8;
+	const std::string report = Report(false, status, StreamingPreference());
+
+	// The lead and both ring fills, which is the audio the driver holds ahead of live; the
+	// sink's own buffering is not ours to report.
+	CHECK(Contains(report,
+			"latency         50 ms (driver side: lead 30 + buffered 20; the sink adds its own)"));
+}
+
 TEST(StatusReport_ShowsAPinnedEndpointFormat)
 {
 	// The one format the endpoint offers is the answer to "what will the shared-mode stream

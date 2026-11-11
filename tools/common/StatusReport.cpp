@@ -367,6 +367,13 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	}
 	AppendLine(text, "AVDTP", AvdtpStateName(status.avdtpState));
 	AppendLine(text, "media", MediaStateName(static_cast<uint32_t>(status.mediaState)));
+	// What the driver holds ahead of live audio: the pacing lead plus whatever the rings still
+	// have to encode. The sink's own buffering is not reported by any A2DP profile, so this is
+	// the part we control, not the whole mouth-to-ear delay.
+	const uint32_t bufferedMs = status.pcmBufferedMs + status.frameBufferedMs;
+	AppendLine(text, "latency",
+			   Format("%u ms (driver side: lead %u + buffered %u; the sink adds its own)",
+					  status.pacingLeadMs + bufferedMs, status.pacingLeadMs, bufferedMs));
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkName(text, status);

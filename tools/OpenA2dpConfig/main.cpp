@@ -64,6 +64,7 @@ enum ControlId : int {
 	kBlocksCombo,
 	kSubbandsCombo,
 	kAllocationCombo,
+	kPacingLeadCombo,
 	kApplyButton,
 	kMessageLabel,
 };
@@ -79,8 +80,9 @@ constexpr wchar_t kApplyText[] = L"Apply";
 constexpr wchar_t kSessionGroupText[] = L"Session";
 constexpr wchar_t kCodecGroupText[] = L"Codec";
 constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
-constexpr wchar_t kCodecHintText[] =
-	L"The frame shape and bitpool apply to SBC; the bitrate to AAC. The aptX codecs have no parameters.";
+constexpr wchar_t kCodecHintText[] = L"The frame shape and bitpool apply to SBC, the bitrate to "
+									 L"AAC. The pacing lead applies to every codec: a shorter lead is less "
+									 L"latency, less margin against the sink running dry.";
 constexpr wchar_t kFormatHintText[] = L"Windows plays the first format the endpoint lists and ignores the "
 									 L"Sound-settings pick, so a pinned format is offered alone.";
 // A combo box is created with the height of its drop-down list, which is never resized.
@@ -301,7 +303,8 @@ void Place(HWND control, int x, int y, int width, int height)
 // section the report marks itself.
 const wchar_t* SectionForLabel(const std::string& label)
 {
-	if (label == "AVDTP" || label == "media" || label == "codec" || label == "media MTU")
+	if (label == "AVDTP" || label == "media" || label == "codec" || label == "media MTU" ||
+		label == "latency")
 	{
 		return L"Session";
 	}
@@ -314,7 +317,8 @@ const wchar_t* SectionForLabel(const std::string& label)
 	{
 		return L"Endpoint";
 	}
-	if (label == "encoder" || label == "rings" || label == "counters" || label == "last error")
+	if (label == "encoder" || label == "rings" || label == "counters" || label == "last error" ||
+		label == "pacing lead" || label == "buffered" || label == "capacity")
 	{
 		return L"Service";
 	}
@@ -588,8 +592,20 @@ void ApplyLayout(HWND hwnd)
 	const int applyHeight = rowHeight + 4;
 	const int codecHintHeight = MaxOf(TextHeight(dc, kCodecHintText, innerWidth), textHeight);
 	const int formatHintHeight = MaxOf(TextHeight(dc, kFormatHintText, innerWidth), textHeight);
-	const int codecHeight = captionHeight + 3 * rowHeight + codecHintHeight + gap;
-	const int formatHeight = captionHeight + rowHeight + formatHintHeight + gap;
+	// Rows come from the fields themselves, so adding a setting does not need a height to be
+	// corrected by hand.
+	int codecRows = 1;
+	int formatRows = 1;
+	for (const Field& field : Fields)
+	{
+		int& rows = field.control == GetDlgItem(hwnd, kFormatCombo) ? formatRows : codecRows;
+		if (field.row + 1 > rows)
+		{
+			rows = field.row + 1;
+		}
+	}
+	const int codecHeight = captionHeight + codecRows * rowHeight + codecHintHeight + gap;
+	const int formatHeight = captionHeight + formatRows * rowHeight + formatHintHeight + gap;
 	const int bottomHeight = MaxOf(applyHeight, textHeight);
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
@@ -658,8 +674,10 @@ void ApplyLayout(HWND hwnd)
 		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight);
 		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column], kComboListHeight);
 	}
-	Place(state->codecHint, innerLeft, codecTop + captionHeight + 3 * rowHeight, innerWidth, codecHintHeight);
-	Place(state->formatHint, innerLeft, formatTop + captionHeight + rowHeight, innerWidth, formatHintHeight);
+	Place(state->codecHint, innerLeft, codecTop + captionHeight + codecRows * rowHeight, innerWidth,
+		  codecHintHeight);
+	Place(state->formatHint, innerLeft, formatTop + captionHeight + formatRows * rowHeight, innerWidth,
+		  formatHintHeight);
 
 	// Apply sits under the right edge, the outcome of the last action fills the rest.
 	const int applyLeft = width - margin - applyWidth;
@@ -738,6 +756,7 @@ void CreateControls(HWND hwnd)
 	CreateField(hwnd, L"SBC blocks", kBlocksCombo, 1, 1, font);
 	CreateField(hwnd, L"Subbands", kSubbandsCombo, 0, 2, font);
 	CreateField(hwnd, L"Allocation", kAllocationCombo, 1, 2, font);
+	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, 0, 3, font);
 	if (state != nullptr)
 	{
 		state->codecHint = CreateChild(hwnd, L"STATIC", kCodecHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
@@ -795,8 +814,16 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kAllocationCombo, L"Loudness", Ioctl::kSbcAllocationLoudness);
 	AddComboItem(hwnd, kAllocationCombo, L"SNR", Ioctl::kSbcAllocationSnr);
 
+	// The lead the stream is sent ahead of the clock; the ladder skips 60 because that is the
+	// default entry above it.
+	AddComboItem(hwnd, kPacingLeadCombo, L"Default (60 ms)", 0);
+	for (const uint32_t lead : {20u, 30u, 40u, 50u, 80u, 100u, 150u, 200u})
+	{
+		AddComboItem(hwnd, kPacingLeadCombo, Format(L"%u ms", lead).c_str(), lead);
+	}
+
 	for (const int id : {kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo, kSubbandsCombo,
-						 kAllocationCombo})
+						 kAllocationCombo, kPacingLeadCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -836,6 +863,7 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	SelectComboValue(hwnd, kSubbandsCombo, preference.sbcSubbands);
 	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
 	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
+	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
 	SelectComboValue(hwnd, kFormatCombo,
 					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
 }
@@ -1211,6 +1239,7 @@ void ApplySettings(HWND hwnd)
 	preference.sbcBlocks = ComboValue(hwnd, kBlocksCombo);
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
+	preference.prerollMs = ComboValue(hwnd, kPacingLeadCombo);
 
 	// The endpoint format is its own setting; the combo carries the whole format.
 	const uint32_t formatValue = ComboValue(hwnd, kFormatCombo);
@@ -1274,7 +1303,7 @@ void ApplyDarkControls(HWND hwnd)
 	}
 	EnumChildWindows(hwnd, UnthemeTextControl, 0);
 	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo,
-				 kBlocksCombo, kSubbandsCombo, kAllocationCombo})
+				 kBlocksCombo, kSubbandsCombo, kAllocationCombo, kPacingLeadCombo})
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}

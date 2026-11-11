@@ -37,8 +37,10 @@ single largest fixed part of it.
    60 ms for sinks that need the margin.
 3. **The latency is measurable.** `status.pcmBufferedMs` and `status.frameBufferedMs` derive
    the buffered duration from the ring fills (PCM by the depth it carries, frames by the codec
-   bitrate), and `OpenA2dpCtl status` prints them, so a growing backlog is visible before it is
-   audible.
+   bitrate). The report's `latency` line adds the two to the pacing lead - the audio the driver
+   holds ahead of live - and says so, because the sink's own buffering is not reported by any
+   A2DP profile. Both the CLI status and the settings window's session panel show it, so a
+   growing backlog and the effect of a shorter lead are visible before they are audible.
 4. **The presentation position matches the ear.** The stream is sent `PacingLeadMs` ahead of
    the media clock, so `OnGetPresentationPosition` subtracts that lead (clamped at the start)
    instead of claiming audio the sink is still buffering. Without it, an app syncing video to

@@ -164,7 +164,8 @@ one of them is narrowed with the rounded downconvert. Forcing classic aptX narro
 16-bit list to the formats it can run, just as forcing HD pins 24-in-32. The decision and
 its sequencing are in [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd).
 
-The pacing lead is the one timing setting a user owns: every codec is sent this far ahead of
+The pacing lead is the one timing setting a user owns, set from the settings window's
+`Pacing lead` field or `OpenA2dpCtl codec --preroll`: every codec is sent this far ahead of
 the media clock so the sink's jitter buffer fills before it runs dry. The kernel pacer (SBC)
 and the service's record pacing both read it at stream start - the service through
 `WaitEventOut.prerollMs` - and `OnGetPresentationPosition` subtracts the same distance, so the
