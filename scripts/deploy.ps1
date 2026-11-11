@@ -784,6 +784,12 @@ if (-not $Vm) {
         & sc.exe stop OpenA2dpSvc 2>&1 | Out-Null
         Start-Sleep -Seconds 2
         foreach ($name in 'OpenA2dpSvc.exe', 'OpenA2dpCtl.exe', 'OpenA2dpConfig.exe') {
+            # Nothing to end is the common case - sc stop above already ended the service, and a
+            # tool that was never started leaves nothing behind. taskkill fails on a missing
+            # process, and a failing native command is terminating here.
+            if (-not (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($name)) -ErrorAction SilentlyContinue)) {
+                continue
+            }
             & taskkill.exe /F /IM $name 2>&1 | Out-Null
         }
         Start-Sleep -Seconds 1
