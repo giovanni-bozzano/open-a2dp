@@ -169,6 +169,8 @@ struct SinkState
 	HWND sessionPanel = nullptr;
 	HWND codecHint = nullptr;
 	HWND formatHint = nullptr;
+	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
+	HWND tooltip = nullptr;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
 };
 
@@ -445,6 +447,117 @@ HWND CreateChild(HWND parent, const wchar_t* className, const wchar_t* text, DWO
 	return child;
 }
 
+// What a field means and what changing it costs, shown when the pointer rests on its box. The
+// descriptions live here, next to the fields they describe, rather than in a help file that
+// would drift from the code; each line is short enough to read without moving the pointer.
+struct FieldTip
+{
+	int id;
+	const wchar_t* text;
+};
+
+constexpr FieldTip kFieldTips[] = {
+	{kSinkCombo,
+	 L"The sink this window controls.\n"
+	 L"Every field below is stored for this sink alone, so two sinks can run different codecs "
+	 L"and different latencies."},
+	{kCodecCombo,
+	 L"Which codec the sink may use.\n"
+	 L"Automatic takes the best both ends support: aptX HD, then aptX, then AAC, then SBC. "
+	 L"Forcing a codec the sink does not advertise is refused."},
+	{kBitrateCombo,
+	 L"Bitrate the AAC encoder aims for.\n"
+	 L"Higher is better sound and takes more of the link; the default is the highest the sink "
+	 L"accepts."},
+	{kBitpoolCombo,
+	 L"SBC's main quality control.\n"
+	 L"A higher bitpool is better sound in larger packets; the default takes the sink's own "
+	 L"choice, capped at its maximum."},
+	{kBlocksCombo,
+	 L"Samples per SBC frame.\n"
+	 L"More blocks means longer frames: fewer packets a second, and each packet takes longer to "
+	 L"encode."},
+	{kSubbandsCombo,
+	 L"Frequency resolution of an SBC frame.\n"
+	 L"8 subbands spread the band finer than 4 at the same bitpool, for a little more work per "
+	 L"frame."},
+	{kAllocationCombo,
+	 L"How SBC hands out bits across the band.\n"
+	 L"Loudness follows the ear's sensitivity; signal-to-noise spends them evenly."},
+	{kPacingLeadCombo,
+	 L"How far ahead of the media clock the stream is sent, which is the audio queued in the "
+	 L"sink.\n"
+	 L"Shorter is less delay and less margin against underruns: 60 ms suits most sinks, 20 ms "
+	 L"needs one that buffers little. The session panel's latency line is this lead plus what "
+	 L"the rings hold."},
+	{kSbcFramesCombo,
+	 L"Most SBC frames one packet carries.\n"
+	 L"Fewer frames is a shorter packet and less latency, but more packets a second for the link "
+	 L"to carry. The default fills the packet the MTU allows."},
+	{kFormatCombo,
+	 L"The format the endpoint offers Windows.\n"
+	 L"Automatic offers every format the sink accepts; pinning one makes Windows use exactly it, "
+	 L"and needs the sink to support it."},
+};
+
+const wchar_t* TipFor(int id)
+{
+	for (const FieldTip& tip : kFieldTips)
+	{
+		if (tip.id == id)
+		{
+			return tip.text;
+		}
+	}
+	return nullptr;
+}
+
+// Adds one control to the shared tooltip. The tooltip control keeps its own copy of the text,
+// and TTF_SUBCLASS is what makes it watch the control's mouse without a message hook.
+void AddTooltip(HWND tooltip, HWND parent, HWND control, const wchar_t* text)
+{
+	if (tooltip == nullptr || control == nullptr || text == nullptr)
+	{
+		return;
+	}
+	TTTOOLINFOW tool = {};
+	tool.cbSize = sizeof(tool);
+	tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+	tool.hwnd = parent;
+	tool.uId = reinterpret_cast<UINT_PTR>(control);
+	tool.lpszText = const_cast<LPWSTR>(text);
+	SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+}
+
+// The tooltip every field box shares: one window, one delay, so hovering any of them behaves
+// the same. Created once, with the first set of controls.
+HWND EnsureTooltip(HWND hwnd, SinkState* state)
+{
+	if (state == nullptr)
+	{
+		return nullptr;
+	}
+	if (state->tooltip == nullptr)
+	{
+		state->tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+										 WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
+										 CW_USEDEFAULT, CW_USEDEFAULT, hwnd, nullptr,
+										 GetModuleHandleW(nullptr), nullptr);
+		if (state->tooltip != nullptr)
+		{
+			SetWindowPos(state->tooltip, HWND_TOPMOST, 0, 0, 0, 0,
+						 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+			// Long enough that moving across the window does not flash tips, short enough that
+			// resting on a box answers without a wait.
+			SendMessageW(state->tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 400);
+			// Wrap long explanations instead of running them across the screen; the fields keep
+			// their own line breaks for the sentence boundary.
+			SendMessageW(state->tooltip, TTM_SETMAXTIPWIDTH, 0, 360);
+		}
+	}
+	return state->tooltip;
+}
+
 // A label and its field, which the layout sizes from the label text and the combo contents.
 void CreateField(HWND hwnd, const wchar_t* text, int id, int column, int row, HFONT font)
 {
@@ -452,6 +565,12 @@ void CreateField(HWND hwnd, const wchar_t* text, int id, int column, int row, HF
 	const HWND control = CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0,
 									 10, kComboListHeight, id, font);
 	Fields.push_back({label, control, column, row});
+
+	SinkState* state = StateOf(hwnd);
+	if (state != nullptr)
+	{
+		AddTooltip(state->tooltip, hwnd, control, TipFor(id));
+	}
 }
 
 void AddComboItem(HWND hwnd, int id, const wchar_t* text, uint32_t value)
@@ -738,13 +857,20 @@ void CreateControls(HWND hwnd)
 					   ? state->font
 					   : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 	Fields.clear();
+	// The fields' tooltips come from one window, which has to exist before the fields do.
+	EnsureTooltip(hwnd, state);
 
 	if (state != nullptr)
 	{
 		state->sinkLabel = CreateChild(hwnd, L"STATIC", kSinkText, SS_LEFT, 0, 0, 10, 10, 0, font);
 	}
-	CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0, 10,
-				kComboListHeight, kSinkCombo, font);
+	const HWND sinkCombo = CreateChild(hwnd, L"COMBOBOX", L"",
+									  CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0, 10, kComboListHeight,
+									  kSinkCombo, font);
+	if (state != nullptr)
+	{
+		AddTooltip(state->tooltip, hwnd, sinkCombo, TipFor(kSinkCombo));
+	}
 	CreateChild(hwnd, L"BUTTON", kRefreshText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kRefreshButton,
 				font);
 	// The clipboard text is the report itself, so it can be pasted next to a CLI paste.
@@ -1674,7 +1800,9 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE previous, _In_ P
 {
 	UNREFERENCED_PARAMETER(previous);
 	UNREFERENCED_PARAMETER(commandLine);
-	INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_STANDARD_CLASSES};
+	// The tooltip window is a Win95 common control, not one of the standard classes a button
+	// or an edit comes from.
+	INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
 	InitCommonControlsEx(&controls);
 	return OpenA2dp::ConfigUi::Run(instance, show);
 }

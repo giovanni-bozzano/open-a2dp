@@ -117,7 +117,7 @@ All values are `REG_DWORD`, `0` means "driver default", `OpenA2dpCtl codec` writ
 fields through `SET_PREFERENCE` and `OpenA2dpCtl format` writes the endpoint format through
 `SET_ENDPOINT_FORMAT`. Deleting the sink subkey returns it to auto. The driver reads it in
 `OnDeviceAdd`, before the endpoint exists. The development ABI baseline (2) removes the
-obsolete format preference and fallback fields:`Preference` is 40 bytes, `EndpointFormat` 16 bytes, `Status` 260 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
+obsolete format preference and fallback fields:`Preference` is 40 bytes, `EndpointFormat` 16 bytes, `Status` 264 bytes, `RegisterEncoderOut` 32 bytes and `WaitEventOut` 36 bytes.
 Rebuild the tools, driver and service together; earlier development layouts are
 incompatible, even if they reported the same version.
 `status` lists the sink's SBC PCM capability masks and discovered codecs, not a Windows
@@ -135,6 +135,11 @@ advertise them.
 | Pacing lead | `CodecPreferencePrerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
 | SBC frames per packet | `CodecPreferenceSbcFramesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
 | Endpoint format | `SelectedSampleRate`, `SelectedChannels` | `format [auto\|<rate> <channels>]` | automatic, or 44100/48000 Hz with 1 or 2 channels the sink advertises | automatic (every sink format) |
+
+Every field's box in the settings window explains itself when the pointer rests on it: what
+the setting does and what changing it costs, in the same terms as the row above it. Those
+descriptions live with the controls in `tools/OpenA2dpConfig/main.cpp`, so a field and its
+explanation are added and reviewed together.
 
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
 `CodecPreferenceEndpointChannels` are obsolete and no longer read or written.
