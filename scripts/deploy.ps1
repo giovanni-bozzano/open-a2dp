@@ -375,6 +375,29 @@ function Wait-Until([scriptblock]$Condition, [int]$TimeoutSec) {
     return [bool](& $Condition)
 }
 
+# Like Wait-Until, but reports what it sees every few seconds. Re-enabling the device waits for
+# a Bluetooth sink to come back, which is not instant: without a progress line the wait reads as
+# a hang, and the device codes are what says whether the node is absent or its driver refused to
+# start.
+function Wait-Reported([scriptblock]$Condition, [int]$TimeoutSec, [string]$What) {
+    $start = Get-Date
+    $deadline = $start.AddSeconds($TimeoutSec)
+    $nextReport = $start
+    while ($true) {
+        if (& $Condition) { return $true }
+        $now = Get-Date
+        if ($now -ge $deadline) { return [bool](& $Condition) }
+        if ($now -ge $nextReport) {
+            $devices = @(Get-Devices)
+            $codes = (@($devices | ForEach-Object { [string]$_.ConfigManagerErrorCode }) -join ',')
+            Log ('  waiting for {0}: {1:N0}s, present {2}, codes [{3}]' -f $What,
+                ($now - $start).TotalSeconds, $devices.Count, $codes)
+            $nextReport = $now.AddSeconds(5)
+        }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 # Ends every process that holds a handle on the driver. Restart-on-failure is disabled first,
 # so a forced kill cannot relaunch the service while the caller works on the device.
 function Stop-OpenA2dpProcesses {
@@ -595,7 +618,12 @@ try {
             if ($a -and $a.Status -eq 'Running') {
                 [void](Run 'net.exe' 'stop audiosrv /y' 60)
                 $audioStopped = $true
-                Start-Sleep -Seconds 2
+                # The engine can outlive the service by a few seconds, and while it holds the
+                # endpoint it vetoes the node's removal (Kernel-PnP 225, seen locally: the device
+                # then comes back a minute late). Wait for it before touching PnP.
+                if (-not (Wait-Until { -not (Get-Process -Name audiodg -ErrorAction SilentlyContinue) } 15)) {
+                    Log 'warning: audiodg still runs after audiosrv stopped; a device removal can be vetoed while it holds the endpoint.'
+                }
             }
         }
 
@@ -669,10 +697,23 @@ try {
         # 6. Bring things back; the new image loads fresh when the device reappears.
         Enable-All $parents
         Enable-All $disabled
-        $ok = Wait-Until {
+        $ready = {
             $d = Get-Devices
             ($d.Count -gt 0) -and (@($d | Where-Object { $_.ConfigManagerErrorCode -ne 0 }).Count -eq 0)
-        } 60
+        }
+        # A running Bluetooth sink takes a moment to come back, and the driver refuses to start
+        # while the enumerator cannot hand it the device info, so a node can report a problem code
+        # for a while and still end up fine (seen locally: code 0 ten seconds after a 60 s wait
+        # gave up). Wait longer, and nudge a node that is still failing once before calling it.
+        $ok = Wait-Reported $ready 120 'the sink to come back'
+        if (-not $ok) {
+            $failing = @(Get-Devices | Where-Object { $_.ConfigManagerErrorCode -ne 0 })
+            foreach ($d in $failing) {
+                Log "restarting $($d.PNPDeviceID) after code $($d.ConfigManagerErrorCode)"
+                [void](Run 'pnputil.exe' "/restart-device `"$($d.PNPDeviceID)`"" 60)
+            }
+            if ($failing.Count -gt 0) { $ok = Wait-Reported $ready 60 'the restarted device' }
+        }
         $present = Get-Devices
         foreach ($d in $present) { Log "device: code=$($d.ConfigManagerErrorCode) $($d.PNPDeviceID)" }
         if (-not $ok) {
