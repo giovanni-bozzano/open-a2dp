@@ -16,7 +16,7 @@ Current implementation:
 - `service/main.cpp`: encoder Windows service (`OpenA2dpSvc.exe`) for AAC-LC, classic aptX and aptX HD.
 - `codecs/`: the `IA2dpCodec` interface, SBC encoder, AAC IE/negotiation and Media Foundation/LATM encoder, plus the vendored AOSP aptX and aptX HD encoders behind the same seam.
 - `tests/CodecTests`: a self-contained test runner with an independent SBC reference decoder.
-- `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC/aptX/aptX HD; deployed to the test VM by `scripts/deploy-vm.ps1`.
+- `tools/OpenA2dpCtl`: diagnostic CLI (`OpenA2dpCtl.exe`) to list devices, show the AVDTP/media state and current codec, and force auto/SBC/AAC/aptX/aptX HD; deployed by `scripts/deploy.ps1` (this machine) or `scripts/deploy.ps1 -Vm` (the test VM).
 - `tools/OpenA2dpConfig`: desktop settings window (`OpenA2dpConfig.exe`) over the same IOCTLs: sink list, live status, and the codec and endpoint preference.
 - `tools/common`: the status report both tools print (`StatusReport`), so the window, its **Copy** button and `OpenA2dpCtl status` never show different fields; the window's **Details** box and `status --verbose` add every field with its hex value.
 

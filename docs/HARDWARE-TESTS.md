@@ -7,8 +7,10 @@ holds and the [log check](#4-log-check-after-every-test) is clean.
 
 ## 1. Setup (once)
 
-Use the test VM (`scripts/deploy-vm.ps1 -Build`) or a test-signing machine with a kernel
-debugger attached. Never enable Verifier on a machine you cannot recover: a Verifier
+Use the test VM (`scripts/deploy.ps1 -Vm -Build`) or a test-signing machine with a kernel
+debugger attached; `scripts/deploy.ps1 -Build` deploys on this machine. The deploy trusts the
+test certificate in the machine's Root store only, which is the one place a signature chain is
+decided, and the restore check takes it back out. Never enable Verifier on a machine you cannot recover: a Verifier
 bugcheck repeats on every boot until it is turned off.
 
 ### 1.1 Kernel log capture
@@ -53,7 +55,8 @@ The deploy script doubles as the restore check and needs no package, so it can r
 whatever the VM has installed:
 
 ```
-scripts/deploy-vm.ps1 -Uninstall
+scripts/deploy.ps1 -Uninstall            # this machine
+scripts/deploy.ps1 -Vm -Uninstall        # the test VM
 ```
 
 It stops the service and the tools, removes every `opena2dp.inf` package with

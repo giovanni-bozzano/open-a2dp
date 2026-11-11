@@ -1,9 +1,14 @@
 <#
 .SYNOPSIS
-    Deploys the test-signed OpenA2dp driver into the test VM without ever rebooting the guest.
+    Deploys the test-signed OpenA2dp driver on this machine, or into the test VM with -Vm.
 
 .DESCRIPTION
-    Uses vmrun (VMware Tools required in the guest), found on the host instead of from a
+    This machine is the default target: the package, the tools and the test certificate are
+    copied to C:\OpenA2dp, the driver is swapped without a reboot and the encoder service is
+    started. Needs an elevated prompt.
+
+    With -Vm the same installer runs in the guest, so the two targets cannot drift apart. It
+    uses vmrun (VMware Tools required in the guest), found on the host instead of from a
     fixed path. Settings are read from .local\vm.json (untracked) unless -VmConfig names
     another file:
         { "vmx": "test-vm\\OpenA2dp.vmx", "user": "...", "password": "...", "vmPassword": "..." }
@@ -24,6 +29,8 @@
     The script never reboots or hard-stops the VM, except for the explicit -Snapshot revert.
 
 .PARAMETER Configuration  Debug (default) or Release.
+.PARAMETER Vm             Deploy into the test VM instead of this machine. The VM options below
+                          need it; without it they are refused rather than ignored.
 .PARAMETER Uninstall      Restore check instead of a deploy: remove the OpenA2dp driver package,
                           the encoder service and the per-sink device node, then verify that the
                           driver, its service, its control links and its package are gone and
@@ -43,6 +50,7 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
+    [switch]$Vm,
     [string]$Snapshot,
     [switch]$Build,
     [switch]$Start,
@@ -59,6 +67,20 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $local = Join-Path $root '.local'
 New-Item -ItemType Directory -Force -Path $local | Out-Null
+
+# A VM option on a local deploy is a mistake worth reporting: silently ignoring it would look
+# like the VM had been updated.
+if (-not $Vm -and ($Snapshot -or $Start -or $VmConfig -or $VmRun)) {
+    throw 'Snapshot, Start, VmConfig and VmRun are VM options: pass -Vm to deploy into the VM.'
+}
+if (-not $Vm) {
+    # Checked before anything is read or copied, so a plain double-click fails with the one
+    # thing that has to change rather than half way through.
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Deploying a driver needs an elevated prompt. Re-run this from an Administrator console, or use -Vm.'
+    }
+}
 
 # ---------- host setup ----------
 # vmrun.exe is found rather than configured, so the host layout does not matter: an explicit
@@ -91,26 +113,28 @@ function Resolve-VmRun {
     }
     throw 'vmrun.exe not found. Pass -VmRun <path>, set OPENA2DP_VMRUN, or add it to PATH.'
 }
-$vmrun = Resolve-VmRun
+if ($Vm) {
+    $vmrun = Resolve-VmRun
 
-$configPath = if ($VmConfig) { $VmConfig } else { Join-Path $local 'vm.json' }
-# A relative -VmConfig is read from the repository, so the same command works from any directory.
-if (-not [System.IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $root $configPath }
-$configPath = [System.IO.Path]::GetFullPath($configPath)
-if (-not (Test-Path -LiteralPath $configPath)) {
-    throw "Missing $configPath. Expected: { `"vmx`": `"test-vm\OpenA2dp.vmx`", `"user`": `"...`", `"password`": `"...`" } with vmx absolute or relative to $root."
+    $configPath = if ($VmConfig) { $VmConfig } else { Join-Path $local 'vm.json' }
+    # A relative -VmConfig is read from the repository, so the same command works from any directory.
+    if (-not [System.IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $root $configPath }
+    $configPath = [System.IO.Path]::GetFullPath($configPath)
+    if (-not (Test-Path -LiteralPath $configPath)) {
+        throw "Missing $configPath. Expected: { `"vmx`": `"test-vm\OpenA2dp.vmx`", `"user`": `"...`", `"password`": `"...`" } with vmx absolute or relative to $root."
+    }
+    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    # Quoting and a relative path are both accepted, so a pasted value works as it is.
+    $vmxPath = "$($config.vmx)".Trim().Trim('"')
+    if (-not $vmxPath) { throw "$configPath does not name a vmx." }
+    if (-not [System.IO.Path]::IsPathRooted($vmxPath)) { $vmxPath = Join-Path $root $vmxPath }
+    $vmxFull = [System.IO.Path]::GetFullPath($vmxPath)
+    if (-not (Test-Path -LiteralPath $vmxFull)) { throw "VMX not found: $vmxFull" }
+    $vmx = $vmxFull
+    $base = @('-T', 'ws')
+    if ($config.vmPassword) { $base += @('-vp', $config.vmPassword) }
+    $auth = $base + @('-gu', $config.user, '-gp', $config.password)
 }
-$config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-# Quoting and a relative path are both accepted, so a pasted value works as it is.
-$vmxPath = "$($config.vmx)".Trim().Trim('"')
-if (-not $vmxPath) { throw "$configPath does not name a vmx." }
-if (-not [System.IO.Path]::IsPathRooted($vmxPath)) { $vmxPath = Join-Path $root $vmxPath }
-$vmxFull = [System.IO.Path]::GetFullPath($vmxPath)
-if (-not (Test-Path -LiteralPath $vmxFull)) { throw "VMX not found: $vmxFull" }
-$vmx = $vmxFull
-$base = @('-T', 'ws')
-if ($config.vmPassword) { $base += @('-vp', $config.vmPassword) }
-$auth = $base + @('-gu', $config.user, '-gp', $config.password)
 
 function Invoke-VmRun {
     param([Parameter(Mandatory)][string]$What, [Parameter(Mandatory)][string[]]$Arguments)
@@ -213,7 +237,10 @@ if (-not $Uninstall) {
     [System.IO.File]::WriteAllBytes($cer, $signer.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
 }
 
-# ---------- VM power state ----------
+# ---------- VM deploy ----------
+# Everything below until the guest script runs only against the VM; a local deploy returns
+# from its own branch before reaching it.
+if ($Vm) {
 if ($Snapshot) {
     if (Test-VmRunning) {
         Write-Host "Stopping the VM before reverting snapshot '$Snapshot'..."
@@ -274,12 +301,13 @@ if (-not $Uninstall) {
         if (-not $copied) { throw "Copying $($file.Name) failed after 3 attempts. Is the file open in the guest?" }
     }
 }
+} # -Vm
 
 # ---------- guest installer ----------
 $guestScript = @'
-param([switch]$NoRestart, [switch]$KeepAudio, [switch]$Uninstall)
+param([switch]$NoRestart, [switch]$KeepAudio, [switch]$Uninstall, [string]$Directory = 'C:\OpenA2dp')
 $ErrorActionPreference = 'Stop'
-$dir = 'C:\OpenA2dp'
+$dir = $Directory
 $log = "$dir\install.log"
 $resultFile = "$dir\result.txt"
 $t0 = Get-Date
@@ -491,6 +519,22 @@ function Invoke-Restore {
         if ($listing -notmatch 'No OpenA2dp devices found') { $problems += 'OpenA2dpCtl still finds a control device' }
     }
 
+    # 4. Trusting the test certificate is part of the deploy, so a restore takes it back out of
+    #    the machine stores; TrustedPublisher is cleared too, for deploys made before it stopped
+    #    using it.
+    $testCert = Join-Path $dir 'OpenA2dpTest.cer'
+    if (Test-Path -LiteralPath $testCert) {
+        $thumbprint = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $testCert).Thumbprint
+        [void](Run 'certutil.exe' '-delstore Root OpenA2dpTest.cer' 30)
+        [void](Run 'certutil.exe' '-delstore TrustedPublisher OpenA2dpTest.cer' 30)
+        $remaining = @(Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue |
+            Where-Object { $_.Thumbprint -eq $thumbprint })
+        if ($remaining.Count -gt 0) { $problems += 'the test certificate is still trusted as a root' }
+        else { Log '    test certificate removed from the machine Root store' }
+    } else {
+        Log '    no test certificate in the deploy folder; nothing to untrust'
+    }
+
     if ($problems.Count -eq 0) { return 'RESTORED' }
     foreach ($problem in $problems) { Log "    problem: $problem" }
     return "FAIL: $($problems -join '; ')"
@@ -523,9 +567,12 @@ try {
     # 1. Release handles held by the encoder service and the CLI.
     Stop-OpenA2dpProcesses
 
-    # 2. Trust the test certificate.
+    # 2. Trust the test certificate in the one store that decides it: a signature is trusted
+    #    because its chain ends in the machine's root store. TrustedPublisher would be a second
+    #    copy of the same decision for no more reach, so it is left alone - and cleared here in
+    #    case an earlier deploy put one there.
     if ((Run 'certutil.exe' '-f -addstore Root OpenA2dpTest.cer' 30) -ne 0) { throw 'certutil Root failed' }
-    if ((Run 'certutil.exe' '-f -addstore TrustedPublisher OpenA2dpTest.cer' 30) -ne 0) { throw 'certutil TrustedPublisher failed' }
+    [void](Run 'certutil.exe' '-f -delstore TrustedPublisher OpenA2dpTest.cer' 30)
 
     $devices = Get-Devices
     $ids = @($devices | ForEach-Object { $_.PNPDeviceID })
@@ -679,6 +726,60 @@ exit $exitCode
 
 $guestScriptPath = Join-Path $local 'install.ps1'
 Set-Content -Path $guestScriptPath -Value $guestScript -Encoding ascii
+
+# ---------- local deploy ----------
+if (-not $Vm) {
+    # The same installer runs here, from the same files, against the same C:\OpenA2dp layout the
+    # VM uses: a rebuild is never blocked by a running service in the output folder, and a path
+    # in a log or a result file means the same thing on both targets.
+    $targetDir = 'C:\OpenA2dp'
+    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    if (-not $Uninstall) {
+        # The service, the CLI and the window lock their own binaries, so they are stopped
+        # before the copy, exactly as the VM path does.
+        & sc.exe stop OpenA2dpSvc 2>&1 | Out-Null
+        Start-Sleep -Seconds 2
+        foreach ($name in 'OpenA2dpSvc.exe', 'OpenA2dpCtl.exe', 'OpenA2dpConfig.exe') {
+            & taskkill.exe /F /IM $name 2>&1 | Out-Null
+        }
+        Start-Sleep -Seconds 1
+        $files = @(Get-ChildItem $package -File | Where-Object { $_.Extension -in '.sys', '.inf', '.cat' }) +
+            (Get-Item $cer) + (Get-Item $ctl) + (Get-Item $svc) + (Get-Item $ui)
+        foreach ($file in $files) {
+            Write-Host "Copying $($file.Name)"
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $targetDir $file.Name) -Force
+        }
+    }
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $guestScriptPath, '-Directory', $targetDir)
+    if ($NoRestart) { $arguments += '-NoRestart' }
+    if ($KeepAudio) { $arguments += '-KeepAudio' }
+    if ($Uninstall) { $arguments += '-Uninstall' }
+    Write-Host "`nInstalling on this machine ($targetDir)..."
+    & powershell.exe @arguments
+    $installerCode = $LASTEXITCODE
+    $logPath = Join-Path $targetDir 'install.log'
+    $resultPath = Join-Path $targetDir 'result.txt'
+    if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | ForEach-Object { Write-Host $_ } }
+    if (-not (Test-Path -LiteralPath $resultPath)) {
+        throw "The installer left no result file (exit $installerCode). Log: $logPath"
+    }
+    $result = (Get-Content -LiteralPath $resultPath -Raw).Trim()
+    $expected = if ($Uninstall) { 'RESTORED' } else { 'OK' }
+    $what = if ($Uninstall) { 'restore check' } else { 'installation' }
+    if ($result -ne $expected) { throw "Local $what failed: $result  (log: $logPath)" }
+    if ($Uninstall) {
+        Write-Host "`nRestore check passed. The sink is back on BthA2dp; play audio to it to confirm the Microsoft path works."
+    } elseif ($NoRestart) {
+        Write-Host "`nDeployment complete. The package is installed; the device was not restarted (-NoRestart)."
+    } else {
+        Write-Host "`nDeployment complete. The driver was reloaded without a reboot and verified."
+    }
+    Write-Host "CLI: $targetDir\OpenA2dpCtl.exe (elevated; `"OpenA2dpCtl help`" for usage)."
+    Write-Host "UI:  $targetDir\OpenA2dpConfig.exe (also elevated)."
+    return
+}
+
+# ---------- hand the installer to the guest ----------
 Invoke-VmRun 'Copying the guest installer' ($auth + @('CopyFileFromHostToGuest', $vmx, $guestScriptPath, 'C:\OpenA2dp\install.ps1'))
 
 # A tiny batch wrapper keeps vmrun from mangling the PowerShell command line.
