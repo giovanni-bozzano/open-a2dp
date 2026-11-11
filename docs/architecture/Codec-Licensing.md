@@ -13,6 +13,7 @@ a distributor confirms the position with counsel.
 | aptX | Qualcomm's AOSP encoder, vendored in `codecs/aptx/classic` | Apache-2.0 with its patent grant: notices only |
 | aptX HD | Qualcomm's AOSP encoder, vendored in `codecs/aptx/hd` | Apache-2.0 with its patent grant: notices only |
 | aptX LL, aptX Adaptive, aptX Lossless | — | outside the AOSP grant, so not shipped |
+| LDAC | Sony's encoder from AOSP `external/libldac` | Apache-2.0: notices. LDAC certification stays with Sony and is not granted by the licence |
 
 `LICENSE` is Apache-2.0 and settles copyright and contributed patents for this repository. It
 does not cover the codecs; those obligations are the ones below.
@@ -61,6 +62,24 @@ treat that as the position it is rather than as a written clearance, and ship th
 Adding an in-tree or third-party AAC encoder would put the pool licence on the product and
 needs its own decision before any of that code lands.
 
+## LDAC
+
+Sony contributed its LDAC encoder (`external/libldac`, encoder only, no decoder) to AOSP under
+Apache-2.0; the files carry `Copyright (C) 2013 - 2016 Sony Corporation` and the drop's
+`LICENSE` is the Apache text. AOSP's own Bluetooth codec documentation states that the
+encoder is included, so a separate Sony licence or binary blob is not needed for it, and that
+integrating LDAC requires registering with Sony and completing the LDAC certification
+process. The `NOTICE` in the same drop repeats that certification is required to use LDAC in
+products, and Sony's programme page adds that a licence from Sony is required for an
+implementation in a sink while source implementations may install it for free.
+
+The position follows aptX: the Apache-2.0 grant covers the encoder code and the patents Sony
+necessarily infringed by contributing it, and nothing here claims LDAC certification. The
+mark and the certification belong to Sony. Three code obligations come with using this drop
+rather than a reverse-engineered encoder: the vendor and codec IDs come from the drop's AOSP
+headers, the encoder's own 96 kHz and 24-bit paths are used as offered instead of being
+re-implemented, and no LDAC decoder is shipped because the drop has none.
+
 ## What a distributor must do
 
 - Ship `LICENSE`, an Apache-2.0 notice naming AOSP and the vendored encoder files, and the
@@ -69,4 +88,6 @@ needs its own decision before any of that code lands.
   binaries are deployed, never committed.
 - Add a third-party notice entry naming vendor, version and licence before adding any other
   codec provider.
+- Ship Sony's Apache-2.0 notice with the vendored LDAC encoder, and register with Sony before
+  presenting the product as LDAC-certified.
 - Keep codec obligations here; the repository licence does not extend to them.
