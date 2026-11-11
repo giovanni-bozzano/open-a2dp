@@ -304,7 +304,7 @@ void Place(HWND control, int x, int y, int width, int height)
 const wchar_t* SectionForLabel(const std::string& label)
 {
 	if (label == "AVDTP" || label == "media" || label == "codec" || label == "media MTU" ||
-		label == "latency")
+		label == "latency" || label == "latency peak")
 	{
 		return L"Session";
 	}

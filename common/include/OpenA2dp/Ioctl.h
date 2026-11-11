@@ -244,8 +244,11 @@ struct Status {
 	uint32_t pcmBufferedMs;
 	uint32_t frameBufferedMs;
 	uint32_t pcmTrimmedBytes;
-	// Pacing lead the running stream is sent ahead of the media clock by.
+	// Pacing lead the running stream is sent ahead of the media clock by, and the worst
+	// driver-side latency (lead plus both ring fills) seen since that stream started, so a
+	// transient backlog spike is still visible after the stream trimmed back to live.
 	uint32_t pacingLeadMs;
+	uint32_t latencyPeakMs;
 	uint32_t packetsSent;
 	uint32_t framesDropped;
 	uint32_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
@@ -356,7 +359,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 256, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 260, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

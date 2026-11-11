@@ -41,6 +41,10 @@ single largest fixed part of it.
    holds ahead of live - and says so, because the sink's own buffering is not reported by any
    A2DP profile. Both the CLI status and the settings window's session panel show it, so a
    growing backlog and the effect of a shorter lead are visible before they are audible.
+   Next to it the report shows `latency peak`: the worst lead-plus-rings value sampled on the
+   audio copy tick since the stream started (`status.latencyPeakMs`, reset by the next
+   `MediaStart`). A stall that trimmed the backlog before anyone polled still leaves that
+   number behind, which is what makes a transient spike diagnosable after the fact.
 4. **The presentation position matches the ear.** The stream is sent `PacingLeadMs` ahead of
    the media clock, so `OnGetPresentationPosition` subtracts that lead (clamped at the start)
    instead of claiming audio the sink is still buffering. Without it, an app syncing video to

@@ -47,6 +47,9 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		const uint32_t preferred = ctx->Preference.prerollMs;
 		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 		ctx->PacingLeadMs = Ioctl::EffectivePrerollMs(preferred);
+		// The peak starts from the lead itself, so the report never claims less than the stream
+		// always carries, and a previous stream's worst case does not leak into this one.
+		ctx->LatencyPeakMs = static_cast<LONG>(ctx->PacingLeadMs);
 	}
 	if (codec == Avdtp::CodecType::Aac)
 	{

@@ -155,6 +155,10 @@ TEST(StatusReport_ShowsTheDriverSideLatency)
 	// sink's own buffering is not ours to report.
 	CHECK(Contains(report,
 			"latency         50 ms (driver side: lead 30 + buffered 20; the sink adds its own)"));
+	// A spike that ended before the poll is only visible through the peak.
+	status.latencyPeakMs = 180;
+	const std::string spiked = Report(false, status, StreamingPreference());
+	CHECK(Contains(spiked, "latency peak    180 ms (worst since this stream started)"));
 }
 
 TEST(StatusReport_ShowsAPinnedEndpointFormat)

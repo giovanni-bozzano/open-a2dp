@@ -492,6 +492,10 @@ struct DEVICE_CONTEXT
 	// MediaStart. The kernel pacer and the service both use it, and the presentation position
 	// subtracts it.
 	volatile ULONG PacingLeadMs;
+	// Worst driver-side latency (lead plus both ring fills) seen since this stream started,
+	// sampled on the audio copy tick. A transport or service stall shows up here even after the
+	// stream trimmed back to live.
+	volatile LONG LatencyPeakMs;
 	// Service-encoded pacing: interrupt time of the last sent frame and of the last underrun
 	// log.
 	ULONGLONG ServiceLastFrameTime;

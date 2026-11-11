@@ -188,6 +188,7 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.frameBufferedMs", status.frameBufferedMs);
 	AppendField(text, "status.pcmTrimmedBytes", status.pcmTrimmedBytes);
 	AppendField(text, "status.pacingLeadMs", status.pacingLeadMs);
+	AppendField(text, "status.latencyPeakMs", status.latencyPeakMs);
 	AppendField(text, "status.packetsSent", status.packetsSent);
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
@@ -374,6 +375,10 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendLine(text, "latency",
 			   Format("%u ms (driver side: lead %u + buffered %u; the sink adds its own)",
 					  status.pacingLeadMs + bufferedMs, status.pacingLeadMs, bufferedMs));
+	// The instantaneous value hides a spike that ended before the poll, so the worst case of
+	// this stream is reported next to it; it is reset when the next stream starts.
+	AppendLine(text, "latency peak",
+			   Format("%u ms (worst since this stream started)", status.latencyPeakMs));
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkName(text, status);

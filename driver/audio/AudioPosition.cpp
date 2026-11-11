@@ -83,6 +83,25 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 	{
 		const uint32_t limit = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, AudioPcmBacklogMs);
 		ctx->AudioTrimmedBytes += PcmBacklog::Trim(ring, limit, frameBytes);
+
+		// Peak driver-side latency for this stream. An instantaneous reading hides the spike a
+		// stall caused, so the worst the lead and both rings have been is kept until the next
+		// stream starts. Sampled here, on the copy tick, because that is when the PCM ring moves.
+		const uint32_t pcmMs = static_cast<uint32_t>(static_cast<uint64_t>(ring.ReadableBytes()) * 1000 /
+												 (static_cast<uint64_t>(ctx->PinSampleRate) * frameBytes));
+		uint32_t frameMs = 0;
+		const uint32_t bitrate = ctx->ActiveBitrate;
+		if (bitrate != 0 && ctx->FrameRingHeader != nullptr)
+		{
+			frameMs = static_cast<uint32_t>(
+				static_cast<uint64_t>(RingBufferView(ctx->FrameRingHeader, ctx->FrameRingData).ReadableBytes()) *
+				8000 / bitrate);
+		}
+		const uint32_t latency = ctx->PacingLeadMs + pcmMs + frameMs;
+		if (latency > static_cast<uint32_t>(ctx->LatencyPeakMs))
+		{
+			ctx->LatencyPeakMs = static_cast<LONG>(latency);
+		}
 	}
 
 	const ULONGLONG completed = position / ctx->AudioPacketSize;
