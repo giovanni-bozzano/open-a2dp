@@ -5,7 +5,6 @@
 
 #include <windows.h>
 
-#include <bluetoothapis.h>
 #include <cfgmgr32.h>
 #include <newdev.h>
 #include <setupapi.h>
@@ -22,8 +21,6 @@ namespace {
 // The AudioSink service UUID: the only BTHENUM node a sink's A2DP source driver can be
 // replaced on. The radio and the other profile nodes are never candidates.
 constexpr wchar_t kA2dpNodeMarker[] = L"{0000110B-";
-// The same AudioSink service as a GUID, for the Bluetooth API.
-constexpr GUID kA2dpSinkService = {0x0000110B, 0x0000, 0x1000, {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
 
 bool ContainsNoCase(const std::wstring& text, const wchar_t* needle)
 {
@@ -236,57 +233,17 @@ bool InstallDriverEntry(HDEVINFO set, SP_DEVINFO_DATA& dev, const DriverEntry& e
 	return true;
 }
 
-// Drops and re-adds the sink's A2DP service in the Bluetooth stack. The enumerator then reports
-// the node missing, which PnP handles as a surprise removal that no handle holder can veto -
-// unlike a restart, which the audio engine refuses while it holds the inbox driver's endpoint
-// (Kernel-PnP 225 from audiodg.exe). The node comes back with the driver installed on it.
-bool ReaddA2dpService(const std::string& reference, std::string& error)
-{
-	BLUETOOTH_FIND_RADIO_PARAMS radioParams = {sizeof(radioParams)};
-	HANDLE radio = nullptr;
-	const HBLUETOOTH_RADIO_FIND find = BluetoothFindFirstRadio(&radioParams, &radio);
-	if (find == nullptr)
-	{
-		error = Win32Error("BluetoothFindFirstRadio", GetLastError());
-		return false;
-	}
-	(void)BluetoothFindRadioClose(find);
-
-	BLUETOOTH_DEVICE_INFO info = {sizeof(info)};
-	info.Address.ullLong = std::stoull(reference, nullptr, 16);
-	DWORD result = BluetoothGetDeviceInfo(radio, &info);
-	if (result == ERROR_SUCCESS)
-	{
-		GUID service = kA2dpSinkService;
-		result = BluetoothSetServiceState(radio, &info, &service, BLUETOOTH_SERVICE_DISABLE);
-		if (result == ERROR_SUCCESS)
-		{
-			result = BluetoothSetServiceState(radio, &info, &service, BLUETOOTH_SERVICE_ENABLE);
-			if (result != ERROR_SUCCESS)
-			{
-				error = Win32Error("re-enabling the sink's A2DP service", result) +
-						"; reconnect the sink in Bluetooth settings";
-			}
-		}
-		else
-		{
-			error = Win32Error("BluetoothSetServiceState", result);
-		}
-	}
-	else
-	{
-		error = Win32Error("BluetoothGetDeviceInfo", result);
-	}
-	CloseHandle(radio);
-	return result == ERROR_SUCCESS;
-}
-
-// Restarts the node so the driver installed on it binds now. PnP asks every holder of the node
-// first; when one refuses, the A2DP service is re-added instead, which needs nobody's consent.
-// Only when that fails too is the holder named in `holder`, with the installed driver left on
-// the node so a later retry only has to restart it.
-bool RestartNode(const std::string& reference, HDEVINFO set, SP_DEVINFO_DATA& dev, std::string& holder,
-				 std::string& error)
+// Restarts the node so the driver installed on it binds now, which is what loads the package the
+// install put there. PnP asks every holder of the node first, and the audio engine is one of them
+// for as long as a player has the sink's endpoint open: it refuses (Kernel-PnP 225 from
+// audiodg.exe). The holder is named in `holder` and the installed driver stays on the node, so
+// the switch finishes on the next call, without a reboot.
+//
+// There is deliberately no way around that refusal. Dropping and re-adding the sink's Bluetooth
+// A2DP service does force the node out - the enumerator then reports it missing, which PnP treats
+// as a surprise removal nobody can veto - but it does so under a live audio stream and leaves the
+// sink gone from the stack, needing the pairing to be removed and redone after a reboot.
+bool RestartNode(HDEVINFO set, SP_DEVINFO_DATA& dev, std::string& holder, std::string& error)
 {
 	const std::wstring instanceId = InstanceIdOf(set, dev);
 	PNP_VETO_TYPE vetoType = PNP_VetoTypeUnknown;
@@ -295,17 +252,11 @@ bool RestartNode(const std::string& reference, HDEVINFO set, SP_DEVINFO_DATA& de
 		CM_Query_And_Remove_SubTreeW(dev.DevInst, &vetoType, vetoName, MAX_PATH, CM_REMOVE_UI_NOT_OK);
 	if (removed == CR_REMOVE_VETOED)
 	{
-		std::string readdError;
-		if (ReaddA2dpService(reference, readdError))
-		{
-			return true;
-		}
 		holder = vetoName[0] != L'\0' ? Utf8(std::wstring(vetoName)) : std::string("another program");
 		if (vetoType == PNP_VetoOutstandingOpen)
 		{
 			holder += " (has the sink's audio device open)";
 		}
-		holder += "; re-adding the Bluetooth service failed too: " + readdError;
 		return false;
 	}
 	if (removed != CR_SUCCESS)
@@ -536,7 +487,7 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::stri
 		bool ok = true;
 		if (NeedsRestart(dev))
 		{
-			ok = RestartNode(reference, set, dev, pendingHolder, error) || error.empty();
+			ok = RestartNode(set, dev, pendingHolder, error) || error.empty();
 		}
 		SetupDiDestroyDeviceInfoList(set);
 		return ok;
@@ -593,7 +544,7 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, std::stri
 		// what holds it.
 		if (switched && rebootRequired)
 		{
-			switched = RestartNode(reference, set, dev, pendingHolder, error) || error.empty();
+			switched = RestartNode(set, dev, pendingHolder, error) || error.empty();
 		}
 	}
 	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
