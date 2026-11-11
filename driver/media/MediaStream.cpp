@@ -52,6 +52,8 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		// The peak starts from the lead itself, so the report never claims less than the stream
 		// always carries, and a previous stream's worst case does not leak into this one.
 		ctx->LatencyPeakMs = static_cast<LONG>(ctx->PacingLeadMs);
+		ctx->SbcUnderrunPackets = 0;
+		ctx->SbcUnderrunLogTime = 0;
 	}
 	if (codec == Avdtp::CodecType::Aac)
 	{

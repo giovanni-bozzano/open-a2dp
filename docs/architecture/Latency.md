@@ -45,6 +45,11 @@ single largest fixed part of it.
    audio copy tick since the stream started (`status.latencyPeakMs`, reset by the next
    `MediaStart`). A stall that trimmed the backlog before anyone polled still leaves that
    number behind, which is what makes a transient spike diagnosable after the fact.
+   `status.underruns` counts the SBC packets the PCM ring could not fill - they are sent as
+   silence, so the stream keeps its place on the timeline - and the driver logs them at most
+   once a second with the silence duration. That is the number the exit gate below means:
+   without it a lead too short for a sink was audible but invisible on the codec the driver
+   uses by default.
 4. **The presentation position matches the ear.** The stream is sent `PacingLeadMs` ahead of
    the media clock, so `OnGetPresentationPosition` subtracts that lead (clamped at the start)
    instead of claiming audio the sink is still buffering. Without it, an app syncing video to

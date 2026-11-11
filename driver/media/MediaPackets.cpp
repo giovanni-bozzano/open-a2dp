@@ -68,6 +68,28 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 	return true;
 }
 
+// A frame the PCM ring cannot fill is padded with silence: the stream keeps its place on the
+// timeline, but the listener hears a gap. Count it in status.underruns and log it at most once a
+// second, so a pacing lead shorter than the sink needs is a number rather than only a sound.
+// Caller holds MediaLock.
+static void CountSbcUnderrun(DEVICE_CONTEXT* ctx, uint32_t silentFrames)
+{
+	InterlockedIncrement(&ctx->Underruns);
+	const ULONGLONG now = KeQueryInterruptTime();
+	const ULONG packets = ++ctx->SbcUnderrunPackets;
+	if (now - ctx->SbcUnderrunLogTime < UnderrunLogInterval)
+	{
+		return;
+	}
+	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
+	const ULONG silentMs =
+		rate == 0 ? 0 : static_cast<ULONG>(static_cast<uint64_t>(silentFrames) * 1000 / rate);
+	OA2DP_WARN(ctx, "Media", "SBC underrun, %u ms of silence in this packet, %u since the last report",
+		silentMs, packets);
+	ctx->SbcUnderrunPackets = 0;
+	ctx->SbcUnderrunLogTime = now;
+}
+
 // Builds one RTP + SBC media packet into MediaBuffer. Caller holds MediaLock.
 ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 {
@@ -90,15 +112,24 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	ctx->MediaBuffer[offset++] = SbcFixed::MediaPayloadHeader(frameCount);
 
 	const uint32_t spf = p.SamplesPerFrame();
+	uint32_t silentFrames = 0;
 	for (size_t i = 0; i < frameCount; ++i)
 	{
-		(void)AudioReadPcm(ctx, ctx->PcmBuffer, spf);
+		const ULONG read = AudioReadPcm(ctx, ctx->PcmBuffer, spf);
+		if (read < spf)
+		{
+			silentFrames += spf - read;
+		}
 		const size_t written = ctx->Encoder.Encode(ctx->PcmBuffer, ctx->MediaBuffer + offset, sizeof(ctx->MediaBuffer) - offset);
 		if (written == 0)
 		{
 			return 0;
 		}
 		offset += written;
+	}
+	if (silentFrames != 0)
+	{
+		CountSbcUnderrun(ctx, silentFrames);
 	}
 
 	samples = static_cast<uint32_t>(frameCount * spf);

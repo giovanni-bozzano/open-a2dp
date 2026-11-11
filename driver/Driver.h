@@ -503,6 +503,10 @@ struct DEVICE_CONTEXT
 	// log.
 	ULONGLONG ServiceLastFrameTime;
 	ULONGLONG ServiceLastUnderrunLog;
+	// SBC packets the PCM ring could not fill since the last underrun log, and that log's
+	// interrupt time. Taken under MediaLock with the rest of the pacer state.
+	ULONG SbcUnderrunPackets;
+	ULONGLONG SbcUnderrunLogTime;
 	UCHAR FrameRecord[OpenA2dp::Ioctl::kMaxFrameRecordBytes];
 
 	WDFREQUEST ReadRequest;
