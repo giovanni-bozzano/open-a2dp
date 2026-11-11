@@ -36,4 +36,5 @@ Read `.agents/skills/<name>/SKILL.md` when needed:
 - `build-and-test`: MSBuild and CodecTests after code changes; docs-only changes need link/diff checks, not a driver build.
 - `windbg-deadlock-check`: diagnose hangs.
 - `log-audit`: inspect driver warnings/errors.
+- `deploy`: deploy, restore and prepare a test session.
 - `hardware-test`: run a scripted procedure from `tests/HardwareTests/`.
