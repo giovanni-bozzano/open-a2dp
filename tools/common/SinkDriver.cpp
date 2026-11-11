@@ -116,17 +116,24 @@ std::wstring FullInfPath(const std::wstring& inf)
 
 struct DriverEntry
 {
+	// SetupAPI owns the block this points into, so the driver list has to stay alive until the
+	// entry has been installed.
+	SP_DRVINFO_DATA_W info;
 	std::wstring infPath;
+	// The hardware id this entry matched. One INF describes several devices, so this is what
+	// tells the model for this node's service from the rest of the package.
+	std::wstring hardwareId;
 	bool ours = false;
 };
 
 // The driver packages this node could bind, and which of them is this project's: the INF's
 // manufacturer is the one identifier a package carries that does not depend on its oemNN name.
-void CollectDriverEntries(HDEVINFO set, SP_DEVINFO_DATA& dev, std::vector<DriverEntry>& entries)
+// The caller destroys the driver list, because SetupAPI owns the entries' blocks.
+bool CollectDriverEntries(HDEVINFO set, SP_DEVINFO_DATA& dev, std::vector<DriverEntry>& entries)
 {
 	if (!SetupDiBuildDriverInfoList(set, &dev, SPDIT_COMPATDRIVER))
 	{
-		return;
+		return false;
 	}
 	for (DWORD index = 0;; ++index)
 	{
@@ -141,16 +148,30 @@ void CollectDriverEntries(HDEVINFO set, SP_DEVINFO_DATA& dev, std::vector<Driver
 		auto* detail = reinterpret_cast<SP_DRVINFO_DETAIL_DATA_W*>(buffer.data());
 		detail->cbSize = sizeof(*detail);
 		DWORD required = 0;
-		(void)SetupDiGetDriverInfoDetailW(set, &dev, &driver, detail, static_cast<DWORD>(buffer.size()),
-										&required);
-		if (detail->InfFileName[0] == L'\0')
+		if (!SetupDiGetDriverInfoDetailW(set, &dev, &driver, detail, static_cast<DWORD>(buffer.size()),
+										 &required) ||
+			detail->InfFileName[0] == L'\0')
 		{
 			continue;
 		}
-		entries.push_back({FullInfPath(detail->InfFileName),
-						   ContainsNoCase(driver.MfgName, L"OpenA2dp")});
+		DriverEntry entry = {};
+		entry.info = driver;
+		entry.infPath = FullInfPath(detail->InfFileName);
+		entry.hardwareId = detail->HardwareID;
+		entry.ours = ContainsNoCase(driver.MfgName, L"OpenA2dp");
+		entries.push_back(entry);
 	}
-	SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
+	return true;
+}
+
+// True for the A2DP source service itself as a driver entry's matching id: the UUID and nothing
+// after its closing brace. The same node also offers `..._GENERIC`, which is what the Bluetooth
+// enumerator's own package matches for every profile, and `..._LOCALMFG&nnnn`, which says what
+// the sink is rather than which package drives it. Both carry an A2DP driver's name next to the
+// real one in a node's compatible list, so only this form identifies the inbox A2DP source.
+bool IsA2dpServiceId(const std::wstring& id)
+{
+	return !id.empty() && id.back() == L'}' && ContainsNoCase(id, kA2dpNodeMarker);
 }
 
 // Opens the A2DP node for a sink. `error` is set only when the enumeration itself fails.
@@ -183,6 +204,31 @@ bool FindNode(const std::string& reference, HDEVINFO& set, SP_DEVINFO_DATA& dev,
 	error = "no A2DP source node carries " + FormatAddress(reference) +
 			". Pair and connect the sink, then try again.";
 	return false;
+}
+
+// Installs one of the node's compatible packages on that node and no other one.
+//
+// UpdateDriverForPlugAndPlayDevices cannot do this job. Both packages match the same generic A2DP
+// hardware id, so by hardware id it would install on every sink, and with INSTALLFLAG_FORCE it
+// installs the INF's first model even when none of that INF's models matches the device - for the
+// inbox INF that is a different Bluetooth profile driver, which leaves the node without an A2DP
+// driver instead of putting BthA2dp on it. DiInstallDevice installs the entry SetupAPI found
+// compatible with this node and restarts that node.
+bool InstallDriverEntry(HDEVINFO set, SP_DEVINFO_DATA& dev, const DriverEntry& entry,
+						bool& rebootRequired, std::string& error)
+{
+	SP_DRVINFO_DATA_W info = entry.info;
+	BOOL reboot = FALSE;
+	if (!DiInstallDevice(nullptr, set, &dev, &info, DIIDFLAG_NOFINISHINSTALLUI, &reboot))
+	{
+		const DWORD code = GetLastError();
+		error = code == ERROR_ACCESS_DENIED
+				? "switching a sink's driver needs an elevated prompt"
+				: Win32Error("DiInstallDevice", code);
+		return false;
+	}
+	rebootRequired = reboot != FALSE;
+	return true;
 }
 
 } // namespace
@@ -265,20 +311,27 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	}
 
 	std::vector<DriverEntry> entries;
-	CollectDriverEntries(set, dev, entries);
+	(void)CollectDriverEntries(set, dev, entries);
+	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
 	const std::wstring instanceId = InstanceIdOf(set, dev);
 	const std::wstring service = StringProperty(set, dev, SPDRP_SERVICE);
 	SetupDiDestroyDeviceInfoList(set);
 
 	state.instanceId = Utf8(instanceId);
 	state.current = DriverOfService(service);
+	// Only the entry matched by the service id is the A2DP source driver. A package the node
+	// also lists through `..._GENERIC` is the enumerator's catch-all, and installing it is not a
+	// move to the Windows driver, so it is not offered as one.
 	for (const DriverEntry& entry : entries)
 	{
-		if (entry.ours && state.openA2dpInf.empty())
+		if (entry.ours)
 		{
-			state.openA2dpInf = Utf8(entry.infPath);
+			if (state.openA2dpInf.empty())
+			{
+				state.openA2dpInf = Utf8(entry.infPath);
+			}
 		}
-		else if (!entry.ours && state.windowsInf.empty())
+		else if (IsA2dpServiceId(entry.hardwareId) && state.windowsInf.empty())
 		{
 			state.windowsInf = Utf8(entry.infPath);
 		}
@@ -366,37 +419,50 @@ bool SwitchSinkDriver(const std::string& reference, SinkDriver target, bool& reb
 	{
 		error = state.problem.empty() ? "the driver package for that choice is not available" : state.problem;
 		return false;
-	}
-
-	HDEVINFO set = INVALID_HANDLE_VALUE;
+	}	HDEVINFO set = INVALID_HANDLE_VALUE;
 	SP_DEVINFO_DATA dev = {};
 	if (!FindNode(reference, set, dev, error))
 	{
 		return false;
 	}
-	// The instance's own hardware id carries the sink address, so the install reaches this node
-	// and no other one; a generic id would move every sink.
-	const std::wstring hardwareId = StringProperty(set, dev, SPDRP_HARDWAREID);
-	SetupDiDestroyDeviceInfoList(set);
-	if (hardwareId.empty())
+	std::vector<DriverEntry> entries;
+	if (!CollectDriverEntries(set, dev, entries))
 	{
-		error = "the A2DP node reported no hardware id";
+		error = Win32Error("SetupDiBuildDriverInfoList", GetLastError());
+		SetupDiDestroyDeviceInfoList(set);
 		return false;
+	}
+	// The package the store offered for this choice, and within it the model that matched the
+	// service id: the same node also lists the enumerator's `_GENERIC` catch-all, and installing
+	// that is what left the node without an A2DP driver.
+	const std::wstring targetInf = Widen(inf);
+	const DriverEntry* chosen = nullptr;
+	for (const DriverEntry& entry : entries)
+	{
+		if (_wcsicmp(entry.infPath.c_str(), targetInf.c_str()) != 0)
+		{
+			continue;
+		}
+		if (IsA2dpServiceId(entry.hardwareId))
+		{
+			chosen = &entry;
+			break;
+		}
 	}
 
-	BOOL reboot = FALSE;
-	const std::wstring path = Widen(inf);
-	if (!UpdateDriverForPlugAndPlayDevicesW(nullptr, hardwareId.c_str(), path.c_str(),
-											INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE, &reboot))
+	bool switched = false;
+	if (chosen == nullptr)
 	{
-		const DWORD code = GetLastError();
-		error = code == ERROR_ACCESS_DENIED
-					? "switching a sink's driver needs an elevated prompt"
-					: Win32Error("UpdateDriverForPlugAndPlayDevices", code);
-		return false;
+		error = "the package in the driver store has no A2DP source driver for this node; "
+				"deploy the driver, then reconnect the sink and try again";
 	}
-	rebootRequired = reboot != FALSE;
-	return true;
+	else
+	{
+		switched = InstallDriverEntry(set, dev, *chosen, rebootRequired, error);
+	}
+	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
+	SetupDiDestroyDeviceInfoList(set);
+	return switched;
 }
 
 } // namespace OpenA2dp::Tools
