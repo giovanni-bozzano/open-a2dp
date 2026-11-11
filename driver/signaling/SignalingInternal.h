@@ -33,6 +33,10 @@ constexpr LONG kEndpointStartAttempts = 3;
 EVT_WDF_WORKITEM OnSignalingWorkItem;
 EVT_WDF_TIMER OnResponseTimeout;
 EVT_WDF_TIMER OnProviderLossTimeout;
+EVT_WDF_TIMER OnPauseGraceTimeout;
+// How long a paused endpoint keeps its stream before it is suspended. A pause shorter than this
+// (a skip, a seek, a notification sound ending) resumes at once instead of paying for START.
+constexpr ULONG PauseGraceMs = 3000;
 EVT_WDF_REQUEST_COMPLETION_ROUTINE OnReadComplete;
 
 const char* DiscoveryFailureName(Avdtp::DiscoveryFailure reason);

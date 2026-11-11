@@ -85,6 +85,9 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 	// A fallback armed for this link must not fire into a teardown that already stopped media.
 	WdfTimerStop(ctx->ProviderLossTimer, TRUE);
 	InterlockedExchange(&ctx->ProviderLossCheck, 0);
+	// Nor may the pause grace suspend a stream this teardown already ended.
+	WdfTimerStop(ctx->PauseGraceTimer, TRUE);
+	InterlockedExchange(&ctx->PauseGrace, 0);
 	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
 	{
 		WdfWorkItemFlush(ctx->SignalingWorkItem);

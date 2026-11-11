@@ -568,10 +568,15 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 {
 	const Avdtp::SessionState state = ctx->Session.State();
 	const bool playing = AudioStreamPlaying(ctx);
-	if (state == Avdtp::SessionState::Streaming && !playing)
+	// A running stream keeps streaming even before its first audio: that is a resume, and
+	// suspending it would only make the audio that follows pay for START. A paused one keeps
+	// it for the grace too, so a short pause costs nothing either.
+	const bool keepStreaming =
+		AudioStreamRunning(ctx) || InterlockedCompareExchange(&ctx->PauseGrace, 0, 0) != 0;
+	if (state == Avdtp::SessionState::Streaming && !keepStreaming)
 	{
 		InterlockedExchange(&ctx->EndpointStreamPending, 0);
-		OA2DP_INFO(ctx, "AVDTP", "suspending stream, the endpoint has nothing to play");
+		OA2DP_INFO(ctx, "AVDTP", "suspending stream, the endpoint stayed paused");
 		Transmit(ctx, ctx->Session.Suspend(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		if (ctx->Session.State() != Avdtp::SessionState::Suspending)
 		{
@@ -643,7 +648,7 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 	}
 	// Settled and already matching, or no session to move: the request is spent. Every other
 	// state is a handshake in flight, which keeps it so the response decides.
-	const bool settled = (state == Avdtp::SessionState::Streaming && playing) ||
+	const bool settled = (state == Avdtp::SessionState::Streaming && keepStreaming) ||
 		(state == Avdtp::SessionState::Open && !playing);
 	const bool unusable = state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed ||
 		state == Avdtp::SessionState::Closing || state == Avdtp::SessionState::Aborting;

@@ -45,6 +45,14 @@ NTSTATUS SignalingInitialize(_In_ DEVICE_CONTEXT* ctx)
 		return status;
 	}
 
+	WDF_TIMER_CONFIG graceConfig;
+	WDF_TIMER_CONFIG_INIT(&graceConfig, OnPauseGraceTimeout);
+	status = WdfTimerCreate(&graceConfig, &attrs, &ctx->PauseGraceTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
 	status = WdfRequestCreate(&attrs, ctx->IoTarget, &ctx->ReadRequest);
 	if (!NT_SUCCESS(status))
 	{
@@ -99,6 +107,15 @@ void OnProviderLossTimeout(_In_ WDFTIMER timer)
 	// switch that follows reports what it negotiated.
 	InterlockedExchange(&ctx->ProviderFallback, 1);
 	InterlockedExchange(&ctx->CodecSwitchPending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void OnPauseGraceTimeout(_In_ WDFTIMER timer)
+{
+	// The endpoint stayed paused for the whole grace: now the stream is suspended.
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
+	InterlockedExchange(&ctx->PauseGrace, 0);
+	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 } // namespace OpenA2dpDriver::Signaling
@@ -157,6 +174,9 @@ void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx)
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->AudioRunPending, 1);
+	// A resume inside the pause grace finds the stream still running; nothing has to start.
+	InterlockedExchange(&ctx->PauseGrace, 0);
+	WdfTimerStop(ctx->PauseGraceTimer, FALSE);
 	// A new run earns the stream a fresh set of START attempts. The START itself waits for the
 	// first audio (SignalingOnAudioHeard); the edge still settles a session out of step with it.
 	InterlockedExchange(&ctx->EndpointStartAttempts, 0);
@@ -172,8 +192,11 @@ void SignalingOnAudioHeard(_In_ DEVICE_CONTEXT* ctx)
 
 void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx)
 {
-	// The endpoint is the reason the stream exists, so a paused one suspends it. The edge is
-	// only recorded here: the work item sends SUSPEND, which is legal from Streaming alone.
+	// The endpoint is the reason the stream exists, so a pause suspends it - after a grace, so a
+	// short pause resumes without a START round trip. The work item sends SUSPEND when the timer
+	// fires, which is legal from Streaming alone.
+	InterlockedExchange(&ctx->PauseGrace, 1);
+	WdfTimerStart(ctx->PauseGraceTimer, WDF_REL_TIMEOUT_IN_MS(PauseGraceMs));
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }

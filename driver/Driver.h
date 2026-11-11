@@ -274,6 +274,10 @@ struct DEVICE_CONTEXT
 	// registration or a new preference, which switch back to it.
 	volatile LONG ProviderFallback;
 	WDFTIMER ProviderLossTimer;
+	// One shot, armed by an endpoint pause. Until it fires the stream keeps Streaming (the pacer
+	// sends silence), so playback that resumes within the grace needs no START round trip.
+	WDFTIMER PauseGraceTimer;
+	volatile LONG PauseGrace;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;
