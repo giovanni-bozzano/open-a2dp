@@ -356,7 +356,10 @@ function Run([string]$Exe, [string]$ArgLine, [int]$TimeoutSec = 60) {
 }
 
 function Get-Devices {
-    return @(Get-CimInstance Win32_PnPEntity -Filter "Service='OpenA2dp'" -ErrorAction SilentlyContinue)
+    # The leading comma keeps this an array: a function that returns one object hands the caller
+    # the object itself, and a single CimInstance has no .Count, so "$d.Count -gt 0" read as
+    # $null and every readiness check failed while the one sink was present and healthy.
+    return ,@(Get-CimInstance Win32_PnPEntity -Filter "Service='OpenA2dp'" -ErrorAction SilentlyContinue)
 }
 
 # STOPPED, RUNNING, ... or NOT_INSTALLED.
@@ -701,10 +704,10 @@ try {
             $d = Get-Devices
             ($d.Count -gt 0) -and (@($d | Where-Object { $_.ConfigManagerErrorCode -ne 0 }).Count -eq 0)
         }
-        # A running Bluetooth sink takes a moment to come back, and the driver refuses to start
-        # while the enumerator cannot hand it the device info, so a node can report a problem code
-        # for a while and still end up fine (seen locally: code 0 ten seconds after a 60 s wait
-        # gave up). Wait longer, and nudge a node that is still failing once before calling it.
+        # A fast return is the normal case. The progress line and the longer budget are for a sink
+        # that has to come back: the driver refuses to start until the enumerator can hand it the
+        # device info, so a node can report a problem code for a while and still end up fine. A
+        # node still failing after that gets one restart before the deploy is called failed.
         $ok = Wait-Reported $ready 120 'the sink to come back'
         if (-not $ok) {
             $failing = @(Get-Devices | Where-Object { $_.ConfigManagerErrorCode -ne 0 })
