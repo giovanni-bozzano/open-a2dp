@@ -183,6 +183,19 @@ TEST(StatusReport_ShowsWhatTheLatencyCost)
 	CHECK(Contains(clean, "trimmed         0 B of PCM and 0 records of old audio dropped"));
 }
 
+TEST(StatusReport_CallsAPausedStreamSuspended)
+{
+	// A configured stream Windows paused is suspended, not idle: the media line says which, and
+	// the codec stays visible, because pressing play resumes this stream rather than building a
+	// new one.
+	Ioctl::Status status = StreamingStatus();
+	status.avdtpState = static_cast<uint32_t>(Avdtp::SessionState::Open);
+	status.mediaState = Ioctl::MediaState::Suspended;
+	const std::string report = Report(false, status, StreamingPreference());
+	CHECK(Contains(report, "media           Suspended"));
+	CHECK(Contains(report, "codec           AAC, 48000 Hz, 2 ch, 256000 bps"));
+}
+
 TEST(StatusReport_ShowsAPinnedEndpointFormat)
 {
 	// The one format the endpoint offers is the answer to "what will the shared-mode stream

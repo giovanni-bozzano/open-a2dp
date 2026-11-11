@@ -14,7 +14,7 @@
 ## ACX audio
 - Render circuit `Speaker0`: PCM stereo at 44.1 or 48 kHz, 16-bit and 24-in-32 while [aptX HD lists it](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd), whichever format the ACX stream opened with.
 - Accept one or two RT packets; page-round and zero buffers. Report the pacing lead as the presentation delay with no FIFO in front of the ring, so the audio engine adds no latency of its own and the sink's own buffering is all that is left outside the report.
-- The ACX stream's run state drives the AVDTP stream: a run starts it, and a pause or an unpaused release suspends it, so nothing plays into a paused endpoint and its silence is never counted as an underrun. Both edges are requests (`EndpointStreamPending`), because SUSPEND only exists from Streaming and START only from Open, so an edge that lands mid-handshake is applied when the response settles the session.
+- The ACX stream's run state drives the AVDTP stream: a run starts it, and a pause or an unpaused release suspends it, so nothing plays into a paused endpoint and its silence is never counted as an underrun. Both edges are requests (`EndpointStreamPending`), because SUSPEND only exists from Streaming and START only from Open, so an edge that lands mid-handshake is applied when the response settles the session. While it is suspended `status` calls the media `Suspended` rather than `Idle`, because the configured stream is what a resume restarts.
 - Windows software volume/mute remains active; ACX/AVRCP absolute-volume integration is deferred.
 
 ## Driver binding

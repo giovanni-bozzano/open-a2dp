@@ -235,7 +235,13 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		}
 		else if (!ctx->MediaActive)
 		{
-			out->mediaState = Ioctl::MediaState::Idle;
+			// A configured stream that is not sending exists when Windows has the endpoint paused:
+			// the work item suspends the stream and the next run starts it again. Anything else
+			// without media is idle, and the difference is what tells a reader whether play will
+			// resume this stream or configure a new one.
+			const bool configured = out->avdtpState == static_cast<uint32_t>(Avdtp::SessionState::Open);
+			const bool suspended = configured && !AudioStreamRunning(ctx);
+			out->mediaState = suspended ? Ioctl::MediaState::Suspended : Ioctl::MediaState::Idle;
 		}
 		else if (mode == MediaModeService && ctx->PacketsSent == 0)
 		{
