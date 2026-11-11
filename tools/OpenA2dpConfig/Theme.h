@@ -15,7 +15,8 @@ struct Colors
 	COLORREF text;
 	COLORREF muted;        // a disabled label
 	COLORREF border;       // the frame of a group, drawn by the window
-	COLORREF section;      // a section header strip in the session panel
+	COLORREF section;      // a pressed owner-drawn button's face
+	COLORREF sectionHeader; // the category strip above a group of rows in the session panel
 	COLORREF alternateRow; // every second row of the session panel
 	COLORREF good;
 	COLORREF warning;

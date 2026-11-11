@@ -46,7 +46,7 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 	RECT strip = {0, y, width, y + state.rowHeight};
 	if (row.section)
 	{
-		SetDCBrushColor(dc, ThemeColors().section);
+		SetDCBrushColor(dc, ThemeColors().sectionHeader);
 		FillRect(dc, &strip, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 		SelectObject(dc, state.bold);
 	}
