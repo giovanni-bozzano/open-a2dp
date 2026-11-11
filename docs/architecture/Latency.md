@@ -87,7 +87,8 @@ single largest fixed part of it.
 Every software lever in this document is now in place; what is left needs a sink and ears.
 
 1. **The sink's own buffering is invisible.** No A2DP profile reports it; measuring the
-   audible delay needs a hardware loopback (a click track against the sink's output).
+   audible delay needs a hardware loopback (a click track against the sink's output), and T30
+   is the procedure that derives it from the measured delay minus the driver-side figure.
 2. **The trim policy is tested, its effect is not.** The limits and their arithmetic are
    covered in user mode (`LatencyBudget_*`, `FrameRecord_Trim*`, `PcmBacklog_*`); whether the
    sink hears one gap rather than a dropout after a stall needs hardware.
@@ -98,7 +99,9 @@ Every software lever in this document is now in place; what is left needs a sink
    hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
    Windows' latency figure is a lower bound rather than the audible total.
 
-Exit gates, each read from a report line rather than an internal field:
+Exit gates, each read from a report line rather than an internal field. The procedure that
+takes them is [T29-T33](../HARDWARE-TESTS.md#latency), which also measures the audible delay
+against the source - the one number no report line can supply.
 
 - `latency`'s buffered term (`pcmBufferedMs + frameBufferedMs`) stays under 100 ms in steady
   state at the default 60 ms lead. A longer lead makes the rings legitimately hold more, so the
@@ -107,6 +110,6 @@ Exit gates, each read from a report line rather than an internal field:
   comes back down to the lead plus a packet: the stream recovered to live audio instead of
   playing late.
 - `underruns` stays 0 at 44.1 and 48 kHz stereo with the default lead, and rises as the lead is
-  shortened past what the sink needs - that curve is the per-sink measurement.
+  shortened past what the sink needs - that curve is the per-sink measurement T31 records.
 - A/V offset within ±20 ms, measured on hardware with a loopback. No report line carries it:
   it compares the sink's output with the source, so it belongs to the test, not the driver.

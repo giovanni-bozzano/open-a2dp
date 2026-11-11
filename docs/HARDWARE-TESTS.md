@@ -87,8 +87,10 @@ the sink has not reconnected yet, the script says so - reconnect it and rerun.
 
 ## 2. Tools used in the steps
 - `OpenA2dpCtl status|list|codec <auto|sbc|aac|aptx|aptxhd> [--bitpool n] [--bitrate bps]
-  [--blocks n] [--subbands n] [--allocation loudness|snr]` (elevated). `status` shows
-  AVDTP state, media state, codec, encoder registration and counters.
+  [--blocks n] [--subbands n] [--allocation loudness|snr] [--preroll ms] [--frames n]`
+  (elevated). `status` shows AVDTP state, media state, codec, encoder registration and
+  counters; the latency lines are `latency`, `latency peak`, `pacing lead`, `buffered`,
+  `underruns` and `trimmed` (see [Latency](architecture/Latency.md)).
 - `OpenA2dpConfig` (elevated): the settings window over the same IOCTLs. It lists the
   sinks, refreshes the status every second and stores the codec preference.
 - Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
@@ -406,6 +408,81 @@ classic aptX but not aptX HD.
    switches back. Expect a brief silence at each change, not a reconnect.
 4. `OpenA2dpCtl codec aptx` on a sink that does not advertise it: refused, stored
    preference unchanged.
+
+### Latency
+
+What the sink's own buffer costs is not reported by any A2DP profile, so latency is measured
+at the ear, not read from `status`. Each of these records commit, sink, codec, rate and lead;
+`latency` is the driver-side total (lead plus both ring fills) and the difference between the
+measured delay and that number is the sink's buffering.
+
+**T29 Driver-side latency report (S/A)**
+1. `OpenA2dpCtl codec sbc --preroll 60`, connect, play a real stream. In a second window run
+   `OpenA2dpCtl status --watch`.
+2. Expect `latency <60+N> ms (driver side: lead 60 + buffered N; the sink adds its own)` with
+   N under 30 ms after 10 s, `pacing lead 60 ms ahead of the media clock`, `latency peak`
+   above the lead by no more than one packet (SBC 20 ms, AAC 23 ms, aptX HD 10 ms) and flat,
+   and `underruns 0 packets short of PCM` with `trimmed 0 B of PCM and 0 records`.
+3. Apply `--preroll 200` and play again: the lead term reads 200 and the total moves by
+   140 ms. The first `pacing lead` line after the stream starts confirms it took the setting.
+4. Apply `--preroll 20`: the total drops by 180 ms. This lead is under one packet plus margin,
+   so `underruns` may climb; record the number, T31 is what calibrates it.
+5. Repeat with `--preroll 60` on AAC and aptX (service running): same lines, same shape.
+
+**T30 Audible latency measured against the source (S/A)** — the measurement that closes the
+model, and the only one that sees the sink's buffer.
+Setup: a two-channel recorder; channel 1 is a microphone at the sink's speaker, channel 2 is
+an electrical loopback of the PC's line output playing the same file. One clock for both
+channels is what makes the difference readable, and the wiring offset is calibrated once with
+a direct cable and subtracted.
+1. Play a 30 s file of one impulse per second through the endpoint under test (shared mode,
+   the format from `status`), and record 40 s.
+2. Measure the offset between channel onsets over ~20 impulses (median, not a single click),
+   subtract the wiring offset: that is the mouth-to-ear delay.
+3. Expect measured ≥ the driver-side `latency`, and measured − driver-side (the sink's own
+   buffering) stable within ±20 ms across 3 runs. Record it for this sink and rate.
+4. Apply `--preroll 120` and repeat: the measured delay rises by 60 ± 10 ms, which is the
+   proof the knob reaches the ear, while the sink term stays the same.
+5. Repeat at 48 kHz. The driver-side figure scales with the format; the sink term should not.
+
+**T31 Lowest safe lead for this sink (S/A)**
+1. Start at `--preroll 200`, play 2 minutes, then step down through 120, 100, 80, 60, 40, 30,
+   20, playing 2 minutes at each and restarting the stream after each change.
+2. Expect `underruns` and `trimmed` to stay at 0 down to some lead, then climb; the driver log
+   shows `SBC underrun, <n> ms of silence ...` (kernel codec) or `<codec> underrun (<n> ms
+   without a frame)` (service codecs) from that point on.
+3. Record the lowest lead with no growth over 2 minutes, listen for 30 s to confirm it is
+   clean, and store that as the sink's `Pacing lead`. That value is what a low-latency
+   profile for this sink model ships.
+4. With SBC also run the sweep at `--frames 4`: fewer frames per packet means more packets per
+   second, so the safe lead can rise; record both numbers.
+
+**T32 Stall recovery and the trims (S/A)**
+Anything that stops the driver sending for a moment exercises the trim policy: a link that
+hiccups, or a service that restarts.
+1. S (SBC, kernel path): play for 30 s, then attenuate the link for about half a second (sink
+   at the edge of range, or shielded by hand).
+2. Expect `trimmed` to grow once (PCM bytes) and then stop, `latency peak` to spike and settle
+   back to the lead plus a packet, and within ~2 s `buffered` under 30 ms with the sink back on
+   live audio: the T30 click track shows one gap, not a permanent offset.
+3. A (AAC or aptX): play for 30 s, `sc stop OpenA2dpSvc`, wait about a second, `sc start`.
+4. Expect `<codec> underrun (<n> ms without a frame)` while the service is away and the PCM
+   backlog trimmed once; playback returns to live after it re-registers. A stop that lasts past
+   the 2 s provider-loss grace falls back to SBC by design - that is its own test, so keep this
+   stop short.
+5. A deterministic sub-500 ms transport stall cannot be induced without a test hook: record
+   what the link tolerated rather than claiming a specific duration. Expected WARNs for this
+   test only: the underrun lines, `dropped <n> ms of buffered <codec> to stay live`, and the
+   provider-loss lines the steps produce.
+
+**T33 Short-packet profile (S)**
+1. `OpenA2dpCtl codec sbc --frames 4`, play 5 minutes at 44.1 and 48 kHz.
+2. Expect `underruns 0` and `trimmed 0`, and the T30 measurement lower than the 7-frame
+   default by about 9 ms (20.3 ms per packet against 11.6 ms) within ±10 ms.
+3. `--frames 8`: identical to the default at these formats, because the MTU still decides.
+4. `--frames 1`: record the result. A packet of 2.9 ms needs roughly 344 packets a second
+   through a single outstanding send, so most links starve and `underruns` climbs; that is the
+   documented trade-off of the setting, not a failure of this test.
 
 ### Soak
 
