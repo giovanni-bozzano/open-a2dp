@@ -86,11 +86,20 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 	// Wake the service on every clock tick: it is the media clock for these codecs.
 	ServiceTick(ctx);
 
+	if (!AudioStreamRunning(ctx))
+	{
+		// A paused endpoint has nothing to encode, so the frames the service did not produce are
+		// a pause and not a gap; moving the reference keeps the idle span from counting against
+		// the first frame after Windows resumes either.
+		ctx->ServiceLastFrameTime = now;
+		return;
+	}
 	const ULONGLONG idle = now - ctx->ServiceLastFrameTime;
 	if (idle >= UnderrunTimeout && now - ctx->ServiceLastUnderrunLog >= UnderrunLogInterval)
 	{
 		ctx->ServiceLastUnderrunLog = now;
-		InterlockedIncrement(&ctx->Underruns);		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)", CodecValueName(ctx->ActiveCodec),
+		InterlockedIncrement(&ctx->Underruns);
+		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)", CodecValueName(ctx->ActiveCodec),
 			idle / 10000ull);
 	}
 }

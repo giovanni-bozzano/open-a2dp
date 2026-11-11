@@ -675,6 +675,11 @@ bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate,
 _IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames);
 
+// True while Windows is running the render stream. It is the media clock: while it is paused
+// nothing is due, so the silence a stream sends then is a pause and not a gap.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx);
+
 // media/
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS MediaInitialize(_In_ DEVICE_CONTEXT* ctx);

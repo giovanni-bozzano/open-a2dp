@@ -68,9 +68,10 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 	return true;
 }
 
-// A frame the PCM ring cannot fill is padded with silence: the stream keeps its place on the
-// timeline, but the listener hears a gap. Count it in status.underruns and log it at most once a
-// second, so a pacing lead shorter than the sink needs is a number rather than only a sound.
+// A frame a running stream's PCM ring cannot fill is padded with silence: the stream keeps its
+// place on the timeline, but the listener hears a gap. Count it in status.underruns and log it at
+// most once a second, so a pacing lead shorter than the sink needs is a number rather than only a
+// sound.
 // Caller holds MediaLock.
 static void CountSbcUnderrun(DEVICE_CONTEXT* ctx, uint32_t silentSamples)
 {
@@ -132,8 +133,13 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 	}
 	// Only silence inside the pacing window is a gap the listener hears; LatencyBudget decides
 	// what counts, because a packet's tail lies past the clock and is meant to be buffered.
-	const uint32_t missing =
-		LatencyBudget::UnderrunSamples(silentSamples, dueSamples, ctx->MediaCaughtUp != FALSE);
+	// A paused endpoint asks for nothing at all: the pacer still pads these packets so the
+	// stream keeps its place, but Windows rendering nothing is a pause, not a starved ring.
+	uint32_t missing = 0;
+	if (AudioStreamRunning(ctx))
+	{
+		missing = LatencyBudget::UnderrunSamples(silentSamples, dueSamples, ctx->MediaCaughtUp != FALSE);
+	}
 	if (missing != 0)
 	{
 		CountSbcUnderrun(ctx, missing);

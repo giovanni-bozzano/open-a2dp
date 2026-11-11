@@ -137,3 +137,14 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 	return STATUS_SUCCESS;
 }
 } // namespace OpenA2dpDriver::Audio
+
+// Declared in Driver.h beside AudioReadPcm, because the media clock it describes is read from
+// the other side of the subsystem (media).
+bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const bool running = ctx->AudioRunning != FALSE;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return running;
+}

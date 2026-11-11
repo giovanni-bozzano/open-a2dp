@@ -289,7 +289,7 @@ stereo, then enters the same service path with `ActiveCodec = kCodecAptxHd` or
 |---|---|
 | No service registered at negotiation | Refuse AAC/aptX/aptX HD selection; retain SBC fallback |
 | Service closes the handle while streaming | Stop media, request SUSPEND, close the stream |
-| No frame for 200 ms while streaming | Count `underruns`, log once per second; no state change (encoder loss is the file-cleanup event) |
+| No frame for 200 ms while the endpoint runs | Count `underruns`, log once per second; no state change (encoder loss is the file-cleanup event). A paused endpoint produces no frames by design and counts nothing |
 | Oversize record | Skip and count `framesDropped`; suspend after 100 consecutive |
 | Corrupt record header (bad magic/size) | Stop media and request SUSPEND immediately; count an error |
 | Media send failure | Reported by the send completion: stop media, request SUSPEND |

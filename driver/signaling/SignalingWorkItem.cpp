@@ -85,16 +85,6 @@ static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
 	}
 }
 
-// True while Windows is running the render stream.
-static bool AudioRunActive(DEVICE_CONTEXT* ctx)
-{
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	const bool running = ctx->AudioRunning != FALSE;
-	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	return running;
-}
-
 // The codec the current preference selects, or false when it cannot be honoured
 // (for example AAC forced while no encoder service is registered). RemoteOffers is
 // the previous discovery's view; after a reconnect the new discovery decides.
@@ -578,7 +568,7 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				// channel with "no resources". Listen first; the library accepts the
 				// sink's configuration, and we discover only when Windows plays
 				// audio while the session is still Idle (here or SignalingOnAudioRun).
-				if (AudioRunActive(ctx))
+				if (AudioStreamRunning(ctx))
 				{
 					OA2DP_INFO(ctx, "Signaling", "sink-initiated with audio running; starting discovery");
 					Transmit(ctx, ctx->Session.Connect(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
