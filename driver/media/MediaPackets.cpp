@@ -130,10 +130,12 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 	uint32_t silentSamples = 0;
 	for (size_t i = 0; i < frameCount; ++i)
 	{
+		// AudioReadPcm returns frames, which is the same unit as SamplesPerFrame: both count one
+		// sample per channel. The shortfall is already samples, so it is added as read.
 		const ULONG read = AudioReadPcm(ctx, ctx->PcmBuffer, spf);
 		if (read < spf)
 		{
-			silentSamples += (spf - read) * spf;
+			silentSamples += spf - read;
 		}
 		const size_t written = ctx->Encoder.Encode(ctx->PcmBuffer, ctx->MediaBuffer + offset, sizeof(ctx->MediaBuffer) - offset);
 		if (written == 0)
