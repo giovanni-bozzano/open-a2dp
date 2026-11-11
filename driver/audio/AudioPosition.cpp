@@ -37,6 +37,14 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 	{
 		return;
 	}
+	// With media stopped nothing consumes the ring, and the start that follows flushes it: copying
+	// now only fills it until the bound trims the whole of it away, which is a trim per tick that
+	// means nothing. Move the reference instead, the same way the flush drops this audio once.
+	if (!ctx->MediaActive)
+	{
+		ctx->AudioCopiedPosition = position;
+		return;
+	}
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 
 	// Never copy more than one buffer: anything older was already overwritten.
