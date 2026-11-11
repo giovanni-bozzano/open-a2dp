@@ -146,8 +146,24 @@ constexpr int kCodecAptxHdChoice = 4;
 enum class DeviceState {
 	Connected,
 	Playing,
+	Suspended,     // a stream the driver suspended because Windows paused the endpoint
 	WindowsDriver, // an A2DP node the inbox driver owns: listed, but with no control device
 };
+
+// What the sink list says about one report. A configured stream Windows paused is its own state,
+// not "connected": pressing play on this PC resumes it where it left off.
+DeviceState DeviceStateOf(const Ioctl::Status& status)
+{
+	switch (status.mediaState)
+	{
+	case Ioctl::MediaState::Streaming:
+		return DeviceState::Playing;
+	case Ioctl::MediaState::Suspended:
+		return DeviceState::Suspended;
+	default:
+		return DeviceState::Connected;
+	}
+}
 
 // One group of controls: the frame the window draws and the caption on its top line. A
 // system group box cannot be used, because it draws itself from the system colours, which
@@ -1158,9 +1174,7 @@ void OpenSelected(HWND hwnd)
 		state->status.sinkName[0] != L'\0' ? std::wstring(state->status.sinkName) : std::wstring();
 	SetMessage(hwnd, L"Loaded " + SinkTitle(device.reference, name) + L".");
 	RefreshStatusView(hwnd);
-	UpdateDeviceItemLabel(hwnd, state->selected, state->status.mediaState == Ioctl::MediaState::Streaming
-														   ? DeviceState::Playing
-														   : DeviceState::Connected);
+	UpdateDeviceItemLabel(hwnd, state->selected, DeviceStateOf(state->status));
 }
 
 // Puts the report on the clipboard: the same text the box shows, which is the text the CLI
@@ -1247,8 +1261,7 @@ bool TryReadDeviceState(const Device& device, DeviceState& deviceState, std::wst
 	{
 		*name = status.sinkName[0] != L'\0' ? std::wstring(status.sinkName) : std::wstring();
 	}
-	deviceState = status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
-																		  : DeviceState::Connected;
+	deviceState = DeviceStateOf(status);
 	return true;
 }
 
@@ -1268,8 +1281,7 @@ void RefreshDeviceLabels(HWND hwnd)
 		const bool selected = state->open && device == state->selected;
 		if (selected)
 		{
-			current = state->status.mediaState == Ioctl::MediaState::Streaming ? DeviceState::Playing
-																					  : DeviceState::Connected;
+			current = DeviceStateOf(state->status);
 		}
 		else if (!TryReadDeviceState(state->devices[device], current))
 		{
@@ -1293,7 +1305,8 @@ std::wstring SinkTitle(const std::string& reference, const std::wstring& name)
 // "<name> (<address>) - <state>".
 std::wstring DeviceLabel(const std::string& reference, DeviceState state, const std::wstring& name)
 {
-	const wchar_t* const text = state == DeviceState::Playing		  ? L" - playing"
+	const wchar_t* const text = state == DeviceState::Playing   ? L" - playing"
+								 : state == DeviceState::Suspended ? L" - suspended"
 								 : state == DeviceState::WindowsDriver ? L" - Windows driver"
 																		  : L" - connected";
 	return SinkTitle(reference, name) + text;

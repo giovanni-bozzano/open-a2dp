@@ -336,6 +336,8 @@ it), reattach.
 1. Start `OpenA2dpConfig` elevated: the sink list shows each sink as `name (address)` -
    the same name and address `OpenA2dpCtl list` prints - suffixed with `- connected` or
    `- playing`, and with no sink opened yet the one that is playing is the one selected. The
+   suffix says `- suspended` after playback pauses and `- playing` again when it resumes, with
+   the Session section of the status list showing the same. The
    status list shows the same fields as `OpenA2dpCtl status` under its Session, Sink,
    Endpoint, Service and Driver sections, and the controls show the stored codec preference
    and endpoint format. A sink that starts or
