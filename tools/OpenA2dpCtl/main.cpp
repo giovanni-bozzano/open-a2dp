@@ -808,8 +808,7 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 	if (!holder.empty())
 	{
 		std::printf("%s: %s is installed on the sink's A2DP node, but %s keeps the node from "
-					"restarting.\n  Stop playback there (or close it), then run this command again.\n"
-					"  No reboot is needed and the pairing is left alone.\n",
+					"restarting.\n  Stop playback there (or close it), then run this command again.\n",
 					FormatAddress(reference).c_str(), SinkDriverName(target), holder.c_str());
 		return 3;
 	}
