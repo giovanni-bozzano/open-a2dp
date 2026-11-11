@@ -3,6 +3,7 @@
 #include <OpenA2dp/Avdtp.h>
 #include <OpenA2dp/IA2dpCodec.h>
 #include <OpenA2dp/Ioctl.h>
+#include <OpenA2dp/LatencyBudget.h>
 #include <OpenA2dp/RingBuffer.h>
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcCodec.h>
@@ -173,6 +174,32 @@ TEST(Ioctl_PreferenceValidation)
 	preference.sbcFramesPerPacket = 0;
 	CHECK(Ioctl::ValidPreference(preference));
 
+}
+
+// The ring limits are the pacing lead plus a slack, so they can never trim the audio the pacer
+// is streaming ahead of the clock: a fixed limit silently capped every lead above the 60 ms
+// default, on both the PCM and the encoded ring. Both limits also have to hold at least one
+// record or packet at the shortest lead the preference allows, or the trim would fire on a
+// stream that has nothing wrong with it.
+TEST(LatencyBudget_TrimLimitsNeverCapTheLead)
+{
+	using namespace LatencyBudget;
+	constexpr uint32_t kAacRecordMs = 1000 * Ioctl::kAacSamplesPerFrame / 44100;
+	for (uint32_t lead = Ioctl::kMinPrerollMs; lead <= Ioctl::kMaxPrerollMs; lead += 10)
+	{
+		const uint32_t pcm = RingLimitMs(lead, kPcmSlackMs);
+		const uint32_t frames = RingLimitMs(lead, kFrameSlackMs);
+		CHECK(pcm > lead);
+		CHECK(frames > lead);
+		// One SBC packet (seven frames of 128 samples) and one AAC record both fit in the
+		// shortest limit, so no trim is caused by packetization alone.
+		CHECK(pcm >= 1000 * (7 * 128) / 44100);
+		CHECK(frames >= kAacRecordMs);
+		// The longest limit still fits the rings at 48 kHz stereo, so a long lead is not
+		// trimmed back by capacity either.
+		CHECK(pcm * 48000 / 1000 * 4 <= Ioctl::kPcmRingBytes);
+		CHECK(frames * 320000 / 8000 <= Ioctl::kFrameRingBytes);
+	}
 }
 
 TEST(RingBuffer_WrapAround)

@@ -71,7 +71,9 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 	const ULONG frameBytes = ctx->PinBytesPerFrame;
 	if (frameBytes != 0 && ctx->PinSampleRate != 0)
 	{
-		const uint32_t limit = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, AudioPcmBacklogMs);
+		const uint32_t limitMs =
+			LatencyBudget::RingLimitMs(ctx->PacingLeadMs, LatencyBudget::kPcmSlackMs);
+		const uint32_t limit = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, limitMs);
 		ctx->AudioTrimmedBytes += PcmBacklog::Trim(ring, limit, frameBytes);
 
 		// Peak driver-side latency for this stream. An instantaneous reading hides the spike a

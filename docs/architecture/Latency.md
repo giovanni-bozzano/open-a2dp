@@ -10,7 +10,7 @@ Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales 
 |---|---|---|
 | Windows engine buffer | ACX RT packets; size and count chosen by the engine, bounded by `AudioMaxBufferBytes` (`AudioInternal.h`) | 2 × 10 ms = 20 ms |
 | Driver copy granularity | `AudioPeriodMs = 10` in `OnAudioTimer`, plus one copy per released packet in `OnSetRenderPacket` (`AudioPosition.cpp`) | 0–10 ms, shorter buffer only |
-| PCM ring backlog | `AudioPcmBacklogMs = 80`, `Ioctl::kPcmRingBytes` = 64 KB | under 10 ms |
+| PCM ring backlog | the lead plus `LatencyBudget::kPcmSlackMs`, `Ioctl::kPcmRingBytes` = 64 KB | under 10 ms |
 | Encoder pacing lead | `Ioctl::kPrerollMs = 60` as the default, overridable per sink through `Preference.prerollMs` (20–200 ms) | 60 ms, or as configured |
 | Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`), or fewer with `Preference.sbcFramesPerPacket`; AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
 | Transport | one send in flight per stream (`MediaSendReady`), L2CAP | link dependent |
@@ -25,8 +25,8 @@ single largest fixed part of it.
    dropped the *new* audio and kept the old, and the encoder went on draining the backlog at
    real time, so a 500 ms transport stall meant 500 ms (up to 371 ms of PCM, 1.6 s of frames)
    of permanent offset. `OnAudioTimer` now drops the oldest frames past
-   `AudioPcmBacklogMs` of backlog, and `FrameRecord::Trim` drops encoded records past the
-   pacing lead plus `FrameSlackMs`; the RTP timestamp moves past the dropped span, so the sink hears one
+   `LatencyBudget::RingLimitMs` of backlog, and `FrameRecord::Trim` drops encoded records past
+   that same limit; the RTP timestamp moves past the dropped span, so the sink hears one
    gap rather than old audio. Both are counted (`status.pcmTrimmedBytes`, `framesTrimmed`
    log) and logged once per second.
 2. **The lead is a stored setting.** `Preference.prerollMs` (registry
@@ -49,11 +49,13 @@ single largest fixed part of it.
    audio copy tick since the stream started (`status.latencyPeakMs`, reset by the next
    `MediaStart`). A stall that trimmed the backlog before anyone polled still leaves that
    number behind, which is what makes a transient spike diagnosable after the fact.
-   `status.underruns` counts the SBC packets the PCM ring could not fill - they are sent as
-   silence, so the stream keeps its place on the timeline - and the driver logs them at most
-   once a second with the silence duration. That is the number the exit gate below means:
-   without it a lead too short for a sink was audible but invisible on the codec the driver
-   uses by default.
+   `status.underruns` counts the SBC audio the media clock asked for that the PCM ring did not
+   have - they are sent as silence, so the stream keeps its place on the timeline - and the
+   driver logs it at most once a second with the silence duration. Only the due window counts:
+   the silence a stream pads while it fills its lead, and the frames a packet carries past the
+   target, are normal and would otherwise make the number noise. That is the number the exit
+   gate below means: without it a lead too short for a sink was audible but invisible on the
+   codec the driver uses by default.
 4. **The presentation position matches the ear.** The stream is sent `PacingLeadMs` ahead of
    the media clock, so `OnGetPresentationPosition` subtracts that lead (clamped at the start)
    instead of claiming audio the sink is still buffering. Without it, an app syncing video to
@@ -68,19 +70,28 @@ single largest fixed part of it.
    mode does); the allocation is bounded by bytes instead, and the copy also runs when the
    engine releases a packet, so a buffer shorter than the 10 ms tick is no longer copied once
    per tick and dropped in between.
+7. **The trims are a shared rule, not two constants.** `LatencyBudget::RingLimitMs` is the
+   lead plus a slack, and both rings use it; `CommonTests` walks the whole 20-200 ms range and
+   checks the limit always exceeds the lead, covers a packet or a record at the shortest lead,
+   and fits the ring at 48 kHz stereo. A fixed limit sized for the 60 ms default had silently
+   capped every longer lead on both paths, which is exactly the drift a shared rule prevents.
+8. **Packetization has a setting.** SBC takes a cap (`Preference.sbcFramesPerPacket`,
+   `OpenA2dpCtl codec --frames`, the settings window's `SBC frames` field), so a profile can
+   trade packets per second for a shorter packet; the default stays MTU-filled. AAC and both
+   aptX codecs carry one access unit per packet, so they are already at their shortest.
 
 ## Remaining risks and plan
 
-1. **Packetization still defaults to the MTU.** SBC now takes a stored cap
-   (`Preference.sbcFramesPerPacket`, `OpenA2dpCtl codec --frames`, the settings window's
-   `SBC frames` field), so a profile can trade packets per second for a shorter packet; the
-   default is unchanged at seven frames. AAC and both aptX codecs carry one access unit per
-   packet, so they are already at their shortest packet.
-2. **The sink's own buffering is invisible.** No A2DP profile reports it; measuring the
+Every software lever in this document is now in place; what is left needs a sink and ears.
+
+1. **The sink's own buffering is invisible.** No A2DP profile reports it; measuring the
    audible delay needs a hardware loopback (a click track against the sink's output).
-3. **The trims are verified in user mode only.** Both policies live in shared headers and are
-   covered by `FrameRecord_Trim*` and `PcmBacklog_*` in `tests/CodecTests/`, but whether the
-   sink hears one gap rather than a dropout needs hardware.
+2. **The trim policy is tested, its effect is not.** The limits and their arithmetic are
+   covered in user mode (`LatencyBudget_*`, `FrameRecord_Trim*`, `PcmBacklog_*`); whether the
+   sink hears one gap rather than a dropout after a stall needs hardware.
+3. **A long lead costs start-up silence.** A stream with a 200 ms lead sends 200 ms of silence
+   before the first real sample, because the pacer pads what the ring does not have. That is
+   the lead working as configured, not a fault, but it is why the default stays at 60 ms.
 4. **The sink's buffer still starts where ours ends.** The delay we report covers the lead we
    hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
    Windows' latency figure is a lower bound rather than the audible total.

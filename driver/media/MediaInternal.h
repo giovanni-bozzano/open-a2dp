@@ -4,6 +4,7 @@
 #include "../Service.h"
 
 #include <OpenA2dp/AacConfig.h>
+#include <OpenA2dp/LatencyBudget.h>
 
 using namespace OpenA2dp;
 
@@ -20,13 +21,8 @@ constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
 // (diagnostic only; link loss arrives as a transport completion or disconnect
 // indication). The tick count follows the period so the two cannot drift apart.
 constexpr ULONG MediaBusyLimitMs = 3000;
-// Most buffered audio the frame ring may hold *beyond the pacing lead* before the driver
-// discards the oldest records. The driver drains the ring eagerly, so its steady fill is what
-// the service produced ahead of the clock, which is the lead itself: counting the lead as
-// backlog trimmed every long-lead stream back to this constant on its first packet, and logged
-// a trim that had not gone stale. The slack covers a couple of records, so granularity never
-// trims the lead either; past it a stall costs one gap instead of a latency step.
-constexpr ULONG FrameSlackMs = 40;
+// The driver drains the frame ring eagerly, so its steady fill is what the service produced
+// ahead of the clock - the lead itself. LatencyBudget bounds what may sit past that.
 constexpr ULONG MediaBusyLimitTicks = MediaBusyLimitMs / MediaPeriodMs;
 
 EVT_WDF_TIMER OnMediaTimer;
