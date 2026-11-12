@@ -68,39 +68,40 @@ the Windows mix format.
 
 ## Storage
 
-One settings file per sink, plus a machine default for a sink that has none:
+One INI file per sink, plus a machine default for a sink that has none:
 
-- `%ProgramData%\OpenA2dp\default.cfg` - machine default.
-- `%ProgramData%\OpenA2dp\devices\<12 hex address>.cfg` - that sink's settings, which win
+- `%ProgramData%\OpenA2dp\default.ini` - machine default.
+- `%ProgramData%\OpenA2dp\devices\<12 hex address>.ini` - that sink's settings, which win
   over the default.
 
-Each file is one binary record: a magic, a version and the layout size, then the codec
-preference and the per-codec endpoint formats. A file whose version or size is not this
-build's is ignored rather than reinterpreted, and a missing file means "no settings", not an
-error. `OpenA2dpCtl codec` writes the codec fields through `SET_PREFERENCE` and
-`format <codec> ...` writes one codec's endpoint format through `SET_ENDPOINT_FORMAT`; the
-driver saves both to the sink's file whenever either changes, so the file and the running
-driver never disagree. Deleting the sink's file returns it to the default and
-`OpenA2dpCtl reset` writes both defaults back. The driver reads the file in `OnDeviceAdd`,
-before the endpoint exists. A value the sink does not advertise is refused instead of stored,
-so reading a preference back always shows what the driver will use. The registry is not used
-and nothing is migrated from it.
+The file is text so it can be read, backed up and edited without this build: one
+`key = value` per line, `#` starts a comment, and the keys are the settings in the table
+below. A key this build does not know is ignored, so a file written by a newer build still
+loads; a value the driver cannot serve refuses the whole file rather than setting half of it,
+and a missing file simply means "no settings". `OpenA2dpCtl codec` writes the codec keys
+through `SET_PREFERENCE` and `format <codec> ...` writes one codec's `Rate`/`Channels`
+through `SET_ENDPOINT_FORMAT`; the driver rewrites the sink's file whenever either changes,
+so the file and the running driver never disagree. Deleting the sink's file returns it to the
+default, and `OpenA2dpCtl reset` or the settings window's Restore defaults writes both
+defaults back. The driver reads the file in `OnDeviceAdd`, before the endpoint exists. A value
+the sink does not advertise is refused instead of stored, so reading a preference back always
+shows what the driver will use. The registry is not used and nothing is migrated from it.
 
-| Setting | Registry value | CLI | Values | Default |
+| Setting | File key | CLI | Values | Default |
 |---|---|---|---|---|
-| Codec choice | `CodecPreferenceFlags`, `CodecPreferenceCodec` | `codec auto\|sbc\|aac\|aptx\|aptxhd\|ldac` | auto, SBC, AAC, aptX, aptX HD, LDAC | auto (LDAC, aptX HD, aptX, then AAC, as registered encoders and the sink allow, else SBC) |
-| LDAC quality | `CodecPreferenceLdacQuality` | `--ldac-quality high\|standard\|mobile` | 0 (990 kbps), 1 (660), 2 (330) | 0 |
-| SBC bitpool | `CodecPreferenceSbcBitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
-| SBC block length | `CodecPreferenceSbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
-| SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |
-| SBC allocation | `CodecPreferenceSbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
-| AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and the media MTU | highest the sink accepts, up to the MTU ceiling |
-| Pacing lead | `CodecPreferencePrerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
-| SBC frames per packet | `CodecPreferenceSbcFramesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
-| Sample rate per codec | part of the sink's file | `format <codec> [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels that codec can play | automatic (each codec plays every format it can) |
+| Codec choice | `codec` | `codec auto\|sbc\|aac\|aptx\|aptxhd\|ldac` | auto, SBC, AAC, aptX, aptX HD, LDAC | auto (LDAC, aptX HD, aptX, then AAC, as registered encoders and the sink allow, else SBC) |
+| LDAC quality | `ldacQuality` | `--ldac-quality high\|standard\|mobile` | 0 (990 kbps), 1 (660), 2 (330) | 0 |
+| SBC bitpool | `sbcBitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
+| SBC block length | `sbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
+| SBC subbands | `sbcSubbands` | `--subbands n` | 4, 8 | 8 |
+| SBC allocation | `sbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
+| AAC bitrate | `aacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and the media MTU | highest the sink accepts, up to the MTU ceiling |
+| Pacing lead | `prerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
+| SBC frames per packet | `sbcFramesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
+| Sample rate per codec | `<codec>Rate`, `<codec>Channels` | `format <codec> [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels that codec can play | automatic (each codec plays every format it can) |
 
-`CodecPreferenceAacSampleRate` and the registry value names earlier builds used are gone:
-the store is the file above, and nothing is read from the registry.
+The registry value names earlier builds used are gone with the registry store: the file above
+is the only place a setting lives.
 
 The settings window is the Windows tab control with one tab per codec - SBC, AAC, aptX,
 aptX HD and LDAC - and it opens on the tab of the codec in use, so a parameter is set beside
@@ -110,7 +111,9 @@ advertised) and is stored as that codec's entry, the AAC bitrate list stops at w
 packet can carry, and the aptX tabs have no setting beyond the rate. The automatic switch
 above the table decides whether the codec is the tab's or the best both ends support. Every
 field's box explains itself when the pointer rests on it; those texts live with the controls
-in `tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together.
+in `tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together. The
+strip's colours are the window's rather than the tab control's, which has no dark part on
+Windows, and Restore defaults sends the same two defaults `OpenA2dpCtl reset` writes.
 
 ## How a change applies
 

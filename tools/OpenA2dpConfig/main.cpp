@@ -82,6 +82,7 @@ enum ControlId : int {
 	kLdacQualityCombo,
 	kApplyButton,
 	kDriverButton,
+	kRestoreButton,
 	kMessageLabel,
 };
 
@@ -93,6 +94,7 @@ constexpr wchar_t kRefreshText[] = L"Refresh";
 constexpr wchar_t kCopyText[] = L"Copy";
 constexpr wchar_t kDetailsText[] = L"Details";
 constexpr wchar_t kApplyText[] = L"Apply";
+constexpr wchar_t kRestoreText[] = L"Restore defaults";
 // The switch names the driver the sink is not on, so the caption reads as the action.
 constexpr wchar_t kUseWindowsText[] = L"Use Windows driver";
 constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
@@ -1171,7 +1173,8 @@ void ApplyLayout(HWND hwnd)
 	const int applyHeight = rowHeight + 4;
 	const int driverWidth = MaxOf(MaxOf(TextWidth(dc, kUseWindowsText), TextWidth(dc, kUseOpenA2dpText)),
 								  TextWidth(dc, kFinishSwitchText)) + gap * 4;
-	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + margin;
+	const int restoreWidth = TextWidth(dc, kRestoreText) + gap * 4;
+	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + gap + restoreWidth + margin;
 
 	// The tab control is as wide as its captions need, and the automatic switch as wide as its
 	// own caption.
@@ -1328,8 +1331,11 @@ void ApplyLayout(HWND hwnd)
 	const int driverLeft = applyLeft - gap - driverWidth;
 	Place(GetDlgItem(hwnd, kDriverButton), driverLeft, bottomTop + (bottomHeight - applyHeight) / 2,
 		  driverWidth, applyHeight);
+	const int restoreLeft = driverLeft - gap - restoreWidth;
+	Place(GetDlgItem(hwnd, kRestoreButton), restoreLeft, bottomTop + (bottomHeight - applyHeight) / 2,
+		  restoreWidth, applyHeight);
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop + (bottomHeight - textHeight) / 2,
-		  driverLeft - gap - margin, textHeight);
+		  restoreLeft - gap - margin, textHeight);
 
 	if (dc != nullptr)
 	{
@@ -1367,6 +1373,91 @@ void ApplyLayout(HWND hwnd)
 	}
 }
 
+constexpr UINT_PTR kTabSubclassId = 1;
+
+// The tab strip heads the table, and the tab control has no dark part on this Windows: themed
+// or not, it paints its items and the strip around them light. So the strip is painted from the
+// palette here - the open tab in the window's own background, so it reads as part of the table
+// below it, the others on the section colour - while the control keeps the items, the selection
+// and the keyboard, which is what makes it a tab control and not a picture of one.
+void PaintCodecTabs(HWND tab)
+{
+	PAINTSTRUCT paint = {};
+	const HDC dc = BeginPaint(tab, &paint);
+	RECT client = {};
+	GetClientRect(tab, &client);
+	FillRect(dc, &client, BackgroundBrush());
+	if (dc != nullptr)
+	{
+		const Colors& colors = ThemeColors();
+		const HFONT font = reinterpret_cast<HFONT>(SendMessageW(tab, WM_GETFONT, 0, 0));
+		const HGDIOBJ previousFont = font != nullptr ? SelectObject(dc, font) : nullptr;
+		const LRESULT selected = SendMessageW(tab, TCM_GETCURSEL, 0, 0);
+		const int count = static_cast<int>(SendMessageW(tab, TCM_GETITEMCOUNT, 0, 0));
+		for (int index = 0; index < count; ++index)
+		{
+			RECT item = {};
+			if (SendMessageW(tab, TCM_GETITEMRECT, static_cast<WPARAM>(index), reinterpret_cast<LPARAM>(&item)) == FALSE)
+			{
+				continue;
+			}
+			const bool open = index == selected;
+			SetDCBrushColor(dc, open ? colors.background : colors.section);
+			FillRect(dc, &item, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+			const HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
+			const HGDIOBJ previousPen = SelectObject(dc, pen);
+			const HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+			Rectangle(dc, item.left, item.top, item.right, item.bottom);
+			SelectObject(dc, previousBrush);
+			SelectObject(dc, previousPen);
+			DeleteObject(pen);
+
+			wchar_t text[64] = {};
+			TCITEMW info = {};
+			info.mask = TCIF_TEXT;
+			info.pszText = text;
+			info.cchTextMax = ARRAYSIZE(text);
+			SendMessageW(tab, TCM_GETITEMW, static_cast<WPARAM>(index), reinterpret_cast<LPARAM>(&info));
+			SetBkMode(dc, TRANSPARENT);
+			SetTextColor(dc, open ? colors.text : colors.muted);
+			RECT label = item;
+			label.left += 6;
+			label.right -= 6;
+			DrawTextW(dc, text, -1, &label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		}
+		if (previousFont != nullptr)
+		{
+			SelectObject(dc, previousFont);
+		}
+	}
+	EndPaint(tab, &paint);
+}
+
+// The strip's painting is this window's; everything else - clicks, the keyboard, the selection
+// a TCM_SETCURSEL moves - stays the control's.
+LRESULT CALLBACK TabSubclass(HWND tab, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR id,
+							 DWORD_PTR reference)
+{
+	UNREFERENCED_PARAMETER(wParam);
+	UNREFERENCED_PARAMETER(lParam);
+	UNREFERENCED_PARAMETER(id);
+	UNREFERENCED_PARAMETER(reference);
+	switch (message)
+	{
+	case WM_PAINT:
+		PaintCodecTabs(tab);
+		return 0;
+	case WM_ERASEBKGND:
+		return 1; // the paint fills every pixel
+	case WM_NCDESTROY:
+		RemoveWindowSubclass(tab, TabSubclass, kTabSubclassId);
+		break;
+	default:
+		break;
+	}
+	return DefSubclassProc(tab, message, wParam, lParam);
+}
+
 // Creates every control with a placeholder rect; ApplyLayout gives them their real ones, so
 // the geometry comes from the measured strings and not from coordinates typed by hand.
 void CreateControls(HWND hwnd)
@@ -1398,7 +1489,7 @@ void CreateControls(HWND hwnd)
 				font);
 
 	// The codec tabs are the real tab control: it owns the items, the selection and the
-	// keyboard behaviour, and only the table under it is this window's.
+	// keyboard behaviour, and only the table under it and the strip's colours are this window's.
 	const HWND tabs = CreateWindowExW(0, WC_TABCONTROLW, L"",
 									  WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_HOTTRACK, 0, 0, 10, 10, hwnd,
 									  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCodecTabs)),
@@ -1413,6 +1504,7 @@ void CreateControls(HWND hwnd)
 			item.pszText = const_cast<LPWSTR>(kTabInfo[tab].caption);
 			SendMessageW(tabs, TCM_INSERTITEMW, static_cast<WPARAM>(tab), reinterpret_cast<LPARAM>(&item));
 		}
+		SetWindowSubclass(tabs, TabSubclass, kTabSubclassId, 0);
 	}
 	CreateStatusView(hwnd, kStatusList, 0, 0, 10, 10, font);
 	if (state != nullptr)
@@ -1451,6 +1543,10 @@ void CreateControls(HWND hwnd)
 
 	CreateChild(hwnd, L"BUTTON", kApplyText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kApplyButton, font);
 	CreateChild(hwnd, L"BUTTON", kUseOpenA2dpText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kDriverButton,
+				font);
+	// The way back: the same two IOCTLs `OpenA2dpCtl reset` sends, so a setting that turned out
+	// worse than expected is undone from the window it was made in.
+	CreateChild(hwnd, L"BUTTON", kRestoreText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kRestoreButton,
 				font);
 	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
@@ -2046,6 +2142,50 @@ void ApplySettings(HWND hwnd)
 							   : L"Stored. The setting applies at the next negotiation.");
 }
 
+// Puts every setting back to the driver default: the automatic codec, every codec automatic and
+// every parameter zero. The driver rewrites the sink's settings file from what it receives, so
+// the file is what a fresh install would have written.
+void RestoreDefaults(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr || !state->open)
+	{
+		SetMessage(hwnd, L"No device is selected.");
+		return;
+	}
+	if (MessageBoxW(hwnd,
+					L"Restore every setting of this sink to the driver default?\n\nA running stream "
+					L"renegotiates to apply it.",
+					L"Restore defaults", MB_ICONQUESTION | MB_YESNO) != IDYES)
+	{
+		return;
+	}
+	Ioctl::Preference preference = {};
+	preference.abiVersion = Ioctl::kAbiVersion;
+	Ioctl::EndpointFormat endpointFormat = {};
+	endpointFormat.abiVersion = Ioctl::kAbiVersion;
+	std::string failure;
+	if (!WriteEndpointFormat(state->control, endpointFormat, failure) ||
+		!WritePreference(state->control, preference, failure))
+	{
+		SetMessage(hwnd, Tools::Widen(failure));
+		return;
+	}
+	Ioctl::Preference stored = {};
+	if (ReadPreference(state->control, stored, failure))
+	{
+		state->preference = stored;
+	}
+	Ioctl::EndpointFormat storedFormat = {};
+	if (ReadEndpointFormat(state->control, storedFormat, failure))
+	{
+		state->endpointFormat = storedFormat;
+	}
+	LoadPreferenceIntoControls(hwnd);
+	RefreshStatus(hwnd);
+	SetMessage(hwnd, L"Defaults restored. The setting applies at the next negotiation.");
+}
+
 // A themed static or button fills its own text background with the light theme's colour and
 // draws the text in its own colour, whatever the window answers for WM_CTLCOLOR; taking them
 // off the theme is what lets the palette reach the captions and the field labels.
@@ -2077,11 +2217,8 @@ void ApplyDarkControls(HWND hwnd)
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}
-	// The tab control draws from its theme, which stays light in a process that only opted into
-	// the dark apps mode; the dark item theme is the one Explorer's own tab strip uses.
-	SetWindowTheme(GetDlgItem(hwnd, kCodecTabs), L"DarkMode_ItemsView", nullptr);
-	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kDetailsCheck,
-						 kAutomaticCheck})
+	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kRestoreButton,
+						 kDetailsCheck, kAutomaticCheck})
 	{
 		// Owner-drawn, because a themed or classic button paints its own face from the light
 		// system colours; the window then keeps the check box's state itself.
@@ -2355,6 +2492,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		if (id == kApplyButton && notification == BN_CLICKED)
 		{
 			ApplySettings(hwnd);
+			return 0;
+		}
+		if (id == kRestoreButton && notification == BN_CLICKED)
+		{
+			RestoreDefaults(hwnd);
 			return 0;
 		}
 		if (id == kDriverButton && notification == BN_CLICKED)
