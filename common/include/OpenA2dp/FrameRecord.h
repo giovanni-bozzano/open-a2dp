@@ -129,7 +129,7 @@ inline uint32_t Trim(RingBufferView& ring, uint32_t limitSamples) noexcept
 		}
 		if (header.magic != Ioctl::kFrameRecordMagic || header.size <= sizeof(header) ||
 			header.size > Ioctl::kMaxFrameRecordBytes || header.samples == 0 ||
-			offset > readable - header.size) {
+			header.size > readable - offset) {
 			complete = false;
 			break;
 		}
