@@ -333,6 +333,22 @@ inline bool ApplyValue(const char* section, size_t sectionLength, const char* ke
 
 } // namespace Detail
 
+namespace Detail {
+// The rate and channels a codec plays at, written only when pinned, so an automatic entry
+// leaves nothing behind.
+inline void WriteFormat(Writer& writer, uint32_t rate, uint32_t channels) noexcept
+{
+	if (rate != 0)
+	{
+		writer.Choice("rate = ", rate);
+	}
+	if (channels != 0)
+	{
+		writer.Choice("channels = ", channels);
+	}
+}
+} // namespace Detail
+
 // The whole settings set as text. Returns its length, or 0 when the buffer is too small.
 inline size_t Write(const Settings& settings, char* text, size_t capacity) noexcept
 {
@@ -342,7 +358,6 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 	}
 	const Ioctl::Preference& preference = settings.preference;
 	const Ioctl::EndpointFormat& format = settings.endpointFormat;
-	const bool forced = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	Detail::Writer writer{text, capacity};
 	writer.String("# OpenA2dp settings for this sink. Delete the file to return the driver defaults.\r\n"
 				  "# Only what differs from the driver default is written; a key that is missing keeps its\r\n"
@@ -351,9 +366,10 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 	writer.Number(kVersion);
 	writer.String("\r\n\r\n");
 
+	// [general] holds what belongs to the sink rather than to one codec.
 	size_t start = writer.length;
 	writer.String("[general]\r\n");
-	if (forced)
+	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0)
 	{
 		writer.String("# auto, sbc, aac, aptx, aptxhd or ldac\r\ncodec = ");
 		writer.String(Detail::CodecName(preference.codec));
@@ -367,96 +383,67 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 	}
 	Detail::CloseSection(writer, start);
 
-	start = writer.length;
-	writer.String("[sbc]\r\n");
-	if (format.sampleRate[Ioctl::kCodecSbc] != 0)
+	// One section per codec, in the order the file documents them. Only SBC, AAC and LDAC carry
+	// a parameter beyond rate and channels; aptX and aptX HD are fixed-shape codecs.
+	static const struct
 	{
-		writer.Choice("rate = ", format.sampleRate[Ioctl::kCodecSbc]);
-	}
-	if (format.channels[Ioctl::kCodecSbc] != 0)
+		const char* name;
+		uint32_t codec;
+	} kSections[] = {
+		{"[sbc]\r\n", Ioctl::kCodecSbc},
+		{"[aac]\r\n", Ioctl::kCodecAac},
+		{"[aptx]\r\n", Ioctl::kCodecAptx},
+		{"[aptxhd]\r\n", Ioctl::kCodecAptxHd},
+		{"[ldac]\r\n", Ioctl::kCodecLdac},
+	};
+	for (const auto& section : kSections)
 	{
-		writer.Choice("channels = ", format.channels[Ioctl::kCodecSbc]);
+		start = writer.length;
+		writer.String(section.name);
+		Detail::WriteFormat(writer, format.sampleRate[section.codec], format.channels[section.codec]);
+		switch (section.codec)
+		{
+		case Ioctl::kCodecSbc:
+			if (preference.sbcBitpool != 0)
+			{
+				writer.Key("bitpool = ", preference.sbcBitpool);
+			}
+			if (preference.sbcBlocks != 0)
+			{
+				writer.Key("blocks = ", preference.sbcBlocks);
+			}
+			if (preference.sbcSubbands != 0)
+			{
+				writer.Key("subbands = ", preference.sbcSubbands);
+			}
+			if (preference.sbcAllocation != 0)
+			{
+				writer.Key("allocation = ", preference.sbcAllocation);
+			}
+			if (preference.sbcFramesPerPacket != 0)
+			{
+				writer.Key("framesPerPacket = ", preference.sbcFramesPerPacket);
+			}
+			break;
+		case Ioctl::kCodecAac:
+			if (preference.aacBitrate != 0)
+			{
+				writer.Key("bitrate = ", preference.aacBitrate);
+			}
+			break;
+		case Ioctl::kCodecLdac:
+			if (preference.ldacQuality != 0)
+			{
+				writer.String("# 0 = high (990 kbps), 1 = standard (660), 2 = mobile (330).\r\nquality = ");
+				writer.Number(preference.ldacQuality);
+				writer.String("\r\n");
+			}
+			break;
+		default:
+			break;
+		}
+		Detail::CloseSection(writer, start);
 	}
-	if (preference.sbcBitpool != 0)
-	{
-		writer.Key("bitpool = ", preference.sbcBitpool);
-	}
-	if (preference.sbcBlocks != 0)
-	{
-		writer.Key("blocks = ", preference.sbcBlocks);
-	}
-	if (preference.sbcSubbands != 0)
-	{
-		writer.Key("subbands = ", preference.sbcSubbands);
-	}
-	if (preference.sbcAllocation != 0)
-	{
-		writer.Key("allocation = ", preference.sbcAllocation);
-	}
-	if (preference.sbcFramesPerPacket != 0)
-	{
-		writer.Key("framesPerPacket = ", preference.sbcFramesPerPacket);
-	}
-	Detail::CloseSection(writer, start);
-
-	start = writer.length;
-	writer.String("[aac]\r\n");
-	if (format.sampleRate[Ioctl::kCodecAac] != 0)
-	{
-		writer.Choice("rate = ", format.sampleRate[Ioctl::kCodecAac]);
-	}
-	if (format.channels[Ioctl::kCodecAac] != 0)
-	{
-		writer.Choice("channels = ", format.channels[Ioctl::kCodecAac]);
-	}
-	if (preference.aacBitrate != 0)
-	{
-		writer.Key("bitrate = ", preference.aacBitrate);
-	}
-	Detail::CloseSection(writer, start);
-
-	start = writer.length;
-	writer.String("[aptx]\r\n");
-	if (format.sampleRate[Ioctl::kCodecAptx] != 0)
-	{
-		writer.Choice("rate = ", format.sampleRate[Ioctl::kCodecAptx]);
-	}
-	if (format.channels[Ioctl::kCodecAptx] != 0)
-	{
-		writer.Choice("channels = ", format.channels[Ioctl::kCodecAptx]);
-	}
-	Detail::CloseSection(writer, start);
-
-	start = writer.length;
-	writer.String("[aptxhd]\r\n");
-	if (format.sampleRate[Ioctl::kCodecAptxHd] != 0)
-	{
-		writer.Choice("rate = ", format.sampleRate[Ioctl::kCodecAptxHd]);
-	}
-	if (format.channels[Ioctl::kCodecAptxHd] != 0)
-	{
-		writer.Choice("channels = ", format.channels[Ioctl::kCodecAptxHd]);
-	}
-	Detail::CloseSection(writer, start);
-
-	start = writer.length;
-	writer.String("[ldac]\r\n");
-	if (format.sampleRate[Ioctl::kCodecLdac] != 0)
-	{
-		writer.Choice("rate = ", format.sampleRate[Ioctl::kCodecLdac]);
-	}
-	if (format.channels[Ioctl::kCodecLdac] != 0)
-	{
-		writer.Choice("channels = ", format.channels[Ioctl::kCodecLdac]);
-	}
-	if (preference.ldacQuality != 0)
-	{
-		writer.String("# 0 = high (990 kbps), 1 = standard (660), 2 = mobile (330).\r\nquality = ");
-		writer.Number(preference.ldacQuality);
-		writer.String("\r\n");
-	}
-	Detail::CloseSection(writer, start);
-
 	return writer.ok ? writer.length : 0;
 }
 
