@@ -97,6 +97,31 @@ bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[Con
 	return true;
 }
 
+// What one file turned out to be: there was none, it parsed, or it holds text this build cannot
+// use. The last case is worth a warning, because the settings the user wrote are being dropped.
+enum class LoadResult
+{
+	Missing,
+	Parsed,
+	Invalid,
+};
+
+LoadResult LoadSettingsFile(_In_ DEVICE_CONTEXT* ctx, const wchar_t* path, ConfigFile::Settings& settings)
+{
+	char text[ConfigFile::kMaxBytes] = {};
+	size_t length = 0;
+	if (!ReadSettingsFile(ctx, path, text, length))
+	{
+		return LoadResult::Missing;
+	}
+	if (!ConfigFile::Parse(text, length, settings))
+	{
+		OA2DP_WARN(ctx, "Config", "ignoring %ws: not a settings file this build understands", path);
+		return LoadResult::Invalid;
+	}
+	return LoadResult::Parsed;
+}
+
 // Writes the sink's file. False when the text could not be produced or could not reach the disk,
 // so the caller reports what happened instead of claiming the settings were stored.
 bool WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::Settings& settings)
@@ -187,17 +212,15 @@ void ConfigLoadSettings(_In_ DEVICE_CONTEXT* ctx)
 
 	// The sink's own file wins over the machine default; a field the user never set is zero in
 	// both, which is the driver default.
-	char text[ConfigFile::kMaxBytes] = {};
-	size_t length = 0;
 	wchar_t sinkPath[96] = {};
-	const bool sinkFile = SinkPath(ctx, sinkPath) && ReadSettingsFile(ctx, sinkPath, text, length) &&
-						  ConfigFile::Parse(text, length, settings);
-	bool stored = sinkFile;
+	LoadResult result = SinkPath(ctx, sinkPath) ? LoadSettingsFile(ctx, sinkPath, settings) : LoadResult::Missing;
+	const bool sinkFile = result == LoadResult::Parsed;
 	if (!sinkFile)
 	{
 		settings = {};
-		stored = ReadSettingsFile(ctx, kDefaultPath, text, length) && ConfigFile::Parse(text, length, settings);
+		result = LoadSettingsFile(ctx, kDefaultPath, settings);
 	}
+	const bool stored = result == LoadResult::Parsed;
 
 	Ioctl::Preference preference = settings.preference;
 	Ioctl::EndpointFormat endpointFormat = settings.endpointFormat;
