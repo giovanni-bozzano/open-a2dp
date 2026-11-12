@@ -18,10 +18,13 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M6 Config UI + install/uninstall | In progress | The window's switch sequence end to end; the matches it decides on are covered by tests |
 | M7 System testing | In progress | The procedures are scripted; their runs and logs stay outside the repository |
 | M8 Signing + release | Not started | A signed package and its install path |
+| M9 LDAC | In progress | Encoder vendored and compiling; capability IE, codec wrapper, service wiring and UI remain |
 
 ## Next
 
-1. **A first scripted pass** of the hardware procedures, kept with the build it ran on: it is the
+1. **LDAC negotiation and encoding**: the A2DP capability IE, `LdacCodec`, the encoder wrapper
+   over the vendored `ldacBT_*` API, then service wiring and the settings window entry.
+2. **A first scripted pass** of the hardware procedures, kept with the build it ran on: it is the
    only run that exercises the pause-then-switch sequence, whose matches are now covered by
    `tests/CodecTests/SinkMatchTests.cpp`.
 
