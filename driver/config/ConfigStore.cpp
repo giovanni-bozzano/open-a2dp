@@ -66,10 +66,22 @@ bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[Con
 	NTSTATUS status = ZwQueryInformationFile(handle, &statusBlock, &information, sizeof(information),
 											 FileStandardInformation);
 	const LONGLONG bytes = information.EndOfFile.QuadPart;
-	if (!NT_SUCCESS(status) || bytes <= 0 || bytes >= static_cast<LONGLONG>(ConfigFile::kMaxBytes))
+	if (!NT_SUCCESS(status))
 	{
 		ZwClose(handle);
 		OA2DP_WARN(ctx, "Config", "ignoring %ws: 0x%08X reading its length", path, status);
+		return false;
+	}
+	// An empty file is "no settings", the same as a missing one, so it is not worth a warning.
+	if (bytes <= 0)
+	{
+		ZwClose(handle);
+		return false;
+	}
+	if (bytes >= static_cast<LONGLONG>(ConfigFile::kMaxBytes))
+	{
+		ZwClose(handle);
+		OA2DP_WARN(ctx, "Config", "ignoring %ws: %I64d bytes is more than this build reads", path, bytes);
 		return false;
 	}
 	status = ZwReadFile(handle, nullptr, nullptr, nullptr, &statusBlock, text, static_cast<ULONG>(bytes), nullptr,
@@ -85,14 +97,16 @@ bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[Con
 	return true;
 }
 
-void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::Settings& settings)
+// Writes the sink's file. False when the text could not be produced or could not reach the disk,
+// so the caller reports what happened instead of claiming the settings were stored.
+bool WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::Settings& settings)
 {
 	char text[ConfigFile::kMaxBytes] = {};
 	const size_t length = ConfigFile::Write(settings, text, sizeof(text));
 	if (length == 0)
 	{
 		OA2DP_WARN(ctx, "Config", "cannot format the settings for %ws", path);
-		return;
+		return false;
 	}
 	EnsureDirectory(kDirectory);
 	EnsureDirectory(kDevicesDirectory);
@@ -101,7 +115,7 @@ void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::S
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_WARN(ctx, "Config", "cannot open %ws 0x%08X; the settings are kept in memory only", path, status);
-		return;
+		return false;
 	}
 	IO_STATUS_BLOCK statusBlock = {};
 	const NTSTATUS written = ZwWriteFile(handle, nullptr, nullptr, nullptr, &statusBlock, text,
@@ -110,7 +124,9 @@ void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::S
 	if (!NT_SUCCESS(written) || statusBlock.Information != length)
 	{
 		OA2DP_WARN(ctx, "Config", "cannot write %ws 0x%08X", path, written);
+		return false;
 	}
+	return true;
 }
 
 // Removes the sink's file. There is nothing to remove when the sink was never changed, which is
@@ -257,6 +273,8 @@ void ConfigSaveSettings(_In_ DEVICE_CONTEXT* ctx)
 		DeleteSettingsFile(ctx, sinkPath);
 		return;
 	}
-	WriteSettings(ctx, sinkPath, settings);
-	LogSettings(ctx, "stored in", sinkPath, settings.preference);
+	if (WriteSettings(ctx, sinkPath, settings))
+	{
+		LogSettings(ctx, "stored in", sinkPath, settings.preference);
+	}
 }

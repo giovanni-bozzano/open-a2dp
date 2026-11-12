@@ -432,7 +432,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				in->flags, static_cast<unsigned>(in->codec), in->sbcBitpool, in->sbcBlocks, in->sbcSubbands,
 				in->sbcAllocation, in->aacBitrate, in->prerollMs, in->sbcFramesPerPacket);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
-			// still succeeds in memory if the key cannot be written.
+			// still succeeds in memory if the file cannot be written.
 			ConfigSaveSettings(ctx);
 			if (selectionChanged)
 			{
