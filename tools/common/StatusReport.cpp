@@ -438,8 +438,16 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendPreference(text, preference);
 	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
 	// Buffered milliseconds are what matters for latency: the bytes alone do not say how far
-	// behind live the stream runs at a given format or bitrate.
-	AppendLine(text, "pacing lead", Format("%u ms ahead of the media clock", status.pacingLeadMs));
+	// behind live the stream runs at a given format or bitrate. The driver holds the lead at
+	// one access unit of the running codec, so a stored value below that is raised rather than
+	// served - a lead shorter than a packet cannot be filled, only padded - and the report says
+	// so instead of showing a number the user did not ask for.
+	const uint32_t storedLead = Ioctl::EffectivePrerollMs(preference.prerollMs);
+	AppendLine(text, "pacing lead",
+			   status.pacingLeadMs > storedLead
+				   ? Format("%u ms ahead of the media clock (raised from the stored %u ms: one packet "
+							"does not fit in it)", status.pacingLeadMs, storedLead)
+				   : Format("%u ms ahead of the media clock", status.pacingLeadMs));
 	AppendLine(text, "buffered",
 			   Format("PCM %u ms of %u B, frames %u ms of %u B", status.pcmBufferedMs,
 					  status.pcmBufferedBytes, status.frameBufferedMs, status.frameBufferedBytes));

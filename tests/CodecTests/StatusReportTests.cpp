@@ -162,6 +162,28 @@ TEST(StatusReport_ShowsTheDriverSideLatency)
 	CHECK(Contains(spiked, "latency peak    180 ms (worst since this stream started)"));
 }
 
+// A lead the driver had to raise is reported as raised. A stored lead shorter than one access
+// unit cannot be served - the pacer would ask for a packet before it could be filled - so the
+// stream runs at the floor instead, and the report has to say that rather than show a number the
+// user did not ask for.
+TEST(StatusReport_ShowsARaisedLead)
+{
+	Ioctl::Status status = StreamingStatus();
+	status.pacingLeadMs = 45;
+	Ioctl::Preference preference = StreamingPreference();
+	preference.prerollMs = 20;
+	const std::string report = Report(false, status, preference);
+	CHECK(Contains(report, "45 ms ahead of the media clock (raised from the stored 20 ms: one packet "
+							"does not fit in it)"));
+
+	// A stream at or above the stored lead is the plain line: nothing was overridden.
+	status.pacingLeadMs = 60;
+	preference.prerollMs = 0; // the stored default
+	const std::string asStored = Report(false, status, preference);
+	CHECK(Contains(asStored, "60 ms ahead of the media clock\n"));
+	CHECK(!Contains(asStored, "raised from"));
+}
+
 TEST(StatusReport_ShowsWhatTheLatencyCost)
 {
 	// The counters that explain the latency number sit next to it, in the same session section

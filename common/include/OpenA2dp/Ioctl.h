@@ -54,6 +54,11 @@ constexpr uint32_t EffectivePrerollMs(uint32_t preferred) noexcept
 	return preferred == 0 ? kPrerollMs : preferred;
 }
 
+// Clock span the encoder service covers with one record (aptX, aptX HD); AAC writes one record
+// per access unit instead. The driver holds its pacing lead above a record, because a lead
+// shorter than the interval in which the producer hands audio over cannot be served.
+constexpr uint32_t kServiceRecordMs = 10;
+
 // Ring capacities, bytes (powers of two). PCM holds ~370 ms of 44.1 kHz stereo;
 // the frame ring holds ~1.6 s at 320 kbps.
 constexpr uint32_t kPcmRingBytes = 64 * 1024;

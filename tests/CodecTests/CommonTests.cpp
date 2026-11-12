@@ -233,6 +233,28 @@ TEST(LatencyBudget_TrimTargetIsTheLead)
 	CHECK_EQ(TrimTargetMs(0, kFrameSlackMs), kFrameSlackMs);
 }
 
+// A lead below one access unit can never be served: the pacer would ask for a packet before the
+// producer had the interval to fill it, so the floor is one unit plus the copy tick that has to
+// produce it. Above the floor the stored value stands, which is what makes it a floor and not a
+// target the driver imposes on the setting.
+TEST(LatencyBudget_LeadFloorCoversOneAccessUnit)
+{
+	using namespace LatencyBudget;
+	// One SBC packet of seven 128-sample frames is 20.3 ms at 44.1 kHz; it rounds up to 21, so
+	// the floor is 41 and not 40.
+	CHECK_EQ(LeadFloorMs(7 * 128, 44100), uint32_t{21 + kPcmSlackMs});
+	// A whole AAC frame is 23 ms at 44.1 kHz and 21 at 48 kHz: both round up, never down.
+	CHECK_EQ(LeadFloorMs(Ioctl::kAacSamplesPerFrame, 44100), uint32_t{24 + kPcmSlackMs});
+	CHECK_EQ(LeadFloorMs(Ioctl::kAacSamplesPerFrame, 48000), uint32_t{22 + kPcmSlackMs});
+	// One service record at 48 kHz is 480 samples: 10 ms.
+	CHECK_EQ(LeadFloorMs(48000 * Ioctl::kServiceRecordMs / 1000, 48000), uint32_t{10 + kPcmSlackMs});
+	// Nothing known, nothing raised.
+	CHECK_EQ(LeadFloorMs(0, 44100), uint32_t{0});
+	CHECK_EQ(LeadFloorMs(1024, 0), uint32_t{0});
+	// The shortest lead the setting allows is below every floor, which is why the clamp exists.
+	CHECK(LeadFloorMs(Ioctl::kAacSamplesPerFrame, 44100) > Ioctl::kMinPrerollMs);
+}
+
 // An underrun is audio the media clock asked for that the ring did not have. Two kinds of
 // silence are normal and must not count, or the number the panel shows would fire on a stream
 // with nothing wrong with it: the lead a stream pads at start, and the tail of a packet, which

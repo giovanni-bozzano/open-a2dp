@@ -109,6 +109,12 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->MediaCaughtUp = FALSE;
 	ctx->FrameTrimStrikes = 0;
 	ctx->MediaStartTime = KeQueryInterruptTime();
+	// Hold the lead above one packet: the pacer otherwise asks for audio the copy path has not
+	// had an interval to write, and every packet of the stream is padded with silence.
+	if (ctx->MediaOutMtu > Rtp::kHeaderSize)
+	{
+		ApplyLeadFloor(ctx, SbcPacketSamples(ctx));
+	}
 	// The PCM the endpoint queued before MediaStart predates this stream, exactly as the service
 	// encoders treat their own start: drop it, so the pacer fills the lead with silence rather
 	// than sending audio captured while the sink was not listening.

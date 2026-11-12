@@ -51,7 +51,7 @@ bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxS
 
 	// The clock span is a whole number of milliseconds; the carry absorbs the samples a frame
 	// cannot cover. A record can need one frame more than the span alone.
-	const uint32_t spanSamples = params.sampleRate / 100;
+	const uint32_t spanSamples = params.sampleRate * Ioctl::kServiceRecordMs / 1000;
 	const size_t maxFrames = (static_cast<size_t>(spanSamples) + samplesPerFrame - 1) / samplesPerFrame;
 	const uint32_t recordSamples = spanSamples + samplesPerFrame - 1;
 	if (maxFrames > 4096 || recordSamples > 4096)

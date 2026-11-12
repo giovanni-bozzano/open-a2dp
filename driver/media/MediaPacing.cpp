@@ -14,12 +14,35 @@ static ULONGLONG TargetSamples(DEVICE_CONTEXT* ctx, uint32_t rate)
 }
 
 // PCM samples (per channel) one packet of this stream carries. Caller holds MediaLock.
-static uint32_t PacketSamples(DEVICE_CONTEXT* ctx)
+uint32_t SbcPacketSamples(DEVICE_CONTEXT* ctx)
 {
 	const SbcFixed::Params& params = ctx->Encoder.GetParams();
 	const size_t frames =
 		SbcFixed::FramesPerPacket(params, ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket);
 	return static_cast<uint32_t>(frames * params.SamplesPerFrame());
+}
+
+// A lead shorter than one access unit cannot be served: the pacer asks for a packet's audio
+// before the producer has had an interval to fill it, so the deficit is padded with silence on
+// every packet - an underrun no sink and no amount of CPU could avoid. The lead is held at one
+// unit plus the copy tick that has to produce it. This is a floor, never a target: a stored lead
+// above it is used exactly as stored, so the setting still names the latency it produces.
+void ApplyLeadFloor(DEVICE_CONTEXT* ctx, uint32_t unitSamples)
+{
+	const uint32_t rate = ctx->ActiveSampleRate;
+	const uint32_t floorMs = LatencyBudget::LeadFloorMs(unitSamples, rate);
+	if (floorMs == 0 || ctx->PacingLeadMs >= floorMs)
+	{
+		return;
+	}
+	OA2DP_INFO(ctx, "Media", "stored pacing lead %u ms is shorter than one %s unit (%u samples, %u ms); using %u ms",
+		ctx->PacingLeadMs, CodecValueName(ctx->ActiveCodec), unitSamples,
+		(unitSamples * 1000u + rate - 1) / rate, floorMs);
+	ctx->PacingLeadMs = floorMs;
+	if (ctx->LatencyPeakMs < static_cast<LONG>(floorMs))
+	{
+		ctx->LatencyPeakMs = static_cast<LONG>(floorMs);
+	}
 }
 
 // True when the PCM ring holds at least the audio of one whole packet. Caller holds MediaLock.
@@ -57,7 +80,7 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	// past it the PCM is not late but missing, and holding the packet back would shrink the
 	// sink's lead for the rest of the stream without a single underrun being counted. A paused
 	// endpoint asks for nothing, so it keeps its place instead.
-	const uint32_t packetSamples = PacketSamples(ctx);
+	const uint32_t packetSamples = SbcPacketSamples(ctx);
 	const ULONGLONG waitLimit = packetSamples +
 		static_cast<ULONGLONG>(ctx->Encoder.GetParams().sampleRate) * LatencyBudget::kPcmSlackMs / 1000;
 	if (ctx->MediaCaughtUp && target - ctx->MediaSamplesSent < waitLimit && AudioStreamRunning(ctx) &&

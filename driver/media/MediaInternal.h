@@ -35,6 +35,12 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples);
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick);
 void TickService(DEVICE_CONTEXT* ctx, bool tick);
+// PCM samples (per channel) one SBC packet of this stream carries. Caller holds MediaLock.
+uint32_t SbcPacketSamples(DEVICE_CONTEXT* ctx);
+// Holds the pacing lead at one access unit of the negotiated codec plus the copy slack, so the
+// pacer never asks for a packet the producer has not had the interval to fill. Caller holds
+// MediaLock, and must call it before the service is told the stream started.
+void ApplyLeadFloor(DEVICE_CONTEXT* ctx, uint32_t unitSamples);
 void OnMediaWorkItem(_In_ WDFWORKITEM workItem);
 void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength);
 void StartAptx(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength);
