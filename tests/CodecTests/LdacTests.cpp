@@ -77,21 +77,23 @@ TEST(Ldac_IeCarriesItsOwnMasks)
 	uint8_t ie[kIeLength] = {};
 	REQUIRE(codec.BuildLocalCapabilities(ie, sizeof(ie)) == kIeLength);
 
-	// Vendor and codec IDs are little endian; the two masks sit in separate octets, and only
-	// the rates this pipeline can feed are offered.
+	// Vendor and codec IDs are little endian; the two masks sit in separate octets, and every
+	// rate the encoder takes is offered.
 	CHECK_EQ(ie[0], uint8_t{0x2D});
 	CHECK_EQ(ie[1], uint8_t{0x01});
 	CHECK_EQ(ie[2], uint8_t{0x00});
 	CHECK_EQ(ie[3], uint8_t{0x00});
 	CHECK_EQ(ie[4], uint8_t{0xAA});
 	CHECK_EQ(ie[5], uint8_t{0x00});
-	CHECK_EQ(ie[6], static_cast<uint8_t>(kSampleRate44100 | kSampleRate48000));
+	CHECK_EQ(ie[6], static_cast<uint8_t>(kSampleRate44100 | kSampleRate48000 | kSampleRate88200 |
+										 kSampleRate96000));
 	CHECK_EQ(ie[7], kChannelStereo);
 
 	uint8_t rates = 0;
 	uint8_t modes = 0;
 	REQUIRE(ParseIe(ie, sizeof(ie), rates, modes));
-	CHECK_EQ(rates, static_cast<uint8_t>(kSampleRate44100 | kSampleRate48000));
+	CHECK_EQ(rates, static_cast<uint8_t>(kSampleRate44100 | kSampleRate48000 | kSampleRate88200 |
+										 kSampleRate96000));
 	CHECK_EQ(modes, kChannelStereo);
 
 	// A sink picks one rate and stereo from what we offered.
@@ -112,10 +114,17 @@ TEST(Ldac_RejectsConfigurationsItCannotRun)
 	CHECK_EQ(ValidateIe(ie, sizeof(ie)),
 			 static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency));
 
-	// The higher rates are in the IE but nothing here feeds them.
+	// The high rates are ones the endpoint can be opened at, so they are accepted too.
 	WriteIe(kSampleRate88200, kChannelStereo, ie);
+	CHECK_EQ(ValidateIe(ie, sizeof(ie)), uint8_t{0});
+	WriteIe(kSampleRate96000, kChannelStereo, ie);
+	CHECK_EQ(ValidateIe(ie, sizeof(ie)), uint8_t{0});
+
+	// A bit outside the rate field is no rate at all.
+	WriteIe(kSampleRate48000, kChannelStereo, ie);
+	ie[6] = 0x01;
 	CHECK_EQ(ValidateIe(ie, sizeof(ie)),
-			 static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency));
+			 static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency));
 
 	// Mono and dual channel are legal LDAC modes, not modes this source runs.
 	WriteIe(kSampleRate48000, kChannelMono, ie);
@@ -169,6 +178,50 @@ TEST(Ldac_SelectsASinkCompatibleConfiguration)
 	WriteIe(kSampleRate48000, kChannelStereo, foreign);
 	foreign[4] = 0x01; // aptX's codec id
 	CHECK(!codec.SelectConfiguration(foreign, sizeof(foreign), preference, out));
+}
+
+// The high rates are ordinary configurations: the sink can propose them, the selector picks
+// them from the endpoint's rate, and the encoder runs at them.
+TEST(Ldac_SelectsTheHighRates)
+{
+	LdacCodec codec;
+	CodecPreference preference;
+	A2dpCodecConfig out = {};
+
+	REQUIRE(codec.SelectConfiguration(
+			ConfigWith(static_cast<uint8_t>(kSampleRate88200 | kSampleRate96000), kChannelStereo).ie,
+			kIeLength, preference, out));
+	CHECK_EQ(out.ie[6], kSampleRate96000);
+
+	preference.preferredSampleRate = 88200;
+	REQUIRE(codec.SelectConfiguration(
+			ConfigWith(static_cast<uint8_t>(kSampleRate88200 | kSampleRate96000), kChannelStereo).ie,
+			kIeLength, preference, out));
+	CHECK_EQ(out.ie[6], kSampleRate88200);
+
+	// A sink that only has 44.1 gets 44.1 even when the endpoint runs at 96 kHz.
+	preference.preferredSampleRate = 96000;
+	REQUIRE(codec.SelectConfiguration(ConfigWith(kSampleRate44100, kChannelStereo).ie, kIeLength,
+									  preference, out));
+	CHECK_EQ(out.ie[6], kSampleRate44100);
+}
+
+TEST(Ldac_EncoderRunsAt96k)
+{
+	auto encoder = MakeEncoder(kSampleRate96000);
+	REQUIRE(encoder != nullptr);
+	CHECK_EQ(encoder->InputFormat().sampleRate, uint32_t{96000});
+
+	std::vector<uint8_t> pcm = Tone(96000);
+	std::vector<uint8_t> out(kMaxFrameBytes);
+	size_t packetBytes = 0;
+	for (int call = 0; call < 8 && packetBytes == 0; ++call) {
+		size_t written = 0;
+		REQUIRE(SUCCEEDED(encoder->Encode(pcm.data(), out.data(), out.size(), written)));
+		packetBytes = written;
+	}
+	CHECK(packetBytes > 0);
+	CHECK(packetBytes <= kMaxFrameBytes);
 }
 
 TEST(Ldac_FactoryBuildsTheVendorCodec)

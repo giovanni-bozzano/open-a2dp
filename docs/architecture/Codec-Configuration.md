@@ -18,12 +18,16 @@ offers every format the sink advertises, a pinned rate and channel count is offe
 driver asserts no format on its own; Windows opens the listed one and its format reaches the
 encoder when the stream runs.
 
-The list is 44100 stereo, 44100 mono, 48000 stereo, 48000 mono unless a format is pinned; the
-first entry is also the assigned default of both mode lists. The 16-bit variants are listed
-together with the 24-in-32 ones while aptX HD can run (see
-[PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)); the 16-bit list follows the
-sink's SBC rate/channel capabilities, or its classic aptX ones where SBC cannot play the
-format. Codec settings never narrow the list; only the endpoint format setting does.
+The list holds one entry per rate the codecs can play - 16000, 32000, 44100, 48000, 88200 and
+96000 Hz - in both channel counts, unless a format is pinned; 44100 stereo leads, and the
+first entry is also the assigned default of both mode lists. A rate is listed only while the
+codec that owns it can run: SBC's 16 and 32 kHz, AAC's 32 kHz and LDAC's 88.2 and 96 kHz each
+follow that codec's registered provider and the sink's advertisement for it. The 16-bit
+variants are listed together with the 24-in-32 ones while an encoder that reads or narrows
+24-in-32 can run (see [PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)); the
+16-bit list follows the sink's SBC rate/channel capabilities, or its classic aptX or LDAC ones
+where SBC cannot play the format. Codec settings never narrow the list, except that a forced
+codec leaves only what that codec can carry; only the endpoint format setting pins it.
 
 Discovery edits the list while the device runs: `AcxDataFormatListRemoveDataFormat` and
 `AcxDataFormatListAddDataFormat` change the pin's RAW and DEFAULT-mode lists in place, ACX
@@ -47,10 +51,12 @@ device start, not per request. `EvtAcxPinSetDataFormat` is not a Sound-settings 
 The stream format arrives at `OnCreateStream`, is validated as PCM the endpoint lists (16-bit,
 or 24-in-32 when such a format is listed), and renegotiates AVDTP when it differs.
 
-The endpoint goes no further than 44.1/48 kHz by design: A2DP SBC defines no higher rate, the
-Media Foundation AAC encoder this driver feeds stops at those two, and the native Windows A2DP
-endpoint does the same. 16-bit is what SBC, AAC and classic aptX consume; 24-in-32 is listed
-while aptX HD can run, and the other codecs narrow it with `Pcm::Narrow24To16` (rounded,
+The endpoint offers every rate the encoders take and no more: A2DP SBC defines 16, 32, 44.1
+and 48 kHz, the Media Foundation AAC encoder accepts 32, 44.1 and 48 kHz (measured - it
+refuses 8 to 24 and 64 to 96 kHz with `MF_E_INVALIDMEDIATYPE`), and LDAC runs 44.1, 48, 88.2
+and 96 kHz. The native Windows A2DP endpoint stops at 44.1/48, so a higher rate is offered only
+while LDAC can run. 16-bit is what SBC, AAC and classic aptX consume; 24-in-32 is listed while
+aptX HD or LDAC can run, and the other codecs narrow it with `Pcm::Narrow24To16` (rounded,
 saturating).
 
 Logs report `endpoint formats` (what is listed, with rate, channels and depth - provisional
@@ -83,7 +89,7 @@ instead of stored, so reading a preference back always shows what the driver wil
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and the media MTU | highest the sink accepts, up to the MTU ceiling |
 | Pacing lead | `CodecPreferencePrerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
 | SBC frames per packet | `CodecPreferenceSbcFramesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
-| Endpoint format | `SelectedSampleRate`, `SelectedChannels` | `format [auto\|<rate> <channels>]` | automatic, or 44100/48000 Hz with 1 or 2 channels the sink advertises | automatic (every sink format) |
+| Endpoint format | `SelectedSampleRate`, `SelectedChannels` | `format [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels the sink advertises | automatic (every sink format) |
 
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
 `CodecPreferenceEndpointChannels` are obsolete and neither read nor written.
@@ -127,7 +133,7 @@ negotiation, and a bitpool is lifted to the sink's minimum and capped at its max
 
 | SBC field | Supported | Chosen by |
 |---|---|---|
-| Sample rate | 44.1, 48 kHz | endpoint format, must be advertised by the sink |
+| Sample rate | 16, 32, 44.1, 48 kHz | endpoint format, must be advertised by the sink |
 | Channel mode | mono, dual, stereo, joint stereo | endpoint channel count, mono or joint stereo preferred |
 | Block length | 4, 8, 12, 16 | preference, else 16 first |
 | Subbands | 4, 8 | preference, else 8 first |
@@ -137,18 +143,25 @@ negotiation, and a bitpool is lifted to the sink's minimum and capped at its max
 | AAC field | Supported | Chosen by |
 |---|---|---|
 | Object type | MPEG-2 LC, MPEG-4 LC | MPEG-2 LC first |
-| Sample rate | 44.1, 48 kHz | endpoint format |
+| Sample rate | 32, 44.1, 48 kHz | endpoint format |
 | Channels | 1, 2 | endpoint channel count, else stereo |
 | Bitrate | 96, 128, 160, 192, 256, 320 kbps | preference, capped at the sink maximum and the MTU |
 | VBR | off | - |
 
-The Media Foundation encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps are
-rejected). A2DP sends one access unit per media packet, so the bitrate is also capped by what one
-packet carries: at the 895-byte MTU (883 payload bytes) the ceiling is 256 kbps at 44.1 kHz and
-320 kbps at 48 kHz. Measured on the encoder, the largest access unit is the average frame plus
+AAC runs at 32, 44.1 and 48 kHz because those are the rates the encoder sets types for; it
+refuses the rest of the IE's rate field (8 to 24 and 64 to 96 kHz) with
+`MF_E_INVALIDMEDIATYPE`, which `AacConfig::EncoderSupportsRate` mirrors. The Media Foundation
+encoder accepts exactly those six CBR bitrates (224, 288 and 384 kbps are rejected). A2DP sends one access unit per media packet, so the bitrate is also capped by what one
+packet carries: at the 895-byte MTU (883 payload bytes) the ceiling is 256 kbps at 44.1 kHz,
+320 kbps at 48 kHz and 192 kbps at 32 kHz. Measured on the encoder, the largest access unit is the average frame plus
 about eleven bytes - 753 B at 256 kbps/44.1 kHz, 864 B at 320 kbps/48 kHz - so the selector keeps
 16 bytes of headroom. Fragmentation is not used: the AOSP stack also sends one LATM element per
 packet and lowers the bitrate to the MTU instead.
+
+LDAC negotiates one of 44.1, 48, 88.2 or 96 kHz - the sink's own rate equal to the endpoint's -
+and stereo only, so a 24-in-32 endpoint is narrowed per sample by the service. Its quality
+mode is the one local setting here: it is never negotiated, it travels to the service in the
+stream start event, and the sink is not told which one is in use.
 
 The MTU a negotiation is capped against is the one the driver asks for, because discovery runs
 before the media channel exists. If the sink grants less, the driver suspends and reconfigures in

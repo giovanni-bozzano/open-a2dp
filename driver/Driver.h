@@ -43,15 +43,17 @@ inline constexpr USHORT AvdtpPsm = OpenA2dp::Avdtp::kPsm;
 // Defined in OpenA2dp/Ioctl.h so the driver and the encoder service agree.
 inline constexpr USHORT MediaMaxMtu = static_cast<USHORT>(OpenA2dp::Ioctl::kMediaMaxMtu);
 
-// Render endpoint formats: PCM at 44.1 and 48 kHz, mono and stereo, in the two depths the
-// codecs can consume. Those are the two rates every A2DP sink supports and the channel
-// counts both codecs can encode, so whichever format Windows opens the stream with can be
-// negotiated. AudioSampleRate and AudioChannels stay the defaults the endpoint reports
-// before a stream exists.
+// Render endpoint formats: PCM at every rate an encoder here can take - SBC's 16, 32, 44.1
+// and 48 kHz, AAC's 32, 44.1 and 48, LDAC's 88.2 and 96 - mono and stereo, in the two depths
+// the codecs consume. 44.1 kHz leads because Windows plays the first format listed; the rest
+// follow in preference order. A rate is listed only while a codec that can play it is
+// registered and advertised, so a format the engine opens always has an encoder behind it.
+// AudioSampleRate and AudioChannels stay the defaults the endpoint reports before a stream
+// exists.
 inline constexpr ULONG AudioSampleRate = 44100;
 inline constexpr USHORT AudioChannels = 2;
 inline constexpr USHORT AudioBytesPerFrame = AudioChannels * sizeof(INT16);
-inline constexpr ULONG AudioRenderRates[] = {44100, 48000};
+inline constexpr ULONG AudioRenderRates[] = {44100, 48000, 88200, 96000, 32000, 16000};
 inline constexpr ULONG AudioRenderRateCount = ARRAYSIZE(AudioRenderRates);
 inline constexpr USHORT AudioRenderChannels[] = {2, 1};
 inline constexpr ULONG AudioRenderChannelCount = ARRAYSIZE(AudioRenderChannels);

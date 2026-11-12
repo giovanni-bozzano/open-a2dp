@@ -387,8 +387,8 @@ void DeviceLoop(const std::wstring& linkName)
 				}
 
 				uint8_t ie[Ldac::kIeLength] = {};
-				Ldac::WriteIe(ev.sampleRate == 44100 ? Ldac::kSampleRate44100 : Ldac::kSampleRate48000,
-					Ldac::kChannelStereo, ie);
+				// The event carries the endpoint's rate, which is one of LDAC's four.
+				Ldac::WriteIe(Ldac::RateBit(ev.sampleRate), Ldac::kChannelStereo, ie);
 				A2dpCodecConfig config = {};
 				config.codec = CodecType::Vendor;
 				std::memcpy(config.ie, ie, sizeof(ie));

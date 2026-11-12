@@ -1133,10 +1133,11 @@ void CreateControls(HWND hwnd)
 
 	// Worst to best, so the better format is always the lower entry: rate first, then channels.
 	AddComboItem(hwnd, kFormatCombo, L"Automatic (every sink format)", 0);
-	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, mono", FormatComboValue(44100, 1));
-	AddComboItem(hwnd, kFormatCombo, L"44100 Hz, stereo", FormatComboValue(44100, 2));
-	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, mono", FormatComboValue(48000, 1));
-	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, stereo", FormatComboValue(48000, 2));
+	for (const uint32_t rate : {16000u, 32000u, 44100u, 48000u, 88200u, 96000u})
+	{
+		AddComboItem(hwnd, kFormatCombo, Format(L"%u Hz, mono", rate).c_str(), FormatComboValue(rate, 1));
+		AddComboItem(hwnd, kFormatCombo, Format(L"%u Hz, stereo", rate).c_str(), FormatComboValue(rate, 2));
+	}
 
 	AddComboItem(hwnd, kCodecCombo, L"Automatic (LDAC, aptX HD, aptX, AAC, then SBC)", kCodecAuto);
 	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);

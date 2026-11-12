@@ -14,10 +14,10 @@ void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 		OA2DP_WARN(ctx, "Media", "invalid LDAC configuration");
 		return;
 	}
-	const uint32_t sampleRate = (sampleRates & Ldac::kSampleRate44100) != 0 ? 44100u : 48000u;
+	const uint32_t sampleRate = Ldac::RateValue(sampleRates);
 	// The encoder takes 16-bit stereo by definition; the service narrows a 24-in-32 ring, so
 	// the endpoint may run either depth.
-	if (sampleRate != ctx->PinSampleRate || ctx->PinChannels != 2 ||
+	if (sampleRate == 0 || sampleRate != ctx->PinSampleRate || ctx->PinChannels != 2 ||
 		!AptxPinDepthUsable(ctx->PinValidBits, Ldac::kBitsPerSample))
 	{
 		OA2DP_WARN(ctx, "Media",

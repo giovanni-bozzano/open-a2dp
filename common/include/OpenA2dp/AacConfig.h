@@ -82,7 +82,13 @@ constexpr uint32_t ReadBitrate(const uint8_t* ie) noexcept
 	return (static_cast<uint32_t>(ie[3] & 0x7F) << 16) | (static_cast<uint32_t>(ie[4]) << 8) | ie[5];
 }
 
-constexpr bool EncoderSupportsRate(uint32_t rate) noexcept { return rate == 44100 || rate == 48000; }
+// Measured on the Media Foundation encoder: it sets its types for 32, 44.1 and 48 kHz and
+// refuses every other rate of the AAC field - 8 to 24 kHz and 64 to 96 kHz - with
+// MF_E_INVALIDMEDIATYPE, so those three are the rates this codec advertises.
+constexpr bool EncoderSupportsRate(uint32_t rate) noexcept
+{
+	return rate == 32000 || rate == 44100 || rate == 48000;
+}
 
 // Highest supported bitrate <= requested and <= limit (0 = no limit), or 0.
 constexpr uint32_t ClampBitrate(uint32_t requested, uint32_t limit) noexcept
@@ -134,14 +140,16 @@ constexpr bool ParseConfiguredIe(const uint8_t* ie, size_t len, Params& out) noe
 	return true;
 }
 
-// Everything the driver can play: MPEG-2/4 LC, 44.1/48 kHz, mono/stereo, CBR up to the
-// encoder ceiling. Which bitrate a stream actually gets is decided per session by
-// Select with the sink capabilities and the media MTU: 256 kbps at 44.1 kHz and 320 kbps
-// at 48 kHz for the 895-byte MTU (883 payload bytes, one access unit per packet).
+// Everything the driver can play: MPEG-2/4 LC, 32/44.1/48 kHz, mono/stereo, CBR up to the
+// encoder ceiling. Which bitrate a stream actually gets is decided per session by Select with
+// the sink capabilities and the media MTU: 256 kbps at 44.1 kHz and 320 kbps at 48 kHz for
+// the 895-byte MTU (883 payload bytes, one access unit per packet), and 192 kbps at 32 kHz.
+constexpr uint16_t kLocalRateMask = SampleRateMask(32000) | SampleRateMask(44100) | SampleRateMask(48000);
+
 constexpr uint8_t kLocalCapabilities[kIeLength] = {
 	kObjectMpeg2Lc | kObjectMpeg4Lc,
-	static_cast<uint8_t>((SampleRateMask(44100) | SampleRateMask(48000)) >> 4),
-	static_cast<uint8_t>((((SampleRateMask(44100) | SampleRateMask(48000)) & 0x0F) << 4) | kChannels1 | kChannels2),
+	static_cast<uint8_t>(kLocalRateMask >> 4),
+	static_cast<uint8_t>(((kLocalRateMask & 0x0F) << 4) | kChannels1 | kChannels2),
 	static_cast<uint8_t>((kMaxBitrate >> 16) & 0x7F),
 	static_cast<uint8_t>(kMaxBitrate >> 8),
 	static_cast<uint8_t>(kMaxBitrate),
@@ -175,6 +183,8 @@ constexpr bool Select(const uint8_t* remoteIe, size_t remoteIeLength, uint32_t p
 		p.sampleRate = 44100;
 	} else if (remoteFs & SampleRateMask(48000)) {
 		p.sampleRate = 48000;
+	} else if (remoteFs & SampleRateMask(32000)) {
+		p.sampleRate = 32000;
 	} else {
 		return false;
 	}

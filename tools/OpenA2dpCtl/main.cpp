@@ -40,7 +40,7 @@ Usage:
                      [--allocation <loudness|snr>] [--preroll <ms>]
                      [--frames <n>] [--ldac-quality <high|standard|mobile>]
                      [--device <mac|index>]
-  OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
+  OpenA2dpCtl format [<auto|16000|32000|44100|48000|88200|96000> [<1|2>]] [--device <mac|index>]
   OpenA2dpCtl driver [<opena2dp|windows>] [--device <mac|index>]
   OpenA2dpCtl reset [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
@@ -652,7 +652,8 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		if (!IsDecimal(rateArg) || !IsDecimal(channelsArg))
 		{
 			CloseHandle(handle);
-			std::fprintf(stderr, "format takes auto, or a rate (44100, 48000) and a channel count (1, 2)\n");
+			std::fprintf(stderr, "format takes auto, or a rate (16000, 32000, 44100, 48000, 88200, 96000) "
+								 "and a channel count (1, 2)\n");
 			return 2;
 		}
 		requested.sampleRate = static_cast<uint32_t>(std::strtoul(rateArg.c_str(), nullptr, 10));
@@ -674,9 +675,15 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
 	}
-	if (requested.sampleRate != 0 && status.sinkRates != 0)
+	// The mask only carries SBC's rates; a rate from another codec's set (LDAC's 88.2 and
+	// 96 kHz) is left for the driver to accept or refuse against the sink's advertisement.
+	const uint32_t rateBit = requested.sampleRate == 44100 ? 1u
+		: requested.sampleRate == 48000 ? 2u
+		: requested.sampleRate == 32000 ? 4u
+		: requested.sampleRate == 16000 ? 8u
+		: 0u;
+	if (requested.sampleRate != 0 && status.sinkRates != 0 && rateBit != 0)
 	{
-		const uint32_t rateBit = requested.sampleRate == 44100 ? 1u : 2u;
 		const uint32_t channelBit = requested.channels == 1 ? 1u : 2u;
 		if ((status.sinkRates & rateBit) == 0 || (status.sinkChannels & channelBit) == 0)
 		{

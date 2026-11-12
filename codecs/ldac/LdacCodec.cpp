@@ -130,9 +130,10 @@ size_t LdacCodec::BuildLocalCapabilities(uint8_t* ie, size_t capacity) const noe
 	if (ie == nullptr || capacity < kIeLength) {
 		return 0;
 	}
-	// The rates this pipeline runs: the endpoint is opened at 44.1 or 48 kHz, so the 88.2 and
-	// 96 kHz bits stay clear rather than offering a configuration nothing can feed.
-	WriteIe(static_cast<uint8_t>(kSampleRate44100 | kSampleRate48000), kChannelStereo, ie);
+	// Every rate the encoder takes; the endpoint offers each of them as well, so any bit here
+	// can be negotiated and fed.
+	WriteIe(static_cast<uint8_t>(kSampleRate44100 | kSampleRate48000 | kSampleRate88200 | kSampleRate96000),
+		kChannelStereo, ie);
 	return kIeLength;
 }
 
@@ -148,16 +149,23 @@ bool LdacCodec::SelectConfiguration(const uint8_t* remoteIe, size_t remoteIeLeng
 	if ((modes & kChannelStereo) == 0) {
 		return false;
 	}
+	// The endpoint's rate when the sink offers it, else the sink's own preference: 48 kHz ahead
+	// of 44.1, and the high rates only after those two.
 	uint8_t rate = 0;
-	if (preference.preferredSampleRate == 44100 && (rates & kSampleRate44100) != 0) {
-		rate = kSampleRate44100;
-	} else if (preference.preferredSampleRate == 48000 && (rates & kSampleRate48000) != 0) {
-		rate = kSampleRate48000;
-	} else if ((rates & kSampleRate48000) != 0) {
-		rate = kSampleRate48000;
-	} else if ((rates & kSampleRate44100) != 0) {
-		rate = kSampleRate44100;
+	const uint8_t preferred = RateBit(preference.preferredSampleRate);
+	if (preferred != 0 && (rates & preferred) != 0) {
+		rate = preferred;
 	} else {
+		for (const uint8_t candidate :
+				{static_cast<uint8_t>(kSampleRate48000), static_cast<uint8_t>(kSampleRate44100),
+				 static_cast<uint8_t>(kSampleRate96000), static_cast<uint8_t>(kSampleRate88200)}) {
+			if ((rates & candidate) != 0) {
+				rate = candidate;
+				break;
+			}
+		}
+	}
+	if (rate == 0) {
 		return false;
 	}
 	out = {};
@@ -178,8 +186,8 @@ HRESULT LdacCodec::CreateEncoder(const A2dpCodecConfig& config,
 	if (config.codec != CodecType::Vendor || ValidateConfiguration(config.ie, config.ieLength) != 0) {
 		return E_INVALIDARG;
 	}
-	const uint8_t rate = static_cast<uint8_t>(config.ie[6] & kSampleRateMask);
-	encoder = std::make_unique<LdacEncoder>(rate == kSampleRate44100 ? 44100u : 48000u, quality_);
+	const uint32_t sampleRate = RateValue(static_cast<uint8_t>(config.ie[6] & kSampleRateMask));
+	encoder = std::make_unique<LdacEncoder>(sampleRate, quality_);
 	return S_OK;
 }
 

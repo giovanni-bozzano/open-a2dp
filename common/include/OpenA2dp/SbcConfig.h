@@ -153,11 +153,23 @@ constexpr uint8_t MaxBitpoolForMode(uint8_t mode, uint8_t subbands) noexcept
 }
 
 // The sample rates and channel modes an advertised capability byte (IE byte 0) offers, as
-// bit masks the driver publishes to the CLI: bit 0 = 44100 Hz / mono, bit 1 = 48000 Hz /
-// stereo. 0 means the sink has not been queried yet.
+// bit masks the driver publishes to the CLI: bit 0 = 44100 Hz, bit 1 = 48000 Hz, bit 2 =
+// 32000 Hz and bit 3 = 16000 Hz for the rates, then mono and stereo for the channels. 0 means
+// the sink has not been queried yet.
 constexpr uint32_t AdvertisedRates(uint8_t capabilities) noexcept
 {
-	return (capabilities & kFs44100 ? 1u : 0u) | (capabilities & kFs48000 ? 2u : 0u);
+	return (capabilities & kFs44100 ? 1u : 0u) | (capabilities & kFs48000 ? 2u : 0u) |
+			(capabilities & kFs32000 ? 4u : 0u) | (capabilities & kFs16000 ? 8u : 0u);
+}
+
+// The AdvertisedRates bit of a rate, 0 when the rate is not one SBC has.
+constexpr uint32_t AdvertisedRateBit(uint32_t rate) noexcept
+{
+	return rate == 44100 ? 1u
+		: rate == 48000 ? 2u
+		: rate == 32000 ? 4u
+		: rate == 16000 ? 8u
+		: 0u;
 }
 
 constexpr uint32_t AdvertisedChannels(uint8_t capabilities) noexcept
@@ -174,9 +186,13 @@ constexpr bool SupportsFormat(uint8_t capabilities, uint32_t rate, uint8_t chann
 	{
 		return false;
 	}
-	if (rate != 0 && (AdvertisedRates(capabilities) & (rate == 44100 ? 1u : 2u)) == 0)
+	if (rate != 0)
 	{
-		return false;
+		const uint32_t bit = AdvertisedRateBit(rate);
+		if (bit == 0 || (AdvertisedRates(capabilities) & bit) == 0)
+		{
+			return false;
+		}
 	}
 	return channels == 0 || (AdvertisedChannels(capabilities) & channels) != 0;
 }

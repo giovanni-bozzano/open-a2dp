@@ -17,11 +17,12 @@ constexpr LONGLONG ResponseTimeoutMs = 3000;
 // no renegotiation, short enough that playback resumes on its own.
 constexpr LONGLONG ProviderLossGraceMs = 2000;
 constexpr uint8_t SbcMaxBitpool = 53;
-// What the driver can actually play. The endpoint serves 16-bit PCM at 44.1 or 48 kHz,
-// mono or stereo, and MediaStart refuses any other rate or channel count, so 16/32 kHz is
-// not advertised: that would let a sink configure a stream we then cannot start.
+// What the driver can actually play. The endpoint serves 16-bit PCM at every rate SBC has -
+// 16, 32, 44.1 and 48 kHz - mono or stereo, and MediaStart refuses any other rate or channel
+// count, so exactly those bits are advertised.
 constexpr uint8_t kSbcDriverCapabilities[SbcConfig::kIeLength] = {
-	SbcConfig::kFs44100 | SbcConfig::kFs48000 | SbcConfig::kAllModes,
+	SbcConfig::kFs16000 | SbcConfig::kFs32000 | SbcConfig::kFs44100 | SbcConfig::kFs48000 |
+			SbcConfig::kAllModes,
 	SbcConfig::kAllBlocks | SbcConfig::kAllSubbands | SbcConfig::kAllAllocations,
 	SbcConfig::kMinBitpool,
 	SbcConfig::kMaxBitpool};

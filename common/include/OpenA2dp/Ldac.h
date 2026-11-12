@@ -91,15 +91,34 @@ constexpr void WriteIe(uint8_t sampleRates, uint8_t channelModes, uint8_t* ie) n
 	ie[7] = channelModes;
 }
 
+// The IE rate bit of a rate, and the rate of an IE bit; 0 when the value is not one LDAC has.
+constexpr uint8_t RateBit(uint32_t sampleRate) noexcept
+{
+	return sampleRate == 44100 ? kSampleRate44100
+		: sampleRate == 48000 ? kSampleRate48000
+		: sampleRate == 88200 ? kSampleRate88200
+		: sampleRate == 96000 ? kSampleRate96000
+		: 0;
+}
+
+constexpr uint32_t RateValue(uint8_t rateBit) noexcept
+{
+	return rateBit == kSampleRate44100 ? 44100u
+		: rateBit == kSampleRate48000 ? 48000u
+		: rateBit == kSampleRate88200 ? 88200u
+		: rateBit == kSampleRate96000 ? 96000u
+		: 0u;
+}
+
 constexpr bool SingleBit(uint8_t value) noexcept
 {
 	return value != 0 && (value & static_cast<uint8_t>(value - 1)) == 0;
 }
 
-// A configuration the sink proposes: exactly one rate at 44.1 or 48 kHz and stereo. The higher
-// rates are in the IE but this pipeline runs the endpoint at 44.1/48 kHz, so they are refused
-// rather than negotiated and resampled. Returns 0 or the AVDTP error code, the same contract
-// as the codec library's validator.
+// A configuration the sink proposes: exactly one rate and stereo. Every rate in the IE is one
+// the render endpoint can serve, because the endpoint's formats follow these bits, so the
+// rate only has to be a single one. Returns 0 or the AVDTP error code, the same contract as
+// the codec library's validator.
 constexpr uint8_t ValidateIe(const uint8_t* ie, size_t length) noexcept
 {
 	if (ie == nullptr || length < kIeLength) {
@@ -112,9 +131,6 @@ constexpr uint8_t ValidateIe(const uint8_t* ie, size_t length) noexcept
 	}
 	if (!SingleBit(rates)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidSamplingFrequency);
-	}
-	if (rates != kSampleRate44100 && rates != kSampleRate48000) {
-		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
 	}
 	if (!SingleBit(modes)) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::InvalidChannelMode);

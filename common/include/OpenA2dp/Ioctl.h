@@ -293,9 +293,9 @@ struct Status {
 	// sample rate. The bitrate limit is independent of the codec in use.
 	uint32_t mediaMtu;
 	uint32_t bitrateLimit;
-	// Formats the sink advertised in the last discovery, 0 until one ran: a bit per rate
-	// (1 = 44100 Hz, 2 = 48000 Hz) and a bit per channel count (1 = mono, 2 = stereo). A
-	// supported endpoint format has to be covered by both masks.
+	// Formats the sink advertised in the last discovery, 0 until one ran: a bit per SBC rate
+	// (1 = 44100 Hz, 2 = 48000 Hz, 4 = 32000 Hz, 8 = 16000 Hz) and a bit per channel count
+	// (1 = mono, 2 = stereo). A supported endpoint format has to be covered by both masks.
 	uint32_t sinkRates;
 	uint32_t sinkChannels;
 	// kSinkCodec* bits for the codecs the sink advertised in the last discovery, 0 until
@@ -350,10 +350,29 @@ struct Preference {
 // also keeps every format available to a WASAPI exclusive-mode player.
 struct EndpointFormat {
 	uint32_t abiVersion;
-	uint32_t sampleRate; // 0 = automatic, 44100 or 48000 otherwise
+	uint32_t sampleRate; // 0 = automatic, else one of kEndpointRates
 	uint32_t channels;   // 0 = automatic, 1 or 2 otherwise
 	uint32_t reserved;
 };
+
+// The PCM rates the render endpoint offers, in the order it prefers them: 44.1 kHz leads
+// because Windows plays the first listed format. Together they cover every rate an encoder
+// here can take - SBC's 16, 32, 44.1 and 48 kHz, AAC's 32, 44.1 and 48, and LDAC's 44.1, 48,
+// 88.2 and 96 - and the driver lists one of them only while a codec can actually play it.
+constexpr uint32_t kEndpointRates[] = {44100, 48000, 88200, 96000, 32000, 16000};
+constexpr uint32_t kEndpointRateCount = sizeof(kEndpointRates) / sizeof(kEndpointRates[0]);
+
+constexpr bool EndpointRateSupported(uint32_t sampleRate) noexcept
+{
+	for (uint32_t i = 0; i < kEndpointRateCount; ++i)
+	{
+		if (kEndpointRates[i] == sampleRate)
+		{
+			return true;
+		}
+	}
+	return false;
+}
 
 constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
 {
@@ -361,7 +380,7 @@ constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
 	{
 		return format.sampleRate == 0 && format.channels == 0;
 	}
-	const bool rateOk = format.sampleRate == 44100 || format.sampleRate == 48000;
+	const bool rateOk = EndpointRateSupported(format.sampleRate);
 	const bool channelsOk = format.channels == 1 || format.channels == 2;
 	return rateOk && channelsOk;
 }

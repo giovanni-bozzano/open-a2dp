@@ -170,8 +170,18 @@ TEST(Aac_SelectConfiguration_RejectsUnsupported)
 	A2dpCodecConfig cfg;
 	const uint8_t ltpOnly[6] = {0x20, 0x01, 0x84, 0x03, 0xE8, 0x00};
 	CHECK(!codec.SelectConfiguration(ltpOnly, 6, CodecPreference{}, cfg));
+	// 32 kHz is a rate the encoder takes, so the selector offers it; 96 kHz is in the IE's
+	// field but the encoder refuses it.
 	const uint8_t only32k[6] = {0x80, 0x02, 0x04, 0x03, 0xE8, 0x00};
-	CHECK(!codec.SelectConfiguration(only32k, 6, CodecPreference{}, cfg));
+	CodecPreference at32k;
+	at32k.mediaPayloadBytes = 883;
+	REQUIRE(codec.SelectConfiguration(only32k, 6, at32k, cfg));
+	Params chosen32k;
+	REQUIRE(ParseConfiguredIe(cfg.ie, cfg.ieLength, chosen32k));
+	CHECK_EQ(chosen32k.sampleRate, uint32_t{32000});
+	CHECK_EQ(chosen32k.bitrate, uint32_t{192000});
+	const uint8_t only96k[6] = {0x80, 0x00, 0x14, 0x03, 0xE8, 0x00};
+	CHECK(!codec.SelectConfiguration(only96k, 6, CodecPreference{}, cfg));
 }
 
 TEST(Aac_ValidateConfiguration)
@@ -182,7 +192,46 @@ TEST(Aac_ValidateConfiguration)
 	const uint8_t vbr[6] = {0x80, 0x01, 0x04, 0x82, 0xEE, 0x00};
 	CHECK_EQ(codec.ValidateConfiguration(vbr, 6), static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedBitRate));
 	const uint8_t rate32k[6] = {0x80, 0x02, 0x04, 0x02, 0xEE, 0x00};
-	CHECK_EQ(codec.ValidateConfiguration(rate32k, 6), static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency));
+	CHECK_EQ(codec.ValidateConfiguration(rate32k, 6), uint8_t{0});
+	const uint8_t rate96k[6] = {0x80, 0x00, 0x14, 0x02, 0xEE, 0x00};
+	CHECK_EQ(codec.ValidateConfiguration(rate96k, 6), static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency));
+}
+
+// 32 kHz is the one rate below 44.1 the encoder takes; the frames still have to fit one media
+// packet there, which is why the selector's MTU cap lands on 192 kbps.
+TEST(Aac_EncoderRunsAt32k)
+{
+	AacCodec codec;
+	Params p;
+	p.sampleRate = 32000;
+	p.channels = 2;
+	p.bitrate = 192000;
+	A2dpCodecConfig cfg;
+	cfg.codec = CodecType::Aac;
+	WriteIe(p, cfg.ie);
+	cfg.ieLength = kIeLength;
+
+	std::unique_ptr<IA2dpEncoder> encoder;
+	REQUIRE(SUCCEEDED(codec.CreateEncoder(cfg, encoder)));
+	REQUIRE(encoder != nullptr);
+	CHECK_EQ(encoder->InputFormat().sampleRate, uint32_t{32000});
+	CHECK_EQ(encoder->SamplesPerFrame(), uint32_t{1024});
+
+	std::vector<int16_t> pcm(1024 * 2);
+	std::vector<uint8_t> au(encoder->MaxFrameBytes() * 2);
+	size_t produced = 0;
+	for (int i = 0; i < 8; ++i)
+	{
+		size_t written = 0;
+		REQUIRE(SUCCEEDED(encoder->Encode(reinterpret_cast<const uint8_t*>(pcm.data()), au.data(),
+										 au.size(), written)));
+		if (written != 0)
+		{
+			++produced;
+			CHECK(written <= encoder->MaxFrameBytes());
+		}
+	}
+	CHECK(produced > 0);
 }
 
 TEST(Aac_Latm_RoundTrip)

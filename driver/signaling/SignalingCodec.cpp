@@ -45,7 +45,7 @@ void ConfigFormat(Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength, ui
 		uint8_t channelModes = 0;
 		if (Ldac::ParseIe(ie, ieLength, capabilities, channelModes))
 		{
-			sampleRate = (capabilities & Ldac::kSampleRate44100) != 0 ? 44100u : 48000u;
+			sampleRate = Ldac::RateValue(capabilities);
 			channels = (channelModes & Ldac::kChannelStereo) != 0 ? 2u : 1u;
 		}
 		else if (AptxHd::ParseIe(ie, ieLength, capabilities) || Aptx::ParseIe(ie, ieLength, capabilities))
@@ -265,10 +265,7 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 					static_cast<unsigned>(ctx->PinChannels), static_cast<unsigned>(ctx->PinValidBits));
 				return 0;
 			}
-			const uint8_t ldacRate = ctx->PinSampleRate == 44100 ? Ldac::kSampleRate44100
-				: ctx->PinSampleRate == 48000
-				? Ldac::kSampleRate48000
-				: 0;
+			const uint8_t ldacRate = Ldac::RateBit(ctx->PinSampleRate);
 			if (ldacRate == 0 || (ldacRates & ldacRate) == 0)
 			{
 				OA2DP_WARN(ctx, "AVDTP", "the sink cannot serve the endpoint's %u Hz with LDAC",
@@ -425,10 +422,7 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 			{
 				return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
 			}
-			const uint8_t rate = ctx->PinSampleRate == 44100 ? Ldac::kSampleRate44100
-				: ctx->PinSampleRate == 48000
-				? Ldac::kSampleRate48000
-				: 0;
+			const uint8_t rate = Ldac::RateBit(ctx->PinSampleRate);
 			if (rate == 0 || (ldacRates & rate) == 0)
 			{
 				return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
@@ -569,7 +563,10 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	Aptx::WriteIe(static_cast<uint8_t>(Aptx::kSampleRate44100 | Aptx::kSampleRate48000), aptxIe);
 	ctx->Session.SetLocalSep(Avdtp::kLocalAptxSeid, Avdtp::CodecType::Vendor, aptxIe, sizeof(aptxIe));
 	uint8_t ldacIe[Ldac::kIeLength] = {};
-	Ldac::WriteIe(static_cast<uint8_t>(Ldac::kSampleRate44100 | Ldac::kSampleRate48000),
+	// Every rate the endpoint can be opened at: the sink picks among them, and SelectConfig
+	// narrows the choice to the endpoint's own rate.
+	Ldac::WriteIe(static_cast<uint8_t>(Ldac::kSampleRate44100 | Ldac::kSampleRate48000 |
+									   Ldac::kSampleRate88200 | Ldac::kSampleRate96000),
 		Ldac::kChannelStereo, ldacIe);
 	ctx->Session.SetLocalSep(Avdtp::kLocalLdacSeid, Avdtp::CodecType::Vendor, ldacIe, sizeof(ldacIe));
 	ctx->LoggedState = Avdtp::SessionState::Idle;

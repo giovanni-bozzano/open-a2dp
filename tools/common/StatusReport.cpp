@@ -330,6 +330,14 @@ std::string FormatListText(uint32_t rates, uint32_t channels)
 	{
 		append("48000 Hz");
 	}
+	if ((rates & 4) != 0)
+	{
+		append("32000 Hz");
+	}
+	if ((rates & 8) != 0)
+	{
+		append("16000 Hz");
+	}
 	if ((channels & 1) != 0)
 	{
 		append("mono");

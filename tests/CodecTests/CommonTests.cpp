@@ -17,6 +17,24 @@ using namespace OpenA2dp;
 // driver) and a maximum-size frame must fit in one ring record.
 static_assert(Ioctl::kMaxFramePayload + sizeof(Ioctl::FrameRecordHeader) <= Ioctl::kMaxFrameRecordBytes);
 
+// The endpoint rates are exactly the ones the encoders take; anything else is not a format it
+// can offer, whichever codec asks for it.
+TEST(Ioctl_EndpointRates)
+{
+	CHECK_EQ(Ioctl::kEndpointRateCount, uint32_t{6});
+	for (const uint32_t rate : Ioctl::kEndpointRates)
+	{
+		const Ioctl::EndpointFormat format = {Ioctl::kAbiVersion, rate, 2, 0};
+		CHECK(Ioctl::ValidEndpointFormat(format));
+	}
+	const uint32_t refused[] = {0u, 8000, 22050, 64000, 192000};
+	for (const uint32_t rate : refused)
+	{
+		const Ioctl::EndpointFormat format = {Ioctl::kAbiVersion, rate, 2, 0};
+		CHECK(!Ioctl::ValidEndpointFormat(format));
+	}
+}
+
 TEST(Rtp_WriteParse)
 {
 	Rtp::Header h{0xBEEF, 0x01020304, 0xCAFEBABE, Rtp::kDynamicPayloadType, false};

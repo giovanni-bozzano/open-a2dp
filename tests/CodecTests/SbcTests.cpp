@@ -187,9 +187,11 @@ TEST(Sbc_SelectConfiguration_TypicalSink)
 // capabilities the selector uses, so the mask helpers must read the IE the way it does.
 TEST(Sbc_AdvertisedFormatsMatchTheSelector)
 {
-	CHECK_EQ(SbcConfig::AdvertisedRates(0xF0), uint32_t{3});
+	CHECK_EQ(SbcConfig::AdvertisedRates(0xF0), uint32_t{15});
 	CHECK_EQ(SbcConfig::AdvertisedRates(0x20), uint32_t{1});
 	CHECK_EQ(SbcConfig::AdvertisedRates(0x10), uint32_t{2});
+	CHECK_EQ(SbcConfig::AdvertisedRates(0x40), uint32_t{4});
+	CHECK_EQ(SbcConfig::AdvertisedRates(0x80), uint32_t{8});
 	CHECK_EQ(SbcConfig::AdvertisedRates(0x0F), uint32_t{0});
 	CHECK_EQ(SbcConfig::AdvertisedChannels(0x0F), uint32_t{3});
 	CHECK_EQ(SbcConfig::AdvertisedChannels(0x08), uint32_t{1});
@@ -203,6 +205,38 @@ TEST(Sbc_AdvertisedFormatsMatchTheSelector)
 	CHECK(!SbcConfig::SupportsFormat(stereoOnly44, 48000, 0));
 	CHECK(SbcConfig::SupportsFormat(stereoOnly44, 0, 0)); // no pin
 	CHECK(!SbcConfig::SupportsFormat(0, 44100, 2));      // sink not queried yet
+
+	// The two rates below 44.1 are the endpoint's as well, so the same helpers cover them.
+	const uint8_t stereoOnly32 = 0x42; // 32 kHz, stereo
+	const uint8_t stereoOnly16 = 0x82; // 16 kHz, stereo
+	CHECK(SbcConfig::SupportsFormat(stereoOnly32, 32000, 2));
+	CHECK(!SbcConfig::SupportsFormat(stereoOnly32, 44100, 2));
+	CHECK(SbcConfig::SupportsFormat(stereoOnly16, 16000, 2));
+	CHECK(!SbcConfig::SupportsFormat(stereoOnly16, 32000, 2));
+	CHECK(SbcConfig::SupportsFormat(0xF0 | 0x01, 16000, 2));
+}
+
+// A sink that lists only a low rate still gets a configuration at it: the selector takes the
+// only rate both sides have, and the endpoint offers it as a format.
+TEST(Sbc_SelectConfiguration_HighAndLowRates)
+{
+	SbcCodec codec;
+	CodecPreference preference;
+	A2dpCodecConfig cfg;
+	const struct {
+		uint8_t capability;
+		uint32_t expected;
+	} cases[] = {{kFs32000, 32000}, {kFs16000, 16000}};
+	for (const auto& c : cases)
+	{
+		const uint8_t remote[4] = {static_cast<uint8_t>(c.capability | kModeJoint | kModeStereo),
+								   kBlocks16 | kSubbands8 | kAllocationLoudness, 2, 53};
+		REQUIRE(codec.SelectConfiguration(remote, 4, preference, cfg));
+		SbcConfig::Configuration parsed;
+		REQUIRE(SbcConfig::ParseConfiguredIe(cfg.ie, cfg.ieLength, parsed));
+		CHECK_EQ(parsed.sampleRate, c.expected);
+		CHECK_EQ(codec.ValidateConfiguration(cfg.ie, cfg.ieLength), uint8_t{0});
+	}
 }
 
 TEST(Sbc_SelectConfiguration_PreferenceAndLimits)

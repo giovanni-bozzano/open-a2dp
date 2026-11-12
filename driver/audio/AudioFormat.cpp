@@ -319,15 +319,21 @@ bool CommitPinDefault(_In_ DEVICE_CONTEXT* ctx, _In_ ULONG index)
 }
 
 // 16-bit entries follow the sink's SBC formats or, where SBC cannot play them, its classic
-// aptX formats; 24-in-32 entries follow aptX HD, which runs 44.1 or 48 kHz stereo only.
-// Forcing a 16-bit codec removes the 24-bit entries, and forcing aptX HD removes the 16-bit
-// ones when HD can actually run - a forced codec the endpoint cannot serve must not leave it
-// with no format at all, so the fallback list stays in that case.
+// aptX or LDAC formats; 24-in-32 entries follow aptX HD, which reads the depth, or LDAC,
+// which narrows it. The high SBC rates (16 and 32 kHz) and LDAC's 88.2/96 kHz are only listed
+// while the codec that owns them is advertised, because no other codec here can play them.
+// Forcing a codec removes the entries it cannot play when it can actually run - a forced codec
+// the endpoint cannot serve must not leave it with no format at all, so the fallback list
+// stays in that case.
 ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 {
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 	const uint8_t hdFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0));
 	const uint8_t aptxFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkAptxCapabilities, 0, 0));
+	// LDAC's advertisement packs the rate mask in the high byte and the channel modes in the low
+	// one; only the rate mask decides formats here, because LDAC runs stereo only.
+	const uint8_t ldacRates =
+			static_cast<uint8_t>((InterlockedCompareExchange(&ctx->SinkLdacCapabilities, 0, 0) >> 8) & 0xFF);
 	const LONG sinkCodecs = InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0);
 	const bool hdAvailable = HdFormatsAvailable(ctx);
 	// Classic aptX needs a registered provider and this connection's advertisement; its 16-bit
@@ -339,51 +345,76 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 		preference.codec == Ioctl::kCodecAptxHd;
 	const bool forcedAptx = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
 		preference.codec == Ioctl::kCodecAptx;
+	// LDAC plays 88.2 and 96 kHz as well, so its advertisement is what lists those formats, and
+	// it narrows a 24-in-32 stream the way classic aptX does.
+	const bool ldacAvailable = ServiceCodecRegistered(ctx, Ioctl::kCodecLdac) &&
+		(sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecLdac)) != 0;
+	const bool forcedLdac = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
+		preference.codec == Ioctl::kCodecLdac;
 
 	ULONG supported = 0;
 	for (ULONG i = 0; i < AudioRenderFormatCount; ++i)
 	{
 		const ULONG sampleRate = AudioRenderRateAt(i);
 		const USHORT channels = AudioRenderChannelsAt(i);
+		const bool stereo = channels == 2;
+		// The two vendor IEs carry different rate sets: aptX and aptX HD only 44.1 and 48 kHz,
+		// LDAC 44.1, 48, 88.2 and 96.
+		const uint8_t aptxBit = sampleRate == 44100 ? VendorAptx::kSampleRate44100
+			: sampleRate == 48000 ? VendorAptx::kSampleRate48000 : 0;
+		const uint8_t ldacBit = Ldac::RateBit(sampleRate);
+		const bool aptxOk = stereo && aptxBit != 0 && aptxAvailable && (aptxFormats & aptxBit) != 0;
+		const bool ldacOk = stereo && ldacBit != 0 && ldacAvailable && (ldacRates & ldacBit) != 0;
+		bool keep = false;
 		if (AudioRenderValidBitsAt(i) == AptxHd::kBitsPerSample)
 		{
-			const uint8_t rateBit = sampleRate == 44100 ? AptxHd::kSampleRate44100 : AptxHd::kSampleRate48000;
-			if (!hdAvailable || channels != 2 || (hdFormats & rateBit) == 0)
-			{
-				continue;
-			}
-		}
-		else
-		{
+			// 24-in-32 is listed while an encoder that reads it - or narrows it - can run: HD
+			// takes it as it is, classic aptX and LDAC narrow it per sample.
+			const bool hdOk = stereo && aptxBit != 0 && hdAvailable && (hdFormats & aptxBit) != 0;
 			if (forcedHd && hdAvailable)
 			{
-				continue;
+				keep = hdOk;
 			}
-			const uint8_t rateBit = sampleRate == 44100 ? VendorAptx::kSampleRate44100
-				: VendorAptx::kSampleRate48000;
-			const bool aptxOk = aptxAvailable && channels == 2 && (aptxFormats & rateBit) != 0;
-			if (forcedAptx && aptxAvailable)
+			else if (forcedAptx && aptxAvailable)
 			{
-				// The stream will run classic aptX, so only the formats it can play stay listed.
-				// A forced codec the endpoint cannot serve keeps the fallback list instead.
-				if (!aptxOk)
-				{
-					continue;
-				}
+				keep = aptxOk;
+			}
+			else if (forcedLdac && ldacAvailable)
+			{
+				keep = ldacOk;
 			}
 			else
 			{
-				// No sink capabilities yet means a provisional list, which is narrowed again
-				// once discovery reports the sink's formats.
-				const bool sbcOk = sinkFormats == 0 ||
-					SbcConfig::SupportsFormat(sinkFormats, sampleRate, static_cast<uint8_t>(channels));
-				if (!sbcOk && !aptxOk)
-				{
-					continue;
-				}
+				keep = hdOk || ldacOk;
 			}
 		}
-		supported |= 1u << i;
+		else if (forcedHd && hdAvailable)
+		{
+			// The stream will run HD, so only its own 24-bit formats stay listed.
+			keep = false;
+		}
+		else if (forcedAptx && aptxAvailable)
+		{
+			// The stream will run classic aptX, so only the formats it can play stay listed.
+			keep = aptxOk;
+		}
+		else if (forcedLdac && ldacAvailable)
+		{
+			// The stream will run LDAC, so the endpoint offers what LDAC can carry.
+			keep = ldacOk;
+		}
+		else
+		{
+			// No sink capabilities yet means a provisional list, which is narrowed again once
+			// discovery reports the sink's formats.
+			const bool sbcOk = sinkFormats == 0 ||
+				SbcConfig::SupportsFormat(sinkFormats, sampleRate, static_cast<uint8_t>(channels));
+			keep = sbcOk || aptxOk || ldacOk;
+		}
+		if (keep)
+		{
+			supported |= 1u << i;
+		}
 	}
 	return supported;
 }
