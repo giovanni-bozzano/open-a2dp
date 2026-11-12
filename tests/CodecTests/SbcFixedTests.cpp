@@ -200,4 +200,7 @@ TEST(SbcFixed_RoundTrip)
 	CheckFixed(FixedParams(44100, 16, 4, M::JointStereo, A::Snr, 53), 30.0);
 	CheckFixed(FixedParams(44100, 16, 8, M::Mono, A::Snr, 128), 50.0);
 	CheckFixed(FixedParams(32000, 12, 8, M::DualChannel, A::Loudness, 32), 20.0);
+	// The endpoint offers SBC down to 16 kHz, so the kernel encoder has to produce a decodable
+	// frame there as well.
+	CheckFixed(FixedParams(16000, 16, 8, M::JointStereo, A::Loudness, 53), 30.0);
 }
