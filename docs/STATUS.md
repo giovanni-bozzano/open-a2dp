@@ -15,8 +15,8 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M5 Encoder service + streaming | Done | — |
 | M6 Codec configuration | Done | — |
 | M7 aptX + aptX HD | Done | — |
-| M8 Config UI + install/uninstall | Done | — |
-| M9 LDAC | Done | — |
+| M8 LDAC | Done | — |
+| M9 Config UI + install/uninstall | Done | — |
 | M10 Setup file | Not started | One setup file that installs the driver package, the service and the tools, and removes them |
 
 ## Next

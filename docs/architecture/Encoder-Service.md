@@ -159,7 +159,7 @@ struct.
 | `REGISTER_ENCODER` | `RegisterEncoderIn` | `RegisterEncoderOut` | One registration per codec (`kCodecAac`, `kCodecAptxHd`) per device; `STATUS_DEVICE_BUSY` if that codec is taken, `STATUS_REVISION_MISMATCH` on ABI mismatch |
 | `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
-| `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M8). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
+| `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M9). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
 | `SET_PREFERENCE` | `Preference` | – | Stored in the sink's `%ProgramData%\OpenA2dp\devices\<addr>.ini` (`[general]`, `[sbc]`, `[aac]`, `[ldac]`) and restored at device start (`driver/config/`). A forced codec must be SBC, AAC, aptX or aptX HD or LDAC, and `ldacQuality` is 0..2; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. A forced codec is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks it. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
 | `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format each codec's streams are played at, one entry per codec (`kCodec*`). 0/0 is automatic for that codec, otherwise its pinned rate and channel count |
@@ -380,4 +380,4 @@ created by `AacCodec::CreateEncoder` inside the service. It does not change this
   and oversize records are dropped and counted.
 - VBR, mono and rates the encoders do not take (AAC below 32 kHz and above 48 kHz).
 - More than one service or more than one registration per device.
-- AVRCP absolute volume and the config UI (D4, M6/M8).
+- AVRCP absolute volume and the config UI (D4, M6/M9).
