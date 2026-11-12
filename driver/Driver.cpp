@@ -38,12 +38,18 @@ void AssignFriendlyName(_In_ DEVICE_CONTEXT* ctx)
 NTSTATUS OnPrepareHardware(_In_ WDFDEVICE device, _In_ WDFCMRESLIST, _In_ WDFCMRESLIST)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(device);
-	NTSTATUS status = L2capRetrieveRemoteAddress(ctx);
-	if (NT_SUCCESS(status))
+	// A sink that is asleep or out of range can fail the query here. Failing this callback fails
+	// the device, which takes the endpoint with it until Windows enumerates it again; the query
+	// runs again when self-managed IO starts, so the endpoint stays present either way.
+	if (NT_SUCCESS(L2capRetrieveRemoteAddress(ctx)))
 	{
 		AssignFriendlyName(ctx);
 	}
-	return status;
+	else
+	{
+		OA2DP_WARN(ctx, "Device", "the sink could not be queried yet; retrying when IO starts");
+	}
+	return STATUS_SUCCESS;
 }
 
 NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
@@ -54,6 +60,18 @@ NTSTATUS OnSelfManagedIoStart(_In_ WDFDEVICE device)
 	// A recovery budget belongs to the connection that armed it.
 	ctx->CodecSwitchRecover = FALSE;
 	ctx->CodecSwitchReconnects = 0;
+	// PrepareHardware tolerates a sink that could not be queried; without its address nothing
+	// below can reach it, so the query is retried once here. Still unknown means the endpoint
+	// stays idle instead of failing the device, and the next start tries again.
+	if (ctx->RemoteAddress == 0 && NT_SUCCESS(L2capRetrieveRemoteAddress(ctx)))
+	{
+		AssignFriendlyName(ctx);
+	}
+	if (ctx->RemoteAddress == 0)
+	{
+		OA2DP_WARN(ctx, "Device", "no sink address; leaving the endpoint idle until the next start");
+		return STATUS_SUCCESS;
+	}
 	OA2DP_INFO(ctx, "Device", "starting: registering the AVDTP server and connecting to the sink");
 	ServiceStart(ctx);
 	(void)L2capRegisterServer(ctx);
