@@ -252,6 +252,12 @@ constexpr uint8_t Validate(const uint8_t* ie, size_t ieLength) noexcept
 	if (p.vbr) {
 		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedBitRate);
 	}
+	// A configured IE with no bitrate is not a configuration the encoder can run; accepting it
+	// would only fail once media starts, after the sink has committed to the stream. The sink
+	// gets the error here, while it can still retry with another configuration.
+	if (p.bitrate == 0) {
+		return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedBitRate);
+	}
 	return 0;
 }
 

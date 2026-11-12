@@ -12,7 +12,7 @@ namespace OpenA2dp::Avdtp {
 constexpr size_t kMaxSignalPacket = 128;
 constexpr size_t kMaxSinkSeps = 8;
 constexpr size_t kMaxCodecIe = 32;
-constexpr size_t kMaxLocalSeps = 4;
+constexpr size_t kMaxLocalSeps = 5; // one per local SEID: SBC, AAC, aptX HD, aptX, LDAC
 // SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC; SEID 3 is aptX HD and SEID 4 is
 // classic aptX. All are always advertised: whether a codec may actually be selected is
 // decided per negotiation by the selector, because the encoder service can register after
@@ -97,12 +97,15 @@ public:
 		localSepCount_ = 1;
 	}
 
-	// Adds or replaces an extra local SEP (SEID 2 = AAC, SEID 3 = aptX HD, SEID 4 = aptX).
-	// Ignored for SEID 1.
-	void SetLocalSep(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
+	// Adds or replaces an extra local SEP (SEID 2 = AAC, SEID 3 = aptX HD, SEID 4 = classic
+	// aptX, SEID 5 = LDAC). SEID 1 is the mandatory SBC SEP and cannot be replaced. False when
+	// the SEP cannot be added: SEID 0 or 1, an IE that does not fit, or a full table. The caller
+	// reports it, because a SEP that silently does not fit is never advertised and the codec it
+	// carries can never be negotiated.
+	bool SetLocalSep(uint8_t seid, CodecType codec, const uint8_t* ie, size_t ieLength) noexcept
 	{
-		if (seid == kLocalSeid || ieLength > kMaxCodecIe) {
-			return;
+		if (seid == kLocalSeid || seid == 0 || seid > 62 || ie == nullptr || ieLength > kMaxCodecIe) {
+			return false;
 		}
 		LocalSep* sep = nullptr;
 		for (size_t i = 0; i < localSepCount_; ++i) {
@@ -112,7 +115,7 @@ public:
 		}
 		if (sep == nullptr) {
 			if (localSepCount_ >= kMaxLocalSeps) {
-				return;
+				return false;
 			}
 			sep = &localSeps_[localSepCount_++];
 		}
@@ -122,6 +125,7 @@ public:
 		for (size_t i = 0; i < ieLength; ++i) {
 			sep->ie[i] = ie[i];
 		}
+		return true;
 	}
 
 	SessionState State() const noexcept { return state_; }
@@ -318,9 +322,21 @@ public:
 	// Processes one received signaling packet. Returns the length of the packet to send (may be 0).
 	size_t OnPacket(const uint8_t* in, size_t len, uint8_t* out, size_t cap) noexcept
 	{
-		SignalHeader h{};
-		if (!ParseSignalHeader(in, len, h)) {
+		if (in == nullptr || len < 2) {
 			return 0;
+		}
+		SignalHeader h{};
+		h.transactionLabel = static_cast<uint8_t>(in[0] >> 4);
+		h.packetType = static_cast<PacketType>((in[0] >> 2) & 0x03);
+		h.messageType = static_cast<MessageType>(in[0] & 0x03);
+		h.signal = static_cast<Signal>(in[1] & 0x3F);
+		if (h.packetType != PacketType::Single) {
+			// This side does not reassemble signaling packets: a command is refused so the sink
+			// stops waiting for an answer it would never get, a response is dropped because there
+			// is nothing to reply to.
+			return h.messageType == MessageType::Command
+				? Reply(h, MessageType::GeneralReject, nullptr, 0, out, cap)
+				: 0;
 		}
 		if (h.messageType == MessageType::Command) {
 			return OnCommand(h, in + 2, len - 2, out, cap);
@@ -849,10 +865,14 @@ private:
 			}
 		}
 
+		const uint8_t remoteSeid = static_cast<uint8_t>(p[1] >> 2);
+		if (remoteSeid == 0) {
+			return Reject(h, ErrorCode::BadAcpSeid, out, cap);
+		}
 		pending_ = false;
 		discoveryFailure_ = DiscoveryFailure::None;
 		acceptor_ = true;
-		remoteSeid_ = static_cast<uint8_t>(p[1] >> 2);
+		remoteSeid_ = remoteSeid;
 		localSeid_ = acpSeid;
 		selectedCodec_ = codec;
 		selectedIeLength_ = ieLength <= kMaxCodecIe ? ieLength : kMaxCodecIe;

@@ -558,6 +558,18 @@ void PublishStatus(DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->NegotiatedCodecSnapshot, codec);
 }
 
+// Registers a local SEP and reports when the table cannot hold it. A SEP that silently does
+// not fit is never advertised, so the codec it carries can never be negotiated.
+static void AddLocalSep(DEVICE_CONTEXT* ctx, uint8_t seid, uint32_t codecValue, Avdtp::CodecType codec,
+						const uint8_t* ie, size_t ieLength)
+{
+	if (!ctx->Session.SetLocalSep(seid, codec, ie, ieLength))
+	{
+		OA2DP_WARN(ctx, "AVDTP", "cannot advertise the %s SEP (SEID %u); the sink will not be offered it",
+			CodecValueName(codecValue), static_cast<unsigned>(seid));
+	}
+}
+
 void ResetSession(DEVICE_CONTEXT* ctx)
 {
 	ctx->Session = Avdtp::SourceSession(Avdtp::CodecType::Sbc, kSbcDriverCapabilities,
@@ -567,21 +579,24 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	// channel first, ResetSession runs with no provider registered, and the codec would then
 	// be missing for the whole connection. Whether any may be selected is decided per
 	// negotiation in SelectConfig, which is the state that actually matters at that moment.
-	ctx->Session.SetLocalSep(Avdtp::kLocalAacSeid, Avdtp::CodecType::Aac, AacConfig::kLocalCapabilities,
-		AacConfig::kIeLength);
+	AddLocalSep(ctx, Avdtp::kLocalAacSeid, Ioctl::kCodecAac, Avdtp::CodecType::Aac,
+		AacConfig::kLocalCapabilities, AacConfig::kIeLength);
 	uint8_t aptxHdIe[AptxHd::kIeLength] = {};
 	AptxHd::WriteIe(static_cast<uint8_t>(AptxHd::kSampleRate44100 | AptxHd::kSampleRate48000), aptxHdIe);
-	ctx->Session.SetLocalSep(Avdtp::kLocalAptxHdSeid, Avdtp::CodecType::Vendor, aptxHdIe, sizeof(aptxHdIe));
+	AddLocalSep(ctx, Avdtp::kLocalAptxHdSeid, Ioctl::kCodecAptxHd, Avdtp::CodecType::Vendor, aptxHdIe,
+		sizeof(aptxHdIe));
 	uint8_t aptxIe[Aptx::kIeLength] = {};
 	Aptx::WriteIe(static_cast<uint8_t>(Aptx::kSampleRate44100 | Aptx::kSampleRate48000), aptxIe);
-	ctx->Session.SetLocalSep(Avdtp::kLocalAptxSeid, Avdtp::CodecType::Vendor, aptxIe, sizeof(aptxIe));
+	AddLocalSep(ctx, Avdtp::kLocalAptxSeid, Ioctl::kCodecAptx, Avdtp::CodecType::Vendor, aptxIe,
+		sizeof(aptxIe));
 	uint8_t ldacIe[Ldac::kIeLength] = {};
 	// Every rate the endpoint can be opened at: the sink picks among them, and SelectConfig
 	// narrows the choice to the endpoint's own rate.
 	Ldac::WriteIe(static_cast<uint8_t>(Ldac::kSampleRate44100 | Ldac::kSampleRate48000 |
 									   Ldac::kSampleRate88200 | Ldac::kSampleRate96000),
 		Ldac::kChannelStereo, ldacIe);
-	ctx->Session.SetLocalSep(Avdtp::kLocalLdacSeid, Avdtp::CodecType::Vendor, ldacIe, sizeof(ldacIe));
+	AddLocalSep(ctx, Avdtp::kLocalLdacSeid, Ioctl::kCodecLdac, Avdtp::CodecType::Vendor, ldacIe,
+		sizeof(ldacIe));
 	ctx->LoggedState = Avdtp::SessionState::Idle;
 	ctx->ResponseDeadline = 0;
 	InterlockedExchange(&ctx->MediaOpenPending, 0);
