@@ -2148,6 +2148,41 @@ HCMNOTIFICATION RegisterInterfaceNotifications(HWND hwnd)
 	return notify;
 }
 
+// Stores one whole set of settings and applies it. The preference goes first: the endpoint
+// format write is the one that rebuilds the listed formats and makes a running stream
+// renegotiate, so a single rebuild carries both instead of one per write. The driver clamps and
+// refuses, so the result is read back and the window shows what it will actually use.
+bool StoreSettings(HWND hwnd, const Ioctl::Preference& preference,
+				   const Ioctl::EndpointFormat& endpointFormat)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr || !state->open)
+	{
+		SetMessage(hwnd, L"No device is selected.");
+		return false;
+	}
+	std::string failure;
+	if (!WritePreference(state->control, preference, failure) ||
+		!WriteEndpointFormat(state->control, endpointFormat, failure))
+	{
+		SetMessage(hwnd, Tools::Widen(failure));
+		return false;
+	}
+	Ioctl::Preference stored = {};
+	if (ReadPreference(state->control, stored, failure))
+	{
+		state->preference = stored;
+	}
+	Ioctl::EndpointFormat storedFormat = {};
+	if (ReadEndpointFormat(state->control, storedFormat, failure))
+	{
+		state->endpointFormat = storedFormat;
+	}
+	LoadPreferenceIntoControls(hwnd);
+	RefreshStatus(hwnd);
+	return true;
+}
+
 // Stores the settings the controls show. The driver applies them itself: a running stream
 // renegotiates in place, and a codec change reconfigures the session.
 void ApplySettings(HWND hwnd)
@@ -2187,26 +2222,10 @@ void ApplySettings(HWND hwnd)
 		return;
 	}
 
-	std::string failure;
-	if (!WriteEndpointFormat(state->control, endpointFormat, failure) ||
-		!WritePreference(state->control, preference, failure))
+	if (!StoreSettings(hwnd, preference, endpointFormat))
 	{
-		SetMessage(hwnd, Tools::Widen(failure));
 		return;
 	}
-
-	Ioctl::Preference stored = {};
-	if (ReadPreference(state->control, stored, failure))
-	{
-		state->preference = stored;
-	}
-	Ioctl::EndpointFormat storedFormat = {};
-	if (ReadEndpointFormat(state->control, storedFormat, failure))
-	{
-		state->endpointFormat = storedFormat;
-	}
-	LoadPreferenceIntoControls(hwnd);
-	RefreshStatus(hwnd);
 	const bool streaming = state->status.mediaState == Ioctl::MediaState::Streaming;
 	SetMessage(hwnd, streaming ? L"Stored. The active stream renegotiates to apply it."
 							   : L"Stored. The setting applies at the next negotiation.");
@@ -2234,26 +2253,15 @@ void RestoreDefaults(HWND hwnd)
 	preference.abiVersion = Ioctl::kAbiVersion;
 	Ioctl::EndpointFormat endpointFormat = {};
 	endpointFormat.abiVersion = Ioctl::kAbiVersion;
-	std::string failure;
-	if (!WriteEndpointFormat(state->control, endpointFormat, failure) ||
-		!WritePreference(state->control, preference, failure))
+	if (!StoreSettings(hwnd, preference, endpointFormat))
 	{
-		SetMessage(hwnd, Tools::Widen(failure));
 		return;
 	}
-	Ioctl::Preference stored = {};
-	if (ReadPreference(state->control, stored, failure))
-	{
-		state->preference = stored;
-	}
-	Ioctl::EndpointFormat storedFormat = {};
-	if (ReadEndpointFormat(state->control, storedFormat, failure))
-	{
-		state->endpointFormat = storedFormat;
-	}
-	LoadPreferenceIntoControls(hwnd);
-	RefreshStatus(hwnd);
-	SetMessage(hwnd, L"Defaults restored. The setting applies at the next negotiation.");
+	// The write applies both halves the same way Apply does, so the message says what happens
+	// rather than sending the user looking for an Apply.
+	const bool streaming = state->status.mediaState == Ioctl::MediaState::Streaming;
+	SetMessage(hwnd, streaming ? L"Defaults restored. The active stream renegotiates to apply them."
+							   : L"Defaults restored. A stream opened now uses them.");
 }
 
 // A themed static or button fills its own text background with the light theme's colour and
