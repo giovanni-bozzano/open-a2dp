@@ -1332,7 +1332,9 @@ void ApplyLayout(HWND hwnd)
 							  kSessionGroupText});
 	// The body's top edge is the strip's last row, so the frame starts where the tabs end.
 	state->groups.push_back({groupLeft, bodyTop - 1, groupLeft + groupWidth, bodyTop + bodyHeight, nullptr});
-	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
+	// The panel reaches the frame's own edge, so its section bands and rows run the full width of
+	// the pane they belong to instead of stopping at the table body's inset.
+	Place(state->sessionPanel, groupLeft + 1, sessionTop + captionHeight, groupWidth - 2, panelHeight);
 
 	// The tab control sits on the body's top edge; the table below it is the window's, which
 	// keeps its own frame and the palette's colours.

@@ -3,6 +3,7 @@
 #include "Theme.h"
 
 #include <commctrl.h>
+#include <uxtheme.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -117,7 +118,10 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
 	const RECT strip = {0, y, width, y + state.rowHeight};
-	Fill(dc, strip, row.section ? ThemeColors().section : ThemeColors().background);
+	// A value row under the pointer gets the band colour too, so the row being pointed at is
+	// obvious in a list that has no hover highlight of its own.
+	const bool hot = !row.section && index == state.hotRow;
+	Fill(dc, strip, row.section || hot ? ThemeColors().section : ThemeColors().background);
 	const bool selected = !row.section && index < static_cast<int>(state.selected.size()) &&
 						  state.selected[index];
 	if (selected)
@@ -475,7 +479,12 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			}
 			SetDividerHot(window, *state, OnDivider(*state, x));
 			// The divider and a drag have nothing to explain; a row does.
-			state->hotRow = OnDivider(*state, x) ? -1 : RowAt(*state, GET_Y_LPARAM(lParam));
+			const int hotRow = OnDivider(*state, x) ? -1 : RowAt(*state, GET_Y_LPARAM(lParam));
+			if (hotRow != state->hotRow)
+			{
+				state->hotRow = hotRow;
+				InvalidateRect(window, nullptr, FALSE);
+			}
 			// The highlight ends when the pointer leaves, which the window has to ask for.
 			TRACKMOUSEEVENT track = {};
 			track.cbSize = sizeof(track);
@@ -489,6 +498,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 		{
 			SetDividerHot(window, *state, false);
 			state->hotRow = -1;
+			InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
 	case WM_NOTIFY:
@@ -653,6 +663,12 @@ bool CreateStatusView(HWND parent, int id, int x, int y, int width, int height, 
 	if (window == nullptr)
 	{
 		return false;
+	}
+	// A window scrollbar is drawn from the light theme whatever the window answers for
+	// WM_CTLCOLOR; the dark scrollbar is the one Explorer's own scrolling panes are given.
+	if (DarkTheme())
+	{
+		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
 	}
 	auto* state = new ViewState();
 	state->normal = font;
