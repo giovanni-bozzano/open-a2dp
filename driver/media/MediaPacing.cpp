@@ -161,8 +161,16 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 		queued = FrameRecord::Buffered(frames);
 	}
 	const uint32_t unit = ctx->ServiceUnitSamples;
-	if (unit == 0 || ctx->ActiveSampleRate == 0 ||
-		TargetSamples(ctx, ctx->ActiveSampleRate) >= ctx->MediaSamplesSent + queued + unit)
+	// And never while the frame ring is already over its limit: the record would only be trimmed
+	// away, which is the same gap plus an encode nobody hears, and the backlog would keep growing
+	// at the expensive stage. The pacer drains what is queued and TrimFrameBacklog drops it if the
+	// transport never catches up, so the stall costs one gap either way and no CPU.
+	const uint32_t limitMs =
+		LatencyBudget::RingLimitMs(ctx->PacingLeadMs, LatencyBudget::kFrameSlackMs);
+	const uint32_t limit = ctx->ActiveSampleRate * limitMs / 1000;
+	const bool due = unit == 0 || ctx->ActiveSampleRate == 0 ||
+		TargetSamples(ctx, ctx->ActiveSampleRate) >= ctx->MediaSamplesSent + queued + unit;
+	if (due && queued < limit)
 	{
 		ServiceTick(ctx);
 	}
