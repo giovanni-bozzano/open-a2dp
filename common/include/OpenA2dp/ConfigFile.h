@@ -5,7 +5,7 @@
 // it is kernel-safe like every other header in this directory: no STL, no exceptions, no
 // allocation - the text is built into the caller's buffer and parsed in place.
 //
-//   version = 2              above the sections; another number is not this build's layout
+//   version = 1              above the sections; another number is not this build's layout
 //   [general]                the codec choice and the pacing lead
 //   [sbc] [aac] [aptx] [aptxhd] [ldac]
 //
@@ -17,7 +17,7 @@
 
 namespace OpenA2dp::ConfigFile {
 
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 1;
 // Room the writer needs for every key it can write, with space to spare.
 constexpr size_t kMaxBytes = 1024;
 constexpr size_t kMaxNameChars = 16;

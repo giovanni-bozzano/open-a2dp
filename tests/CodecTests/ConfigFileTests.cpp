@@ -45,7 +45,7 @@ TEST(ConfigFile_WritesOnlyTheChangedEntry)
 	settings.endpointFormat.sampleRate[Ioctl::kCodecSbc] = 48000;
 	settings.endpointFormat.channels[Ioctl::kCodecSbc] = 1;
 	const std::string text = Text(settings);
-	CHECK(text.find("version = 2") != std::string::npos);
+	CHECK(text.find("version = 1") != std::string::npos);
 	CHECK(text.find("[sbc]") != std::string::npos);
 	CHECK(text.find("rate = 48000") != std::string::npos);
 	CHECK(text.find("channels = 1") != std::string::npos);
@@ -96,7 +96,7 @@ TEST(ConfigFile_RoundTripsEverySetting)
 // format this build does not understand can never be half applied.
 TEST(ConfigFile_RejectsAnotherLayoutVersion)
 {
-	const std::string text = "version = 1\n\n[sbc]\nrate = 48000\n";
+	const std::string text = "version = 2\n\n[sbc]\nrate = 48000\n";
 	ConfigFile::Settings settings = {};
 	CHECK(!ConfigFile::Parse(text.data(), text.size(), settings));
 	const std::string missing = "\n[sbc]\nrate = 48000\n";
@@ -107,7 +107,7 @@ TEST(ConfigFile_RejectsAnotherLayoutVersion)
 // still loads everything this one understands.
 TEST(ConfigFile_IgnoresKeysAndSectionsItDoesNotKnow)
 {
-	const std::string text = "# a comment\nversion = 2\n\n[general]\ncodec = aac\nfutureSetting = 7\n\n"
+	const std::string text = "# a comment\nversion = 1\n\n[general]\ncodec = aac\nfutureSetting = 7\n\n"
 							 "[ldac]\nrate = 96000\nchannels = 2\nquality = 1\n\n[zyx]\nrate = 48000\n";
 	const ConfigFile::Settings read = Read(text);
 	CHECK_EQ(read.preference.flags, Ioctl::kPreferenceForceCodec);
@@ -122,7 +122,7 @@ TEST(ConfigFile_IgnoresKeysAndSectionsItDoesNotKnow)
 // `rate` under [sbc] is not the AAC rate.
 TEST(ConfigFile_ScopesKeysToTheirCodec)
 {
-	const std::string text = "version = 2\n\n[aac]\nbitpool = 35\nrate = 44100\n\n[sbc]\nbitpool = 40\n";
+	const std::string text = "version = 1\n\n[aac]\nbitpool = 35\nrate = 44100\n\n[sbc]\nbitpool = 40\n";
 	const ConfigFile::Settings read = Read(text);
 	CHECK_EQ(read.preference.sbcBitpool, 40u);
 	CHECK_EQ(read.preference.aacBitrate, 0u);
@@ -135,16 +135,16 @@ TEST(ConfigFile_ScopesKeysToTheirCodec)
 TEST(ConfigFile_RefusesAnUnusableValue)
 {
 	ConfigFile::Settings settings = {};
-	const std::string text = "version = 2\n\n[sbc]\nrate = fast\n";
+	const std::string text = "version = 1\n\n[sbc]\nrate = fast\n";
 	CHECK(!ConfigFile::Parse(text.data(), text.size(), settings));
-	const std::string unknownCodec = "version = 2\n\n[general]\ncodec = opus\n";
+	const std::string unknownCodec = "version = 1\n\n[general]\ncodec = opus\n";
 	CHECK(!ConfigFile::Parse(unknownCodec.data(), unknownCodec.size(), settings));
 }
 
 // Hand edits are expected: indentation, trailing spaces, comment lines and CRLF all read.
 TEST(ConfigFile_ToleratesCommentsAndBlankLines)
 {
-	const std::string text = "# heading\r\n\r\nversion = 2\r\n\r\n[sbc]   # SBC\r\n  rate = 48000  \r\n\r\n";
+	const std::string text = "# heading\r\n\r\nversion = 1\r\n\r\n[sbc]   # SBC\r\n  rate = 48000  \r\n\r\n";
 	const ConfigFile::Settings read = Read(text);
 	CHECK_EQ(read.endpointFormat.sampleRate[Ioctl::kCodecSbc], 48000u);
 }
