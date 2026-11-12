@@ -231,6 +231,93 @@ bool NeedsRestart(const SP_DEVINFO_DATA& dev)
 		   problem == CM_PROB_DRIVER_FAILED_PRIOR_UNLOAD;
 }
 
+// True when the node is running a function driver rather than sitting in a problem state - a
+// package can install and bind a driver that never starts, which reads as success to the install
+// call and as silence to the listener.
+bool NodeRunning(SP_DEVINFO_DATA& dev)
+{
+	ULONG status = 0;
+	ULONG problem = 0;
+	if (CM_Get_DevNode_Status(&status, &problem, dev.DevInst, 0) != CR_SUCCESS)
+	{
+		return false;
+	}
+	// No problem code is CM_PROB_NONE, which cfgmgr32.h does not spell out.
+	return (status & DN_HAS_PROBLEM) == 0 && problem == 0;
+}
+
+// Installs one package's A2DP entry on the node, then asks the node what it ended up running.
+//
+// The confirmation is the point. DiInstallDevice succeeding means the package was accepted, not
+// that the sink has a working A2DP source: a package that installs and loses the bind - the
+// enumerator's `_GENERIC` catch-all is one way, which is what once left a node with no A2DP driver
+// - or that binds a driver which fails to start leaves the sink with nothing, and only the node
+// itself can be asked about that. The compatible driver list is built and released here, so a
+// caller can apply twice (the switch, then its rollback) with the same device information set.
+bool ApplyPackage(HDEVINFO set, SP_DEVINFO_DATA& dev, const std::string& infPath, SinkDriver target,
+				  std::string& error)
+{
+	bool applied = false;
+	std::vector<DriverEntry> entries;
+	if (!CollectDriverEntries(set, dev, entries))
+	{
+		error = Win32Error("SetupDiBuildDriverInfoList", GetLastError());
+	}
+	else
+	{
+		// Within the package it has to be the model matched by the A2DP service id: the node also
+		// lists the enumerator's catch-all, and installing that is not installing an A2DP source.
+		const std::wstring wanted = Widen(infPath);
+		const DriverEntry* chosen = nullptr;
+		for (const DriverEntry& entry : entries)
+		{
+			if (_wcsicmp(entry.infPath.c_str(), wanted.c_str()) != 0)
+			{
+				continue;
+			}
+			if (IsA2dpServiceId(entry.hardwareId))
+			{
+				chosen = &entry;
+				break;
+			}
+		}
+		if (chosen == nullptr)
+		{
+			error = "the package in the driver store has no A2DP source driver for this node; "
+					"deploy the driver, then reconnect the sink and try again";
+		}
+		else
+		{
+			bool rebootRequired = false;
+			applied = InstallDriverEntry(set, dev, *chosen, rebootRequired, error);
+			// SetupAPI asks for a reboot when the node's restart was refused. The driver is on the
+			// node already, so restarting the node ourselves finishes the switch now.
+			if (applied && rebootRequired)
+			{
+				applied = RestartNode(dev, error);
+			}
+			if (applied)
+			{
+				const std::wstring bound = StringProperty(set, dev, SPDRP_SERVICE);
+				if (DriverOfServiceName(bound) != target)
+				{
+					error = bound.empty() ? std::string("the sink's A2DP node bound no driver")
+										 : "the sink's A2DP node is still on " + Utf8(bound);
+					applied = false;
+				}
+				else if (!NodeRunning(dev))
+				{
+					error = "the sink's A2DP node did not start on " +
+							std::string(SinkDriverName(target));
+					applied = false;
+				}
+			}
+		}
+	}
+	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
+	return applied;
+}
+
 } // namespace
 
 const char* SinkDriverName(SinkDriver driver)
@@ -508,6 +595,12 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 			{
 				outcome = SwitchOutcome::Failed;
 			}
+			else if (!NodeRunning(dev))
+			{
+				error = "the sink's A2DP node did not start on " +
+						std::string(SinkDriverName(target));
+				outcome = SwitchOutcome::Failed;
+			}
 		}
 		SetupDiDestroyDeviceInfoList(set);
 		return outcome;
@@ -531,66 +624,37 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 	{
 		return SwitchOutcome::Failed;
 	}
-	std::vector<DriverEntry> entries;
-	if (!CollectDriverEntries(set, dev, entries))
+	// The driver the sink is on now, which is what a failed switch has to be able to restore: a
+	// sink left with no A2DP source at all is worse than a switch that did not happen.
+	const SinkDriver previous = state.current;
+	bool switched = ApplyPackage(set, dev, inf, target, error);
+	if (!switched)
 	{
-		error = Win32Error("SetupDiBuildDriverInfoList", GetLastError());
-		SetupDiDestroyDeviceInfoList(set);
-		return SwitchOutcome::Failed;
-	}
-	// The package the store offered for this choice, and within it the model that matched the
-	// service id: the same node also lists the enumerator's `_GENERIC` catch-all, and installing
-	// that is what left the node without an A2DP driver.
-	const std::wstring targetInf = Widen(inf);
-	const DriverEntry* chosen = nullptr;
-	for (const DriverEntry& entry : entries)
-	{
-		if (_wcsicmp(entry.infPath.c_str(), targetInf.c_str()) != 0)
+		const std::string& previousInf = previous == SinkDriver::OpenA2dp	? state.openA2dpInf
+										: previous == SinkDriver::Windows ? state.windowsInf
+																	 : std::string();
+		if (previous == SinkDriver::Unknown || previousInf.empty())
 		{
-			continue;
+			error += "; the sink has no A2DP driver now, so uninstall and reconnect it";
 		}
-		if (IsA2dpServiceId(entry.hardwareId))
+		else
 		{
-			chosen = &entry;
-			break;
-		}
-	}
-
-	bool switched = false;
-	if (chosen == nullptr)
-	{
-		error = "the package in the driver store has no A2DP source driver for this node; "
-				"deploy the driver, then reconnect the sink and try again";
-	}
-	else
-	{
-		bool rebootRequired = false;
-		switched = InstallDriverEntry(set, dev, *chosen, rebootRequired, error);
-		// SetupAPI asks for a reboot when the node's restart was refused. The driver is on the
-		// node already, so restarting the node ourselves finishes the switch now.
-		if (switched && rebootRequired)
-		{
-			switched = RestartNode(dev, error);
-		}
-		// Ask the node which driver it actually bound rather than trusting the install call:
-		// a package that installs but loses the bind leaves the sink with no A2DP driver at all,
-		// and that has to be a failed switch that says so, not a success reported from what the
-		// call returned.
-		if (switched)
-		{
-			const std::wstring bound = StringProperty(set, dev, SPDRP_SERVICE);
-			if (DriverOfServiceName(bound) != target)
+			// The failed step may have been the restart, which leaves the node stopped: enabling
+			// is idempotent and is the first thing the restore needs.
+			(void)CM_Enable_DevNode(dev.DevInst, 0);
+			std::string restoreError;
+			if (ApplyPackage(set, dev, previousInf, previous, restoreError))
 			{
-				error = bound.empty()
-							? std::string("the package installed, but the sink's A2DP node bound no driver; "
-										  "reconnect the sink")
-							: "the package installed, but the sink's A2DP node is still on " + Utf8(bound) +
-									  "; reconnect the sink and try again";
-				switched = false;
+				error += "; the sink was put back on " + std::string(SinkDriverName(previous));
+			}
+			else
+			{
+				error += "; putting it back on " + std::string(SinkDriverName(previous)) +
+						 " failed too (" + restoreError +
+						 ") - uninstall and reconnect the sink";
 			}
 		}
 	}
-	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
 	SetupDiDestroyDeviceInfoList(set);
 	return switched ? SwitchOutcome::Switched : SwitchOutcome::Failed;
 }
