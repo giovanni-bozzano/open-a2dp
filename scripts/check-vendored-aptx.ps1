@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-Verifies the vendored aptX and aptX HD encoders against their SHA256SUMS.
+Verifies the vendored aptX, aptX HD and LDAC encoders against their SHA256SUMS.
 
 .DESCRIPTION
-The AOSP sources under codecs\aptx\hd and codecs\aptx\classic are vendored unmodified, so a
-change there is either a mistake or a deliberate re-vendor. Hashes cover the LF form of each
-file, so a CRLF checkout verifies the same as an LF one. -Update rewrites both manifests after
-a deliberate re-vendor.
+The AOSP sources under codecs\aptx\hd, codecs\aptx\classic and codecs\ldac are vendored
+unmodified, so a change there is either a mistake or a deliberate re-vendor. Hashes cover the
+LF form of each file, so a CRLF checkout verifies the same as an LF one. -Update rewrites every
+manifest after a deliberate re-vendor.
 
 Exits 0 when every file matches, 1 otherwise.
 #>
@@ -17,10 +17,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-# Each drop is a directory with include\ and src\ and its own SHA256SUMS next to them.
+# Each drop is a set of directories with its own SHA256SUMS beside them.
 $drops = @(
-    @{ Name = 'aptX HD'; Root = Join-Path $repoRoot 'codecs\aptx\hd' },
-    @{ Name = 'aptX'; Root = Join-Path $repoRoot 'codecs\aptx\classic' }
+    @{ Name = 'aptX HD'; Root = Join-Path $repoRoot 'codecs\aptx\hd'; Dirs = @('include', 'src') },
+    @{ Name = 'aptX'; Root = Join-Path $repoRoot 'codecs\aptx\classic'; Dirs = @('include', 'src') },
+    @{ Name = 'LDAC'; Root = Join-Path $repoRoot 'codecs\ldac'; Dirs = @('inc', 'src', 'abr') }
 )
 
 function Get-VendoredHash([string]$Path) {
@@ -36,8 +37,9 @@ function Get-VendoredHash([string]$Path) {
     return ($hash | ForEach-Object { $_.ToString('x2') }) -join ''
 }
 
-function Get-VendoredFiles([string]$Root) {
-    return Get-ChildItem -Path (Join-Path $Root 'include'), (Join-Path $Root 'src') -File -Recurse |
+function Get-VendoredFiles([string]$Root, [string[]]$Dirs) {
+    $paths = $Dirs | ForEach-Object { Join-Path $Root $_ }
+    return Get-ChildItem -Path $paths -File -Recurse |
         Sort-Object FullName |
         ForEach-Object { $_.FullName.Substring($Root.Length + 1) -replace '\\', '/' }
 }
@@ -47,7 +49,7 @@ $verified = 0
 foreach ($drop in $drops) {
     $root = $drop.Root
     $manifestPath = Join-Path $root 'SHA256SUMS'
-    $files = Get-VendoredFiles $root
+    $files = Get-VendoredFiles $root $drop.Dirs
 
     if ($Update) {
         $lines = foreach ($file in $files) {
@@ -102,8 +104,8 @@ if ($Update) {
     exit 0
 }
 if ($failed -ne 0) {
-    Write-Output 'A vendored aptX source differs from its manifest; restore it or re-vendor and run -Update.'
+    Write-Output 'A vendored codec source differs from its manifest; restore it or re-vendor and run -Update.'
     exit 1
 }
-Write-Output "vendored aptX and aptX HD sources verified ($verified files)"
+Write-Output "vendored aptX, aptX HD and LDAC sources verified ($verified files)"
 exit 0

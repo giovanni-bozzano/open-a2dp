@@ -96,10 +96,23 @@
 	  <TreatWarningAsError>false</TreatWarningAsError>
 	  <ObjectFileName>$(IntDir)classic_%(Filename).obj</ObjectFileName>
 	</ClCompile>
+  <!-- Vendored Sony LDAC encoder: kept verbatim; compat\msvc.h supplies what MSVC lacks. -->
+	<ClCompile Include="ldac\src\ldaclib.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <AdditionalOptions>/FI"$(ProjectDir)ldac\compat\msvc.h" %(AdditionalOptions)</AdditionalOptions>
+	</ClCompile>
+	<ClCompile Include="ldac\src\ldacBT.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <AdditionalOptions>/FI"$(ProjectDir)ldac\compat\msvc.h" %(AdditionalOptions)</AdditionalOptions>
+	</ClCompile>
+	<ClCompile Include="ldac\abr\src\ldacBT_abr.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <AdditionalOptions>/FI"$(ProjectDir)ldac\compat\msvc.h" %(AdditionalOptions)</AdditionalOptions>
+	</ClCompile>
   </ItemGroup>
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(ProjectDir)aptx\hd\include;$(ProjectDir)aptx\hd\src;$(ProjectDir)aptx\classic\include;$(ProjectDir)aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(ProjectDir)ldac\inc;$(ProjectDir)ldac\src;$(ProjectDir)ldac\abr\inc;$(ProjectDir)ldac\compat;$(ProjectDir)aptx\hd\include;$(ProjectDir)aptx\hd\src;$(ProjectDir)aptx\classic\include;$(ProjectDir)aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
