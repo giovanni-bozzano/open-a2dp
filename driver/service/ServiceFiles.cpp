@@ -28,7 +28,14 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 	{
 		ReleaseWait(ctx, Ioctl::kEventDeviceGone);
 		file->Registered = FALSE;
-		InterlockedExchange(&ctx->EncoderRegistered, 0);
+		// Only the codecs this handle registered: a second handle may serve a different one, and
+		// clearing the whole mask would drop a provider that is still alive.
+		const LONG owned = file->CodecMask;
+		file->CodecMask = 0;
+		if (owned != 0)
+		{
+			InterlockedAnd(&ctx->EncoderRegistered, ~owned);
+		}
 		if (InterlockedCompareExchange(&ctx->ServiceActive, 0, 0) != 0 &&
 			InterlockedCompareExchange(&ctx->MediaMode, 0, 0) == MediaModeService)
 		{

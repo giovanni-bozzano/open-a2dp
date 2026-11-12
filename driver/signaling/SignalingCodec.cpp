@@ -237,12 +237,25 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 			const bool ldacOffered = (InterlockedOr(&ctx->SinkCodecs,
 											  static_cast<LONG>(Ioctl::kSinkCodecLdac)) &
 									 static_cast<LONG>(Ioctl::kSinkCodecLdac)) != 0;
-			InterlockedExchange(&ctx->SinkLdacCapabilities,
-				static_cast<LONG>((static_cast<LONG>(ldacRates) << 8) | ldacModes));
+			const LONG ldacPacked = static_cast<LONG>((static_cast<LONG>(ldacRates) << 8) | ldacModes);
+			const bool ldacChanged =
+				InterlockedExchange(&ctx->SinkLdacCapabilities, ldacPacked) != ldacPacked;
 			if (!ldacOffered)
 			{
 				OA2DP_INFO(ctx, "AVDTP", "sink offers LDAC (rates 0x%02X, modes 0x%02X)",
 					static_cast<unsigned>(ldacRates), static_cast<unsigned>(ldacModes));
+			}
+			// The endpoint's offered formats depend on these rates, so a new advertisement rebuilds
+			// them here as the SBC and aptX branches do: discovery can reach this SEP before or after
+			// the SBC one, and no later event is guaranteed to rebuild the list.
+			if (ldacChanged)
+			{
+				const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+				if (!NT_SUCCESS(formatStatus))
+				{
+					OA2DP_WARN(ctx, "AVDTP", "applying the sink's formats to the endpoint failed 0x%08X",
+						formatStatus);
+				}
 			}
 			if (!ServiceCodecRegistered(ctx, Ioctl::kCodecLdac) ||
 				(forceCodec && preference.codec != Ioctl::kCodecLdac))
@@ -587,6 +600,8 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	// A new connection gets its own single MTU renegotiation attempt.
 	InterlockedExchange(&ctx->MtuRenegotiate, 0);
 	InterlockedExchange(&ctx->MtuRenegotiationAttempts, 0);
+	// A read fault belongs to the connection that hit it.
+	InterlockedExchange(&ctx->ReadFault, 0);
 	// The codecs are re-learned by this connection's discovery.
 	InterlockedExchange(&ctx->SinkCodecs, 0);
 	InterlockedExchange(&ctx->SinkHdCapabilities, 0);

@@ -62,6 +62,12 @@ static bool SpanHasAudio(const DEVICE_CONTEXT* ctx, ULONGLONG from, ULONGLONG to
 
 void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 {
+	if (position < ctx->AudioCopiedPosition)
+	{
+		// The position is the copy reference and only moves forward: a clock that restarted
+		// below it would make every difference here wrap and stop the copy for good.
+		position = ctx->AudioCopiedPosition;
+	}
 	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
 	if (bufferSize == 0 || ctx->AudioBuffer == nullptr)
 	{

@@ -31,6 +31,9 @@ struct SERVICE_FILE_CONTEXT
 	DEVICE_CONTEXT* Device;
 	BOOLEAN Registered;
 	BOOLEAN Mapped;
+	// The Ioctl::EncoderBit mask this handle registered, so its cleanup clears only those and
+	// leaves a codec another handle owns registered.
+	LONG CodecMask;
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SERVICE_FILE_CONTEXT, GetServiceFileContext)
 

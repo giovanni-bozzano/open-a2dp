@@ -1,5 +1,6 @@
 #include "../Driver.h"
 
+#include <ntifs.h>
 #include <ntstrsafe.h>
 #include <OpenA2dp/ConfigFile.h>
 
@@ -135,8 +136,16 @@ bool WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::S
 	}
 	EnsureDirectory(kDirectory);
 	EnsureDirectory(kDevicesDirectory);
+	// Written beside the target and renamed over it, so a crash or power loss mid-write leaves
+	// the previous file in place instead of a truncated one the loader would have to reject.
+	wchar_t tempPath[96] = {};
+	if (!NT_SUCCESS(RtlStringCchPrintfW(tempPath, ARRAYSIZE(tempPath), L"%ws.tmp", path)))
+	{
+		OA2DP_WARN(ctx, "Config", "cannot name a temporary file for %ws", path);
+		return false;
+	}
 	HANDLE handle = nullptr;
-	const NTSTATUS status = OpenFile(path, FILE_WRITE_DATA, FILE_OVERWRITE_IF, handle);
+	NTSTATUS status = OpenFile(tempPath, FILE_WRITE_DATA, FILE_OVERWRITE_IF, handle);
 	if (!NT_SUCCESS(status))
 	{
 		OA2DP_WARN(ctx, "Config", "cannot open %ws 0x%08X; the settings are kept in memory only", path, status);
@@ -148,7 +157,38 @@ bool WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::S
 	ZwClose(handle);
 	if (!NT_SUCCESS(written) || statusBlock.Information != length)
 	{
-		OA2DP_WARN(ctx, "Config", "cannot write %ws 0x%08X", path, written);
+		OA2DP_WARN(ctx, "Config", "cannot write %ws 0x%08X", tempPath, written);
+		return false;
+	}
+
+	status = OpenFile(tempPath, DELETE | SYNCHRONIZE, FILE_OPEN, handle);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_WARN(ctx, "Config", "cannot reopen %ws to replace its target 0x%08X", tempPath, status);
+		return false;
+	}
+	union
+	{
+		FILE_RENAME_INFORMATION Info;
+		UCHAR Raw[sizeof(FILE_RENAME_INFORMATION) + sizeof(wchar_t) * 100];
+	} rename = {};
+	rename.Info.ReplaceIfExists = TRUE;
+	rename.Info.RootDirectory = nullptr;
+	rename.Info.FileNameLength = static_cast<ULONG>(wcslen(path) * sizeof(wchar_t));
+	if (rename.Info.FileNameLength > sizeof(rename.Raw) - sizeof(FILE_RENAME_INFORMATION))
+	{
+		OA2DP_WARN(ctx, "Config", "cannot name the target of %ws", path);
+		ZwClose(handle);
+		return false;
+	}
+	RtlCopyMemory(rename.Info.FileName, path, rename.Info.FileNameLength);
+	status = ZwSetInformationFile(handle, &statusBlock, &rename,
+								  sizeof(FILE_RENAME_INFORMATION) + rename.Info.FileNameLength,
+								  FileRenameInformation);
+	ZwClose(handle);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_WARN(ctx, "Config", "cannot replace %ws 0x%08X", path, status);
 		return false;
 	}
 	return true;

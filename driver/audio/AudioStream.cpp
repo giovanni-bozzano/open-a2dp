@@ -121,6 +121,13 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	if (ctx->AudioRunning)
+	{
+		// Run without a pause: continue from where the clock already reached instead of
+		// restarting it at the old base, which would move the position backwards and make the
+		// copy state wrap.
+		ctx->AudioBasePosition = CurrentPositionLocked(ctx, nullptr);
+	}
 	ctx->AudioStartQpc = QpcNow(nullptr);
 	ctx->AudioRunStamp = KeQueryInterruptTime();
 	ctx->AudioRunning = TRUE;

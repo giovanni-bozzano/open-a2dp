@@ -60,6 +60,11 @@ void OnReadComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLET
 		if (status != STATUS_CANCELLED)
 		{
 			OA2DP_ERROR(ctx, "Signaling", "read failed 0x%08X", status);
+			// No read is armed after this, so the session could no longer hear a response or a
+			// CLOSE while it still looked open. The work item closes the channel and lets the
+			// next connection rebuild it.
+			InterlockedExchange(&ctx->ReadFault, 1);
+			WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 		}
 		KeSetEvent(&ctx->ReadIdle, IO_NO_INCREMENT, FALSE);
 		return;

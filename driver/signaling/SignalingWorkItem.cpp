@@ -696,6 +696,18 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 	ctx->SignalingWorkItemThread = KeGetCurrentThread();
 	PumpSignalSends(ctx);
 
+	if (InterlockedExchange(&ctx->ReadFault, 0) != 0)
+	{
+		// The read that lets the session hear the sink failed and was not re-armed. Closing the
+		// channel is the only recovery that leaves a usable state; reached from inside the work
+		// item, so the close skips the lock this thread holds and does not flush itself.
+		OA2DP_ERROR(ctx, "Signaling", "signaling read failed; closing the channel");
+		L2capCloseSignalingChannel(ctx);
+		ctx->SignalingWorkItemThread = nullptr;
+		WdfWaitLockRelease(ctx->SessionLock);
+		return;
+	}
+
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{
 		AudioNotifyLinkState(ctx);

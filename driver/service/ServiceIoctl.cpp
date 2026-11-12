@@ -83,6 +83,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		}
 
 		file->Registered = TRUE;
+		file->CodecMask |= bit;
 		// A new service session starts with no latched events. Anything left over
 		// belongs to the previous handle (for example kEventDeviceGone latched when
 		// it closed) and must not be delivered to this one.
@@ -318,7 +319,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->worstServiceGapMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstServiceGapMs, 0, 0));
 		out->worstSendMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendMs, 0, 0));
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
-		out->bitrateLimit = AacConfig::MaxBitrateForMtu(out->mediaMtu - Rtp::kHeaderSize, sampleRate);
+		const size_t payloadCapacity = out->mediaMtu > Rtp::kHeaderSize
+			? static_cast<size_t>(out->mediaMtu) - Rtp::kHeaderSize
+			: 0;
+		out->bitrateLimit =
+			payloadCapacity != 0 ? AacConfig::MaxBitrateForMtu(payloadCapacity, sampleRate) : 0;
 		// SBC PCM capabilities are the baseline, not the AAC capability set or Windows mix format.
 		const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
@@ -413,7 +418,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 								ctx->Preference.sbcAllocation != in->sbcAllocation ||
 								ctx->Preference.aacBitrate != in->aacBitrate ||
 								ctx->Preference.prerollMs != in->prerollMs ||
-				ctx->Preference.sbcFramesPerPacket != in->sbcFramesPerPacket;
+				ctx->Preference.sbcFramesPerPacket != in->sbcFramesPerPacket ||
+				ctx->Preference.ldacQuality != in->ldacQuality;
 			changed = selectionChanged || parametersChanged;
 			ctx->Preference = *in;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);

@@ -344,6 +344,10 @@ struct DEVICE_CONTEXT
 	ULONGLONG ResponseDeadline;
 	volatile LONG ConnectPending;
 	volatile LONG ReadCompleted;
+	// The transport failed a signaling read, and not because a teardown cancelled it: the work
+	// item closes the channel, because a session with no read armed can no longer hear a
+	// response or a CLOSE while it still looks open.
+	volatile LONG ReadFault;
 	volatile LONG TimeoutPending;
 	volatile LONG SuspendPending;
 	// Set after every session transition (Transmit, ResetSession). Teardown clears it,
