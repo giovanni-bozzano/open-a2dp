@@ -74,31 +74,33 @@ One INI file per sink, plus a machine default for a sink that has none:
 - `%ProgramData%\OpenA2dp\devices\<12 hex address>.ini` - that sink's settings, which win
   over the default.
 
-The file is text so it can be read, backed up and edited without this build: one
-`key = value` per line, `#` starts a comment, and the keys are the settings in the table
-below. A key this build does not know is ignored, so a file written by a newer build still
+The file is text so it can be read, backed up and edited without this build: one section per
+codec - `[sbc]`, `[aac]`, `[aptx]`, `[aptxhd]`, `[ldac]` - plus `[general]` for what is not a
+codec's own setting, and one `key = value` line under each, with `#` starting a comment. A key
+or a section this build does not know is ignored, so a file written by a newer build still
 loads; a value the driver cannot serve refuses the whole file rather than setting half of it,
 and a missing file simply means "no settings". `OpenA2dpCtl codec` writes the codec keys
-through `SET_PREFERENCE` and `format <codec> ...` writes one codec's `Rate`/`Channels`
-through `SET_ENDPOINT_FORMAT`; the driver rewrites the sink's file whenever either changes,
-so the file and the running driver never disagree. Deleting the sink's file returns it to the
-default, and `OpenA2dpCtl reset` or the settings window's Restore defaults writes both
-defaults back. The driver reads the file in `OnDeviceAdd`, before the endpoint exists. A value
+through `SET_PREFERENCE` and `format <codec> ...` writes one codec's `rate`/`channels` in
+that codec's section through `SET_ENDPOINT_FORMAT`; the driver rewrites the sink's file
+whenever either changes, so the file and the running driver never disagree. Deleting the
+sink's file returns it to the default, and `OpenA2dpCtl reset` or the settings window's Restore
+defaults writes both defaults back - which removes the file instead of storing the defaults,
+so a sink nobody changed has no file at all. The driver reads the file in `OnDeviceAdd`, before the endpoint exists. A value
 the sink does not advertise is refused instead of stored, so reading a preference back always
 shows what the driver will use. The registry is not used and nothing is migrated from it.
 
-| Setting | File key | CLI | Values | Default |
+| Setting | Section and key | CLI | Values | Default |
 |---|---|---|---|---|
-| Codec choice | `codec` | `codec auto\|sbc\|aac\|aptx\|aptxhd\|ldac` | auto, SBC, AAC, aptX, aptX HD, LDAC | auto (LDAC, aptX HD, aptX, then AAC, as registered encoders and the sink allow, else SBC) |
-| LDAC quality | `ldacQuality` | `--ldac-quality high\|standard\|mobile` | 0 (990 kbps), 1 (660), 2 (330) | 0 |
-| SBC bitpool | `sbcBitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
-| SBC block length | `sbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
-| SBC subbands | `sbcSubbands` | `--subbands n` | 4, 8 | 8 |
-| SBC allocation | `sbcAllocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
-| AAC bitrate | `aacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and the media MTU | highest the sink accepts, up to the MTU ceiling |
-| Pacing lead | `prerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
-| SBC frames per packet | `sbcFramesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
-| Sample rate per codec | `<codec>Rate`, `<codec>Channels` | `format <codec> [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels that codec can play | automatic (each codec plays every format it can) |
+| Codec choice | `[general] codec` | `codec auto\|sbc\|aac\|aptx\|aptxhd\|ldac` | auto, SBC, AAC, aptX, aptX HD, LDAC | auto (LDAC, aptX HD, aptX, then AAC, as registered encoders and the sink allow, else SBC) |
+| Pacing lead | `[general] prerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
+| SBC bitpool | `[sbc] bitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
+| SBC block length | `[sbc] blocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
+| SBC subbands | `[sbc] subbands` | `--subbands n` | 4, 8 | 8 |
+| SBC allocation | `[sbc] allocation` | `--allocation loudness\|snr` | 1 (loudness), 2 (SNR) | loudness |
+| SBC frames per packet | `[sbc] framesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
+| AAC bitrate | `[aac] bitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and the media MTU | highest the sink accepts, up to the MTU ceiling |
+| LDAC quality | `[ldac] quality` | `--ldac-quality high\|standard\|mobile` | 0 (990 kbps), 1 (660), 2 (330) | 0 |
+| Sample rate per codec | `[<codec>] rate`, `[<codec>] channels` | `format <codec> [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels that codec can play | automatic (each codec plays every format it can) |
 
 The registry value names earlier builds used are gone with the registry store: the file above
 is the only place a setting lives.

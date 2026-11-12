@@ -8,11 +8,11 @@ using namespace OpenA2dp;
 //   default.ini            the machine default
 //   devices\<address>.ini  that sink's settings, which win over the default
 // Text rather than a binary record so the file can be read, backed up and edited without this
-// build: one `key = value` per line, `#` starts a comment, and every setting is a key of its
-// own. A key this build does not know is ignored, so a newer file still loads; a value the
-// driver cannot serve refuses the whole file instead of half applying it. Loading runs while the
-// device is added and saving from the IOCTLs the tools send; both are at PASSIVE_LEVEL and both
-// are file I/O, so there is no registry state to keep in step. An absent file means "no
+// build: one section per codec plus a general one, a `key = value` line under each, and `#` for a
+// comment. A key or a section this build does not know is ignored, so a newer file still loads; a
+// value the driver cannot serve refuses the whole file instead of half applying it. Loading runs
+// while the device is added and saving from the IOCTLs the tools send; both are at PASSIVE_LEVEL
+// and both are file I/O, so there is no registry state to keep in step. An absent file means "no
 // settings".
 namespace
 {
@@ -20,11 +20,13 @@ const wchar_t kDirectory[] = L"\\??\\C:\\ProgramData\\OpenA2dp";
 const wchar_t kDevicesDirectory[] = L"\\??\\C:\\ProgramData\\OpenA2dp\\devices";
 const wchar_t kDefaultPath[] = L"\\??\\C:\\ProgramData\\OpenA2dp\\default.ini";
 // A different number is a file this build does not understand; it is ignored, not guessed at.
-constexpr uint32_t kFormatVersion = 1;
+// 2 is the sectioned layout: the flat keys of the first format are not read.
+constexpr uint32_t kFormatVersion = 2;
 // Room for the file below with space to spare. A longer file is refused rather than read in
 // part, so a hand edit cannot be half applied.
 constexpr ULONG kMaxFileBytes = 1024;
 constexpr size_t kMaxChoiceChars = 12;
+constexpr size_t kMaxNameChars = 16;
 
 struct Settings
 {
@@ -119,8 +121,8 @@ bool ReadChoice(const char* value, size_t length, uint32_t& number)
 	return ReadNumber(value, length, number);
 }
 
-// The codec a name in the file stands for, -1 for automatic and -2 for a name this build does
-// not know (the same five names `OpenA2dpCtl format` takes).
+// The codec a section name stands for, -1 for "auto" and -2 for a name this build does not know
+// (the same five names `OpenA2dpCtl format` takes).
 int CodecFromName(const char* name, size_t length)
 {
 	static const struct
@@ -161,118 +163,87 @@ const char* CodecFileName(uint32_t codec)
 	}
 }
 
-// One key of the file. A key this build does not write is skipped, so a newer file still loads;
-// a key that is known but holds a value this build cannot use refuses the file, because
-// silently dropping it would apply a setting the file does not ask for.
-bool ApplyValue(const char* key, size_t keyLength, const char* value, size_t valueLength, Settings& settings)
+// One key of one section. A key or a section this build does not write is skipped, so a newer
+// file still loads; a key that is known but holds a value this build cannot use refuses the
+// file, because silently dropping it would apply a setting the file does not ask for.
+bool ApplyValue(const char* section, size_t sectionLength, const char* key, size_t keyLength,
+				const char* value, size_t valueLength, Settings& settings)
 {
 	Ioctl::Preference& preference = settings.preference;
 	Ioctl::EndpointFormat& format = settings.endpointFormat;
-	if (KeyIs(key, keyLength, "codec"))
+
+	if (KeyIs(section, sectionLength, "general"))
 	{
-		const int codec = CodecFromName(value, valueLength);
-		if (codec == -2)
+		if (KeyIs(key, keyLength, "codec"))
 		{
-			return false;
+			const int codec = CodecFromName(value, valueLength);
+			if (codec == -2)
+			{
+				return false;
+			}
+			preference.flags = codec < 0 ? 0 : Ioctl::kPreferenceForceCodec;
+			preference.codec = codec < 0 ? Ioctl::kCodecSbc : static_cast<uint32_t>(codec);
+			return true;
 		}
-		preference.flags = codec < 0 ? 0 : Ioctl::kPreferenceForceCodec;
-		preference.codec = codec < 0 ? Ioctl::kCodecSbc : static_cast<uint32_t>(codec);
+		if (KeyIs(key, keyLength, "prerollMs"))
+		{
+			return ReadNumber(value, valueLength, preference.prerollMs);
+		}
 		return true;
 	}
 
-	uint32_t* target = nullptr;
-	bool choice = false; // accepts "auto" as well as a number
-	if (KeyIs(key, keyLength, "aacBitrate"))
-	{
-		target = &preference.aacBitrate;
-	}
-	else if (KeyIs(key, keyLength, "sbcBitpool"))
-	{
-		target = &preference.sbcBitpool;
-	}
-	else if (KeyIs(key, keyLength, "sbcBlocks"))
-	{
-		target = &preference.sbcBlocks;
-	}
-	else if (KeyIs(key, keyLength, "sbcSubbands"))
-	{
-		target = &preference.sbcSubbands;
-	}
-	else if (KeyIs(key, keyLength, "sbcAllocation"))
-	{
-		target = &preference.sbcAllocation;
-	}
-	else if (KeyIs(key, keyLength, "prerollMs"))
-	{
-		target = &preference.prerollMs;
-	}
-	else if (KeyIs(key, keyLength, "sbcFramesPerPacket"))
-	{
-		target = &preference.sbcFramesPerPacket;
-	}
-	else if (KeyIs(key, keyLength, "ldacQuality"))
-	{
-		target = &preference.ldacQuality;
-	}
-	else if (KeyIs(key, keyLength, "sbcRate"))
-	{
-		target = &format.sampleRate[Ioctl::kCodecSbc];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "sbcChannels"))
-	{
-		target = &format.channels[Ioctl::kCodecSbc];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "aptxRate"))
-	{
-		target = &format.sampleRate[Ioctl::kCodecAptx];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "aptxChannels"))
-	{
-		target = &format.channels[Ioctl::kCodecAptx];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "aacRate"))
-	{
-		target = &format.sampleRate[Ioctl::kCodecAac];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "aacChannels"))
-	{
-		target = &format.channels[Ioctl::kCodecAac];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "aptxhdRate"))
-	{
-		target = &format.sampleRate[Ioctl::kCodecAptxHd];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "aptxhdChannels"))
-	{
-		target = &format.channels[Ioctl::kCodecAptxHd];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "ldacRate"))
-	{
-		target = &format.sampleRate[Ioctl::kCodecLdac];
-		choice = true;
-	}
-	else if (KeyIs(key, keyLength, "ldacChannels"))
-	{
-		target = &format.channels[Ioctl::kCodecLdac];
-		choice = true;
-	}
-	else
+	// A codec section names its codec once: rate and channels are that codec's own entry, and
+	// the parameters below exist only where the codec has such a setting.
+	const int codec = CodecFromName(section, sectionLength);
+	if (codec < 0)
 	{
 		return true;
 	}
-	return choice ? ReadChoice(value, valueLength, *target) : ReadNumber(value, valueLength, *target);
+	if (KeyIs(key, keyLength, "rate"))
+	{
+		return ReadChoice(value, valueLength, format.sampleRate[codec]);
+	}
+	if (KeyIs(key, keyLength, "channels"))
+	{
+		return ReadChoice(value, valueLength, format.channels[codec]);
+	}
+	if (codec == static_cast<int>(Ioctl::kCodecSbc))
+	{
+		if (KeyIs(key, keyLength, "bitpool"))
+		{
+			return ReadNumber(value, valueLength, preference.sbcBitpool);
+		}
+		if (KeyIs(key, keyLength, "blocks"))
+		{
+			return ReadNumber(value, valueLength, preference.sbcBlocks);
+		}
+		if (KeyIs(key, keyLength, "subbands"))
+		{
+			return ReadNumber(value, valueLength, preference.sbcSubbands);
+		}
+		if (KeyIs(key, keyLength, "allocation"))
+		{
+			return ReadNumber(value, valueLength, preference.sbcAllocation);
+		}
+		if (KeyIs(key, keyLength, "framesPerPacket"))
+		{
+			return ReadNumber(value, valueLength, preference.sbcFramesPerPacket);
+		}
+	}
+	if (codec == static_cast<int>(Ioctl::kCodecAac) && KeyIs(key, keyLength, "bitrate"))
+	{
+		return ReadNumber(value, valueLength, preference.aacBitrate);
+	}
+	if (codec == static_cast<int>(Ioctl::kCodecLdac) && KeyIs(key, keyLength, "quality"))
+	{
+		return ReadNumber(value, valueLength, preference.ldacQuality);
+	}
+	return true;
 }
 
-// Every line of the file: blank lines and comments are skipped, `key = value` is applied, and a
-// line that is neither refuses the file. The version has to be this build's.
+// Every line of the file: blank lines and comments are skipped, `[section]` opens a section,
+// `key = value` is applied to it, and a line that is neither refuses the file. The version has
+// to be this build's and is only read before the first section.
 bool ParseSettings(const char* text, size_t length, Settings& settings)
 {
 	settings = {};
@@ -280,6 +251,8 @@ bool ParseSettings(const char* text, size_t length, Settings& settings)
 	settings.endpointFormat.abiVersion = Ioctl::kAbiVersion;
 	const char* cursor = text;
 	const char* const textEnd = text + length;
+	char section[kMaxNameChars + 1] = {};
+	size_t sectionLength = 0;
 	bool versionSeen = false;
 	uint32_t version = 0;
 	while (cursor < textEnd)
@@ -319,6 +292,38 @@ bool ParseSettings(const char* text, size_t length, Settings& settings)
 			continue;
 		}
 
+		if (*begin == '[')
+		{
+			const char* close = begin + 1;
+			while (close < end && *close != ']')
+			{
+				++close;
+			}
+			if (close >= end)
+			{
+				return false;
+			}
+			for (const char* scan = close + 1; scan < end; ++scan)
+			{
+				if (!IsSpace(*scan))
+				{
+					return false;
+				}
+			}
+			const size_t nameLength = static_cast<size_t>(close - (begin + 1));
+			if (nameLength == 0 || nameLength > kMaxNameChars)
+			{
+				return false;
+			}
+			for (size_t index = 0; index < nameLength; ++index)
+			{
+				section[index] = begin[1 + index];
+			}
+			section[nameLength] = '\0';
+			sectionLength = nameLength;
+			continue;
+		}
+
 		const char* equals = nullptr;
 		for (const char* scan = begin; scan < end; ++scan)
 		{
@@ -344,16 +349,18 @@ bool ParseSettings(const char* text, size_t length, Settings& settings)
 		}
 		const size_t keyLength = static_cast<size_t>(keyEnd - begin);
 		const size_t valueLength = static_cast<size_t>(end - value);
-		if (KeyIs(begin, keyLength, "version"))
+
+		// The version is metadata about the file, not a setting, so it sits above the sections.
+		if (sectionLength == 0)
 		{
-			if (!ReadNumber(value, valueLength, version))
+			if (!KeyIs(begin, keyLength, "version") || !ReadNumber(value, valueLength, version))
 			{
 				return false;
 			}
 			versionSeen = true;
 			continue;
 		}
-		if (!ApplyValue(begin, keyLength, value, valueLength, settings))
+		if (!ApplyValue(section, sectionLength, begin, keyLength, value, valueLength, settings))
 		{
 			return false;
 		}
@@ -396,35 +403,68 @@ void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const Settings& set
 	const bool forced = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	char text[kMaxFileBytes] = {};
 	size_t length = 0;
-	char choice[kMaxChoiceChars] = {};
+	// Two, because one section can print the rate and the channel count in the same line and each
+	// ChoiceText fills the buffer it is given.
+	char rate[kMaxChoiceChars] = {};
+	char channels[kMaxChoiceChars] = {};
 
 	Append(text, length,
 		   "# OpenA2dp settings for this sink. Delete the file to return the driver defaults.\r\n"
-		   "# \"auto\" leaves a choice to the driver. A rate and a channel count pin it.\r\n"
+		   "# One section per codec, plus [general] for what is not a codec's own setting.\r\n"
 		   "version = %u\r\n"
-		   "\r\n",
-		   kFormatVersion);
-	Append(text, length, "codec = %s\r\n", CodecFileName(forced ? preference.codec : Ioctl::kCodecCount));
-	Append(text, length,
-		   "aacBitrate = %u\r\n"
-		   "sbcBitpool = %u\r\n"
-		   "sbcBlocks = %u\r\n"
-		   "sbcSubbands = %u\r\n"
-		   "sbcAllocation = %u\r\n"
-		   "prerollMs = %u\r\n"
-		   "sbcFramesPerPacket = %u\r\n"
-		   "ldacQuality = %u\r\n"
 		   "\r\n"
-		   "# The PCM format each codec's streams are played at, one entry per codec.\r\n",
-		   preference.aacBitrate, preference.sbcBitpool, preference.sbcBlocks, preference.sbcSubbands,
-		   preference.sbcAllocation, preference.prerollMs, preference.sbcFramesPerPacket, preference.ldacQuality);
-	for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
-	{
-		Append(text, length, "%sRate = %s\r\n", CodecFileName(codec),
-			   ChoiceText(format.sampleRate[codec], choice));
-		Append(text, length, "%sChannels = %s\r\n", CodecFileName(codec),
-			   ChoiceText(format.channels[codec], choice));
-	}
+		   "[general]\r\n"
+		   "# auto, sbc, aac, aptx, aptxhd or ldac\r\n"
+		   "codec = %s\r\n"
+		   "# How far ahead of the media clock the stream is sent, 0 leaves the default.\r\n"
+		   "prerollMs = %u\r\n"
+		   "\r\n",
+		   kFormatVersion, CodecFileName(forced ? preference.codec : Ioctl::kCodecCount), preference.prerollMs);
+	Append(text, length,
+		   "[sbc]\r\n"
+		   "# Each entry is a PCM rate and channel count, or auto for every format the codec plays.\r\n"
+		   "rate = %s\r\n"
+		   "channels = %s\r\n"
+		   "bitpool = %u\r\n"
+		   "blocks = %u\r\n"
+		   "subbands = %u\r\n"
+		   "allocation = %u\r\n"
+		   "framesPerPacket = %u\r\n"
+		   "\r\n",
+		   ChoiceText(format.sampleRate[Ioctl::kCodecSbc], rate),
+		   ChoiceText(format.channels[Ioctl::kCodecSbc], channels), preference.sbcBitpool,
+		   preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation,
+		   preference.sbcFramesPerPacket);
+	Append(text, length,
+		   "[aac]\r\n"
+		   "rate = %s\r\n"
+		   "channels = %s\r\n"
+		   "bitrate = %u\r\n"
+		   "\r\n",
+		   ChoiceText(format.sampleRate[Ioctl::kCodecAac], rate),
+		   ChoiceText(format.channels[Ioctl::kCodecAac], channels), preference.aacBitrate);
+	Append(text, length,
+		   "[aptx]\r\n"
+		   "rate = %s\r\n"
+		   "channels = %s\r\n"
+		   "\r\n",
+		   ChoiceText(format.sampleRate[Ioctl::kCodecAptx], rate),
+		   ChoiceText(format.channels[Ioctl::kCodecAptx], channels));
+	Append(text, length,
+		   "[aptxhd]\r\n"
+		   "rate = %s\r\n"
+		   "channels = %s\r\n"
+		   "\r\n",
+		   ChoiceText(format.sampleRate[Ioctl::kCodecAptxHd], rate),
+		   ChoiceText(format.channels[Ioctl::kCodecAptxHd], channels));
+	Append(text, length,
+		   "[ldac]\r\n"
+		   "rate = %s\r\n"
+		   "channels = %s\r\n"
+		   "# 0 = high (990 kbps), 1 = standard (660), 2 = mobile (330).\r\n"
+		   "quality = %u\r\n",
+		   ChoiceText(format.sampleRate[Ioctl::kCodecLdac], rate),
+		   ChoiceText(format.channels[Ioctl::kCodecLdac], channels), preference.ldacQuality);
 	if (length == 0)
 	{
 		OA2DP_WARN(ctx, "Config", "cannot format the settings for %ws", path);
@@ -481,6 +521,55 @@ bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[kMa
 	length = static_cast<size_t>(bytes);
 	text[length] = '\0';
 	return true;
+}
+
+// True when nothing differs from the driver default: every codec automatic and every parameter
+// zero. Such a sink has nothing to store, so it gets no file and deleting one is the same as
+// restoring the defaults.
+bool SameDefaults(const Settings& settings)
+{
+	const Ioctl::Preference& preference = settings.preference;
+	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0 || preference.aacBitrate != 0 ||
+		preference.sbcBitpool != 0 || preference.sbcBlocks != 0 || preference.sbcSubbands != 0 ||
+		preference.sbcAllocation != 0 || preference.prerollMs != 0 ||
+		preference.sbcFramesPerPacket != 0 || preference.ldacQuality != 0)
+	{
+		return false;
+	}
+	for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+	{
+		if (settings.endpointFormat.sampleRate[codec] != 0 || settings.endpointFormat.channels[codec] != 0)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// Removes the sink's file. There is nothing to remove when the sink was never changed, which is
+// the normal case and not worth a warning.
+void DeleteSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path)
+{
+	HANDLE handle = nullptr;
+	const NTSTATUS status = OpenFile(path, DELETE | FILE_READ_ATTRIBUTES, FILE_OPEN, handle);
+	if (!NT_SUCCESS(status))
+	{
+		if (status != STATUS_OBJECT_NAME_NOT_FOUND && status != STATUS_OBJECT_PATH_NOT_FOUND)
+		{
+			OA2DP_WARN(ctx, "Config", "cannot open %ws to remove it 0x%08X", path, status);
+		}
+		return;
+	}
+	FILE_DISPOSITION_INFORMATION disposition = {};
+	disposition.DeleteFile = TRUE;
+	IO_STATUS_BLOCK statusBlock = {};
+	const NTSTATUS removed = ZwSetInformationFile(handle, &statusBlock, &disposition, sizeof(disposition),
+												  FileDispositionInformation);
+	ZwClose(handle);
+	if (!NT_SUCCESS(removed))
+	{
+		OA2DP_WARN(ctx, "Config", "cannot remove %ws 0x%08X", path, removed);
+	}
 }
 
 // devices\<12 hex address>.ini, the file the sink's settings live in.
@@ -583,6 +672,13 @@ void ConfigSaveSettings(_In_ DEVICE_CONTEXT* ctx)
 	if (!SinkPath(ctx, sinkPath))
 	{
 		OA2DP_WARN(ctx, "Config", "cannot name this sink's settings file; nothing is stored");
+		return;
+	}
+	if (SameDefaults(settings))
+	{
+		// A sink nobody changed keeps no file: the defaults are the absence of settings, so the
+		// file is removed instead of being filled with them.
+		DeleteSettingsFile(ctx, sinkPath);
 		return;
 	}
 	WriteSettings(ctx, sinkPath, settings);
