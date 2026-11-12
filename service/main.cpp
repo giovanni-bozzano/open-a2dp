@@ -9,6 +9,7 @@
 #include <OpenA2dp/AptxStreamEncoder.h>
 
 #include <windows.h>
+#include <avrt.h>
 #include <winioctl.h>
 #include <cfgmgr32.h>
 
@@ -248,9 +249,47 @@ bool RegisterEncoder(HANDLE h, uint32_t codec, const char* name)
 	return true;
 }
 
+// The worker wakes every 10 ms and has to encode within real time. Ordinary-priority CPU load
+// (a build, a scan, a game) can hold it off for hundreds of milliseconds, and the driver then
+// reports a stream that lost its frames as an underrun. MMCSS reserves a pro-audio slot for this
+// thread alone; the rest of the process keeps its normal priority. Registration is best effort:
+// without it the thread still runs at the highest priority, which is what keeps it ahead of a
+// loaded machine, and the log says which of the two is in force.
+class ProAudioPriority
+{
+public:
+	explicit ProAudioPriority(const char* which)
+	{
+		DWORD index = 0;
+		task_ = AvSetMmThreadCharacteristicsA("Pro Audio", &index);
+		if (task_ != nullptr) {
+			Log("[svc] %s worker registered with MMCSS (Pro Audio)", which);
+			return;
+		}
+		const DWORD error = GetLastError();
+		const BOOL raised = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+		Log("[svc] MMCSS registration failed: %lu; %s worker at %s", error, which,
+			raised ? "highest priority" : "normal priority");
+	}
+
+	~ProAudioPriority()
+	{
+		if (task_ != nullptr) {
+			AvRevertMmThreadCharacteristics(task_);
+		}
+	}
+
+	ProAudioPriority(const ProAudioPriority&) = delete;
+	ProAudioPriority& operator=(const ProAudioPriority&) = delete;
+
+private:
+	HANDLE task_ = nullptr;
+};
+
 // One device's event loop. Returns when the device is gone or the service stops.
 void DeviceLoop(const std::wstring& linkName)
 {
+	const ProAudioPriority priority("encoder");
 	std::string linkUtf8 = WstrToUtf8(linkName);
 	Log("[svc] opening %s", linkUtf8.c_str());
 
