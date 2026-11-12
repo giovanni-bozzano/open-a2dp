@@ -368,6 +368,7 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	const std::wstring instanceId = InstanceIdOf(set, dev);
 	const std::wstring service = StringProperty(set, dev, SPDRP_SERVICE);
 	state.restartPending = NeedsRestart(dev);
+	state.running = NodeRunning(dev);
 	SetupDiDestroyDeviceInfoList(set);
 
 	state.instanceId = Utf8(instanceId);
@@ -601,6 +602,15 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 						std::string(SinkDriverName(target));
 				outcome = SwitchOutcome::Failed;
 			}
+		}
+		else if (!NodeRunning(dev))
+		{
+			// The service name alone does not mean the node works: a node that failed to start or
+			// was disabled carries the right driver and still plays nothing, so reporting success
+			// would hide exactly the silence the switch was asked to fix.
+			error = "the sink's A2DP node is on " + std::string(SinkDriverName(target)) +
+					" but is not running; reconnect the sink or restart its device";
+			outcome = SwitchOutcome::Failed;
 		}
 		SetupDiDestroyDeviceInfoList(set);
 		return outcome;

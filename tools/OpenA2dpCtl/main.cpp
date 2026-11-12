@@ -874,6 +874,16 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 
 	if (state.current == target && !state.restartPending)
 	{
+		if (!state.running)
+		{
+			// The right driver on a node that is not running plays nothing; "nothing to change"
+			// would hide exactly the silence the user is asking about.
+			std::fprintf(stderr,
+						 "%s: %s is installed on the sink's A2DP node but the node is not running; "
+						 "reconnect the sink or restart its device\n",
+						 FormatAddress(reference).c_str(), SinkDriverName(target));
+			return 1;
+		}
 		std::printf("%s: already on %s, nothing to change.\n", FormatAddress(reference).c_str(),
 					SinkDriverName(target));
 		return 0;

@@ -32,6 +32,9 @@ struct SinkDriverState
 	bool switchable = false;
 	// `current` is installed on the node but not loaded yet: its restart was refused.
 	bool restartPending = false;
+	// `current` is loaded and the node reports no problem. A node can carry the right driver
+	// and still play nothing, so a caller that reports success has to check this too.
+	bool running = false;
 	// The A2DP devnode carrying this sink's address.
 	std::string instanceId;
 	std::string windowsInf; // full path to the inbox A2DP INF; empty when it is not a candidate
