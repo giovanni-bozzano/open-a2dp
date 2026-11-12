@@ -15,6 +15,10 @@ struct BRB_OP
 	DEVICE_CONTEXT* Ctx;
 	WDFREQUEST Request;
 	WDFMEMORY Memory;
+	// Storage for the operation itself, parented to the device: a waiter that abandons an
+	// operation the transport never completes would otherwise leak this block, because only
+	// the completion routine ever releases the last reference.
+	WDFMEMORY Block;
 	KEVENT Done;
 	volatile LONG State; // 0 running, 1 completed, 2 abandoned by its waiter
 	volatile LONG Refs;

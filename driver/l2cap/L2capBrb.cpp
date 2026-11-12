@@ -4,21 +4,34 @@ namespace OpenA2dpDriver::L2cap
 {
 void BrbOpRelease(_In_ BRB_OP* op)
 {
-	if (InterlockedDecrement(&op->Refs) == 0)
+	if (InterlockedDecrement(&op->Refs) != 0)
 	{
-		WdfObjectDelete(op->Request); // also deletes the memory object parented to it
-		ExFreePoolWithTag(op, OpenA2dpPoolTag);
+		return;
 	}
+	// The operation lives inside Block, so deleting it frees op: nothing may touch op after.
+	const WDFMEMORY block = op->Block;
+	WdfObjectDelete(op->Request); // also deletes the memory object parented to it
+	WdfObjectDelete(block);
 }
 
 BRB_OP* BrbOpCreate(_In_ DEVICE_CONTEXT* ctx, _In_ BRB_TYPE type)
 {
-	auto* op = static_cast<BRB_OP*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(BRB_OP), OpenA2dpPoolTag));
-	if (op == nullptr)
+	// The operation is carried in a WDF memory object parented to the device, so it cannot
+	// outlive the device even when a transport never completes the request and the completion
+	// routine never releases it.
+	WDF_OBJECT_ATTRIBUTES blockAttrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&blockAttrs);
+	blockAttrs.ParentObject = ctx->Device;
+	WDFMEMORY block = nullptr;
+	PVOID raw = nullptr;
+	if (!NT_SUCCESS(WdfMemoryCreate(&blockAttrs, NonPagedPoolNx, OpenA2dpPoolTag, sizeof(BRB_OP), &block, &raw)))
 	{
 		return nullptr;
 	}
+	auto* op = static_cast<BRB_OP*>(raw);
+	RtlZeroMemory(op, sizeof(*op));
 	op->Ctx = ctx;
+	op->Block = block;
 	op->Refs = 2;
 	op->IsOpen = type == BRB_L2CA_OPEN_CHANNEL;
 	op->IsRegister = type == BRB_L2CA_REGISTER_SERVER;
@@ -31,14 +44,14 @@ BRB_OP* BrbOpCreate(_In_ DEVICE_CONTEXT* ctx, _In_ BRB_TYPE type)
 	attrs.ParentObject = ctx->Device;
 	if (!NT_SUCCESS(WdfRequestCreate(&attrs, ctx->IoTarget, &op->Request)))
 	{
-		ExFreePoolWithTag(op, OpenA2dpPoolTag);
+		WdfObjectDelete(block); // also frees op
 		return nullptr;
 	}
 	attrs.ParentObject = op->Request;
 	if (!NT_SUCCESS(WdfMemoryCreatePreallocated(&attrs, &op->Brb, sizeof(op->Brb), &op->Memory)))
 	{
 		WdfObjectDelete(op->Request);
-		ExFreePoolWithTag(op, OpenA2dpPoolTag);
+		WdfObjectDelete(block);
 		return nullptr;
 	}
 	ctx->Profile.BthInitializeBrb(reinterpret_cast<PBRB>(&op->Brb), type);
