@@ -257,6 +257,9 @@ struct SinkState
 	std::vector<HWND> hints; // one hint line per codec tab, created with the other controls
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
+	// Whether the message line is registered with the shared tooltip; it is only there while
+	// there is a message, so an empty line shows no box.
+	bool messageTip = false;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
 };
 
@@ -317,6 +320,40 @@ SinkState* StateOf(HWND hwnd)
 	return reinterpret_cast<SinkState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
+// The message is one line, cut with an ellipsis when the sentence does not fit, so the whole
+// sentence goes to the tooltip and both are kept in step here.
+void UpdateMessageTooltip(HWND hwnd, const std::wstring& message)
+{
+	SinkState* state = StateOf(hwnd);
+	const HWND label = GetDlgItem(hwnd, kMessageLabel);
+	if (state == nullptr || state->tooltip == nullptr || label == nullptr)
+	{
+		return;
+	}
+	TTTOOLINFOW tool = {};
+	tool.cbSize = sizeof(tool);
+	tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+	tool.hwnd = hwnd;
+	tool.uId = reinterpret_cast<UINT_PTR>(label);
+	tool.lpszText = const_cast<LPWSTR>(message.c_str());
+	if (message.empty())
+	{
+		if (state->messageTip)
+		{
+			SendMessageW(state->tooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+			state->messageTip = false;
+		}
+		return;
+	}
+	if (!state->messageTip)
+	{
+		SendMessageW(state->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+		state->messageTip = true;
+		return;
+	}
+	SendMessageW(state->tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+}
+
 void SetMessage(HWND hwnd, const std::wstring& message)
 {
 	SinkState* state = StateOf(hwnd);
@@ -325,6 +362,7 @@ void SetMessage(HWND hwnd, const std::wstring& message)
 		state->message = message;
 	}
 	SetWindowTextW(GetDlgItem(hwnd, kMessageLabel), message.c_str());
+	UpdateMessageTooltip(hwnd, message);
 }
 
 int TextWidth(HDC dc, const wchar_t* text)
@@ -1222,7 +1260,9 @@ void ApplyLayout(HWND hwnd)
 		hintHeight = MaxOf(hintHeight, TextHeight(dc, kTabInfo[tab].hint, innerWidth));
 	}
 	hintHeight = MaxOf(hintHeight, textHeight);
-	const int bottomHeight = MaxOf(applyHeight, textHeight);
+	// The outcome of the last action is a line of its own above the buttons: beside them it was
+	// cut to a few words, which is no use when it is the reason a setting did not apply.
+	const int bottomHeight = textHeight + gap + applyHeight;
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
@@ -1234,7 +1274,9 @@ void ApplyLayout(HWND hwnd)
 	if (tabs != nullptr && SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0) > 0 &&
 		SendMessageW(tabs, TCM_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&tabItem)) != FALSE)
 	{
-		tabHeight = (tabItem.bottom - tabItem.top) + gap + 2;
+		// The item plus the row the shared line is drawn in: the strip's bottom row is the table
+		// body's top edge, which is what makes the open tab part of its pane.
+		tabHeight = (tabItem.bottom - tabItem.top) + 3;
 	}
 	const int bodyHeight = inset + rows * rowHeight + hintHeight + gap;
 	int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + bottomHeight + margin;
@@ -1288,7 +1330,8 @@ void ApplyLayout(HWND hwnd)
 	state->groups.clear();
 	state->groups.push_back({groupLeft, sessionTop, groupLeft + groupWidth, sessionTop + sessionHeight,
 							  kSessionGroupText});
-	state->groups.push_back({groupLeft, bodyTop, groupLeft + groupWidth, bodyTop + bodyHeight, nullptr});
+	// The body's top edge is the strip's last row, so the frame starts where the tabs end.
+	state->groups.push_back({groupLeft, bodyTop - 1, groupLeft + groupWidth, bodyTop + bodyHeight, nullptr});
 	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
 
 	// The tab control sits on the body's top edge; the table below it is the window's, which
@@ -1323,19 +1366,16 @@ void ApplyLayout(HWND hwnd)
 		ShowWindow(state->hints[tab], tab == state->tab ? SW_SHOW : SW_HIDE);
 	}
 
-	// Apply sits under the right edge, the driver switch just left of it, and the outcome of the
-	// last action fills the rest.
+	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
+	// sit under its right end.
+	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, textHeight);
+	const int buttonsTop = bottomTop + textHeight + gap;
 	const int applyLeft = width - margin - applyWidth;
-	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, bottomTop + (bottomHeight - applyHeight) / 2, applyWidth,
-		  applyHeight);
+	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, buttonsTop, applyWidth, applyHeight);
 	const int driverLeft = applyLeft - gap - driverWidth;
-	Place(GetDlgItem(hwnd, kDriverButton), driverLeft, bottomTop + (bottomHeight - applyHeight) / 2,
-		  driverWidth, applyHeight);
+	Place(GetDlgItem(hwnd, kDriverButton), driverLeft, buttonsTop, driverWidth, applyHeight);
 	const int restoreLeft = driverLeft - gap - restoreWidth;
-	Place(GetDlgItem(hwnd, kRestoreButton), restoreLeft, bottomTop + (bottomHeight - applyHeight) / 2,
-		  restoreWidth, applyHeight);
-	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop + (bottomHeight - textHeight) / 2,
-		  restoreLeft - gap - margin, textHeight);
+	Place(GetDlgItem(hwnd, kRestoreButton), restoreLeft, buttonsTop, restoreWidth, applyHeight);
 
 	if (dc != nullptr)
 	{
@@ -1392,8 +1432,11 @@ void PaintCodecTabs(HWND tab)
 		const Colors& colors = ThemeColors();
 		const HFONT font = reinterpret_cast<HFONT>(SendMessageW(tab, WM_GETFONT, 0, 0));
 		const HGDIOBJ previousFont = font != nullptr ? SelectObject(dc, font) : nullptr;
+		const HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
+		const HGDIOBJ previousPen = SelectObject(dc, pen);
 		const LRESULT selected = SendMessageW(tab, TCM_GETCURSEL, 0, 0);
 		const int count = static_cast<int>(SendMessageW(tab, TCM_GETITEMCOUNT, 0, 0));
+		RECT openTab = {0, 0, 0, 0};
 		for (int index = 0; index < count; ++index)
 		{
 			RECT item = {};
@@ -1402,15 +1445,27 @@ void PaintCodecTabs(HWND tab)
 				continue;
 			}
 			const bool open = index == selected;
+			// The open tab carries the window's own background and runs down to the shared line, so
+			// it reads as the head of the table under it; a closed tab is a box of its own, lifted
+			// off that line on the section colour.
+			RECT face = item;
+			if (open)
+			{
+				face.bottom = client.bottom;
+				openTab = face;
+			}
 			SetDCBrushColor(dc, open ? colors.background : colors.section);
-			FillRect(dc, &item, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-			const HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
-			const HGDIOBJ previousPen = SelectObject(dc, pen);
-			const HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-			Rectangle(dc, item.left, item.top, item.right, item.bottom);
-			SelectObject(dc, previousBrush);
-			SelectObject(dc, previousPen);
-			DeleteObject(pen);
+			FillRect(dc, &face, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+
+			const int bottom = open ? client.bottom - 1 : item.bottom - 1;
+			MoveToEx(dc, item.left, bottom, nullptr);
+			LineTo(dc, item.left, item.top);
+			LineTo(dc, item.right - 1, item.top);
+			LineTo(dc, item.right - 1, bottom);
+			if (!open)
+			{
+				LineTo(dc, item.left, bottom);
+			}
 
 			wchar_t text[64] = {};
 			TCITEMW info = {};
@@ -1425,6 +1480,21 @@ void PaintCodecTabs(HWND tab)
 			label.right -= 6;
 			DrawTextW(dc, text, -1, &label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		}
+
+		// The line the table body's top edge continues, drawn here because only the strip knows
+		// where the open tab is: it stops at the tab, which is what joins the two.
+		const int line = client.bottom - 1;
+		RECT left = {0, line, openTab.right > openTab.left ? openTab.left : client.right, line + 1};
+		RECT right = {openTab.right, line, client.right, line + 1};
+		SetDCBrushColor(dc, colors.border);
+		FillRect(dc, &left, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+		if (openTab.right > openTab.left && openTab.right < client.right)
+		{
+			FillRect(dc, &right, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+		}
+
+		SelectObject(dc, previousPen);
+		DeleteObject(pen);
 		if (previousFont != nullptr)
 		{
 			SelectObject(dc, previousFont);
@@ -2358,12 +2428,17 @@ void PaintGroups(HWND hwnd, HDC dc)
 	SetTextColor(dc, colors.text);
 	for (const GroupFrame& group : state->groups)
 	{
-		Rectangle(dc, group.rect.left, group.rect.top + textHeight / 2, group.rect.right, group.rect.bottom);
 		if (group.caption == nullptr)
 		{
-			// The table body has no caption: its tabs are drawn on the same line instead.
+			// The table body's top edge is the tab strip's line: the strip draws it, broken under
+			// the open tab, so only the other three edges are the window's.
+			MoveToEx(dc, group.rect.left, group.rect.top, nullptr);
+			LineTo(dc, group.rect.left, group.rect.bottom);
+			LineTo(dc, group.rect.right - 1, group.rect.bottom);
+			LineTo(dc, group.rect.right - 1, group.rect.top);
 			continue;
 		}
+		Rectangle(dc, group.rect.left, group.rect.top + textHeight / 2, group.rect.right, group.rect.bottom);
 		SIZE size = {};
 		GetTextExtentPoint32W(dc, group.caption, static_cast<int>(wcslen(group.caption)), &size);
 		RECT caption = {group.rect.left + textHeight / 2, group.rect.top,
