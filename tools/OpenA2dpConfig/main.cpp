@@ -109,6 +109,10 @@ constexpr wchar_t kAutomaticText[] = L"Automatic (the best both ends support)";
 // The widest sample-rate entry any tab can hold, so the columns do not move when the list is
 // rebuilt for another codec.
 constexpr wchar_t kWidestFormatText[] = L"96000 Hz, stereo";
+// The sink picker holds whatever name a sink reports, which the driver may change while a
+// stream runs. The window is measured from this sample instead of the live list, so a rename
+// cannot resize it; the picker itself takes the space the header's buttons leave.
+constexpr wchar_t kSinkPickerText[] = L"Headphones (00:00:00:00:00:00)";
 // One hint per tab, under its table: what that codec's settings do and what limits them, so
 // the body explains itself instead of repeating every tooltip.
 constexpr wchar_t kSbcHintText[] = L"The frame shape, bitpool and frames per packet, clamped to the range "
@@ -282,9 +286,11 @@ struct SinkState
 	// Whether the message line is registered with the shared tooltip; it is only there while
 	// there is a message, so an empty line shows no box.
 	bool messageTip = false;
-	// The widest client width the layout has asked for; the window keeps it, so a measurement
-	// that changes with the open tab cannot resize it under the user's hand.
+	// The client size the layout settled on. Both only grow, so a measurement that changes with
+	// the open tab or with a sink the driver renames cannot resize the window under the user's
+	// hand.
 	int laidOutWidth = 0;
+	int laidOutHeight = 0;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
 };
 
@@ -1235,7 +1241,7 @@ void ApplyLayout(HWND hwnd)
 
 	// The header row: the sink picker and the three buttons.
 	const int sinkLabelWidth = TextWidth(dc, kSinkText);
-	const int sinkComboWidth = ComboContentWidth(dc, GetDlgItem(hwnd, kSinkCombo)) + arrow;
+	const int sinkComboWidth = TextWidth(dc, kSinkPickerText) + arrow;
 	const int refreshWidth = TextWidth(dc, kRefreshText) + gap * 2;
 	const int copyWidth = TextWidth(dc, kCopyText) + gap * 2;
 	const int detailsWidth =
@@ -1275,8 +1281,7 @@ void ApplyLayout(HWND hwnd)
 	{
 		width = stripWidth + margin * 2;
 	}
-	// The header's sink name is the driver's to rename while it streams, and a window that
-	// changes width when its state changes reads as a glitch. It is sized once and only grows.
+	// The width only grows: a transient measurement must not move the window the user placed.
 	if (width < state->laidOutWidth)
 	{
 		width = state->laidOutWidth;
@@ -1352,7 +1357,9 @@ void ApplyLayout(HWND hwnd)
 	const int stripTop = sessionTop + sessionHeight + gap;
 	const int bodyTop = stripTop + tabHeight;
 	const int bottomTop = bodyTop + bodyHeight + gap;
-	const int height = bottomTop + bottomHeight + margin;
+	// The height only grows for the same reason as the width.
+	const int height = MaxOf(bottomTop + bottomHeight + margin, state->laidOutHeight);
+	state->laidOutHeight = height;
 
 	// Header row, with the sink picker filling the space the buttons leave.
 	Place(state->sinkLabel, margin, headerTop + (rowHeight - textHeight) / 2, sinkLabelWidth, textHeight);
