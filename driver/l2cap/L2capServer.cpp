@@ -36,7 +36,7 @@ void OnRejectComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPL
 	else if (accepted && NT_SUCCESS(params->IoStatus.Status))
 	{
 		// The media channel was closed (teardown) while this accept was in flight.
-		CloseOrphanedChannel(ctx, ctx->RejectBrb.ChannelHandle);
+		RequestOrphanCleanup(ctx, ctx->RejectBrb.ChannelHandle, false);
 	}
 	else
 	{
@@ -51,7 +51,15 @@ void RespondIncoming(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE handle,
 {
 	if (InterlockedCompareExchange(&ctx->RejectBusy, 1, 0) != 0)
 	{
+		// The response slot is still in flight, and an answer cannot be built without it. An
+		// accept that was already granted stays granted: its caller consumed the record of it,
+		// and losing it here would leave this session unable to accept the media transport,
+		// which the sink opens but once.
 		OA2DP_WARN(ctx, "L2CAP", "incoming connection dropped (response in flight)");
+		if (accept)
+		{
+			InterlockedExchange(&ctx->MediaAcceptAllowed, 1);
+		}
 		return;
 	}
 	// Only the owner of RejectBusy clears or sets RejectIdle, and nothing can complete

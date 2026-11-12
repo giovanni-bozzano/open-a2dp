@@ -40,6 +40,11 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 NTSTATUS BrbOpStart(_In_ BRB_OP* op);
 void CloseOrphanedChannel(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel);
 void UnregisterOrphanedServer(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_SERVER_HANDLE server);
+// Orphan cleanup runs at PASSIVE_LEVEL from a work item, because a completion routine may
+// run at DISPATCH_LEVEL and creating a WDF request there is not allowed.
+NTSTATUS InitOrphanCleanup(_In_ DEVICE_CONTEXT* ctx);
+void RequestOrphanCleanup(_In_ DEVICE_CONTEXT* ctx, _In_ PVOID handle, _In_ bool server);
+void OnOrphanWorkItem(_In_ WDFWORKITEM workItem);
 NTSTATUS BrbOpRun(_In_ BRB_OP* op, _In_ ULONG timeoutMs, _In_ bool abortable);
 void OnSendComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLETION_PARAMS params, _In_ WDFCONTEXT context);
 NTSTATUS InitSendSlot(_In_ DEVICE_CONTEXT* ctx, _In_ WDF_OBJECT_ATTRIBUTES* attrs, _Inout_ SEND_SLOT* slot);

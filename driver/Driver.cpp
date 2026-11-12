@@ -106,6 +106,9 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 	// of ours runs after suspend returns. Neither work item waits on this thread.
 	WdfWorkItemFlush(ctx->SignalingWorkItem);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
+	// Channels and servers abandoned by a wait that gave up are released at PASSIVE_LEVEL;
+	// a completion that lands after this flush only closes a channel of the dead connection.
+	WdfWorkItemFlush(ctx->OrphanWorkItem);
 	MediaStop(ctx);
 	OA2DP_INFO(ctx, "Device", "stopped");
 	return STATUS_SUCCESS;
@@ -127,6 +130,10 @@ void OnDeviceCleanup(_In_ WDFOBJECT object)
 	if (ctx->JackFlapWorkItem != nullptr)
 	{
 		WdfWorkItemFlush(ctx->JackFlapWorkItem);
+	}
+	if (ctx->OrphanWorkItem != nullptr)
+	{
+		WdfWorkItemFlush(ctx->OrphanWorkItem);
 	}
 	ServiceCleanup(ctx);
 	if (ctx->ProfileValid)

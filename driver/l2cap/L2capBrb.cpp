@@ -55,14 +55,16 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 	const LONG previous = InterlockedCompareExchange(&op->State, 1, 0);
 	if (previous == 2 && NT_SUCCESS(op->Status))
 	{
-		// The waiter gave up and nobody will ever use this result; do not leak it.
+		// The waiter gave up and nobody will ever use this result; do not leak it. This is a
+		// completion routine, so it may run at DISPATCH_LEVEL and must not create the cleanup
+		// request itself: the work item does that at PASSIVE_LEVEL.
 		if (op->IsOpen)
 		{
-			CloseOrphanedChannel(op->Ctx, op->Brb.Open.ChannelHandle);
+			RequestOrphanCleanup(op->Ctx, op->Brb.Open.ChannelHandle, false);
 		}
 		else if (op->IsRegister)
 		{
-			UnregisterOrphanedServer(op->Ctx, op->Brb.Register.ServerHandle);
+			RequestOrphanCleanup(op->Ctx, op->Brb.Register.ServerHandle, true);
 		}
 	}
 	KeSetEvent(&op->Done, IO_NO_INCREMENT, FALSE);
@@ -96,6 +98,76 @@ NTSTATUS BrbOpStart(_In_ BRB_OP* op)
 	KeSetEvent(&op->Done, IO_NO_INCREMENT, FALSE);
 	BrbOpRelease(op);
 	return status;
+}
+
+NTSTATUS InitOrphanCleanup(_In_ DEVICE_CONTEXT* ctx)
+{
+	KeInitializeSpinLock(&ctx->OrphanLock);
+	ctx->OrphanCount = 0;
+	WDF_OBJECT_ATTRIBUTES attrs;
+	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
+	attrs.ParentObject = ctx->Device;
+	WDF_WORKITEM_CONFIG config;
+	WDF_WORKITEM_CONFIG_INIT(&config, OnOrphanWorkItem);
+	return WdfWorkItemCreate(&config, &attrs, &ctx->OrphanWorkItem);
+}
+
+// Called from a completion routine, which may run at DISPATCH_LEVEL: only the queue is
+// touched here. A handle that does not fit is reported rather than dropped silently, since
+// the channel then stays open on the sink.
+void RequestOrphanCleanup(_In_ DEVICE_CONTEXT* ctx, _In_ PVOID handle, _In_ bool server)
+{
+	bool queued = false;
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->OrphanLock, &irql);
+	if (handle != nullptr && ctx->OrphanCount < OrphanQueueDepth)
+	{
+		ORPHAN_ENTRY& entry = ctx->OrphanQueue[ctx->OrphanCount++];
+		entry.Handle = handle;
+		entry.Server = server ? TRUE : FALSE;
+		queued = true;
+	}
+	KeReleaseSpinLock(&ctx->OrphanLock, irql);
+	if (!queued)
+	{
+		OA2DP_ERROR(ctx, "L2CAP", "cannot queue the cleanup of %s %p; it stays open on the sink",
+			server ? "server" : "channel", handle);
+		return;
+	}
+	WdfWorkItemEnqueue(ctx->OrphanWorkItem);
+}
+
+void OnOrphanWorkItem(_In_ WDFWORKITEM workItem)
+{
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	for (;;)
+	{
+		ORPHAN_ENTRY entry = {};
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->OrphanLock, &irql);
+		if (ctx->OrphanCount != 0)
+		{
+			entry = ctx->OrphanQueue[0];
+			for (ULONG i = 1; i < ctx->OrphanCount; ++i)
+			{
+				ctx->OrphanQueue[i - 1] = ctx->OrphanQueue[i];
+			}
+			--ctx->OrphanCount;
+		}
+		KeReleaseSpinLock(&ctx->OrphanLock, irql);
+		if (entry.Handle == nullptr)
+		{
+			return;
+		}
+		if (entry.Server)
+		{
+			UnregisterOrphanedServer(ctx, static_cast<L2CAP_SERVER_HANDLE>(entry.Handle));
+		}
+		else
+		{
+			CloseOrphanedChannel(ctx, static_cast<L2CAP_CHANNEL_HANDLE>(entry.Handle));
+		}
+	}
 }
 
 void CloseOrphanedChannel(_In_ DEVICE_CONTEXT* ctx, _In_ L2CAP_CHANNEL_HANDLE channel)

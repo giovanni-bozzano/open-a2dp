@@ -54,7 +54,12 @@ NTSTATUS L2capInitialize(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return status;
 	}
-	return InitSendSlot(ctx, &attrs, &ctx->MediaSend);
+	status = InitSendSlot(ctx, &attrs, &ctx->MediaSend);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+	return InitOrphanCleanup(ctx);
 }
 
 NTSTATUS L2capRegisterServer(_In_ DEVICE_CONTEXT* ctx)

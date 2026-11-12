@@ -178,6 +178,15 @@ inline constexpr ULONG BrbControlTimeoutMs = 3000;
 inline constexpr ULONG SendCancelGraceMs = 100;
 // AVDTP packets that can wait for the signaling send slot.
 inline constexpr ULONG SignalQueueDepth = 4;
+// Channels and servers whose open or register completed after its waiter gave up. The
+// completion routine only records them, because it may run at DISPATCH_LEVEL where a WDF
+// request cannot be created; the work item closes or unregisters them at PASSIVE_LEVEL.
+inline constexpr ULONG OrphanQueueDepth = 4;
+struct ORPHAN_ENTRY
+{
+	PVOID Handle;
+	BOOLEAN Server;
+};
 
 inline constexpr ULONG SendSlotBytes = MediaMaxMtu > OpenA2dp::Avdtp::kMaxSignalPacket
 	? static_cast<ULONG>(MediaMaxMtu)
@@ -333,6 +342,13 @@ struct DEVICE_CONTEXT
 	// next incoming channel is accepted (through RejectRequest) as media transport.
 	volatile LONG MediaAcceptAllowed;
 	volatile LONG MediaAcceptPending;
+
+	// Orphaned channels and servers, see OrphanQueueDepth. Queued from completion routines
+	// with OrphanLock held for the array only, drained by OrphanWorkItem at PASSIVE_LEVEL.
+	KSPIN_LOCK OrphanLock;
+	ORPHAN_ENTRY OrphanQueue[OrphanQueueDepth];
+	ULONG OrphanCount;
+	WDFWORKITEM OrphanWorkItem;
 
 	// AVDTP session (signaling/). SessionLock serializes the session, the
 	// write buffer and read resubmission; all of it runs at PASSIVE_LEVEL.

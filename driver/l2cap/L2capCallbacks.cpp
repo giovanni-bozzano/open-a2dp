@@ -51,7 +51,7 @@ void OnOpenComplete(
 	{
 		// Teardown gave up waiting for this open; nobody will use the channel.
 		InterlockedExchange(&ctx->SignalingState, ChannelClosed);
-		CloseOrphanedChannel(ctx, ctx->OpenBrb.ChannelHandle);
+		RequestOrphanCleanup(ctx, ctx->OpenBrb.ChannelHandle, false);
 	}
 	else if (NT_SUCCESS(status))
 	{
