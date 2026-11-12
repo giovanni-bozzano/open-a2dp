@@ -146,6 +146,21 @@ bool SinkPath(DEVICE_CONTEXT* ctx, wchar_t (&path)[96])
 												kDevicesDirectory, ctx->RemoteAddress);
 	return NT_SUCCESS(status);
 }
+
+// One line with every stored value, so a log reader knows what a sink runs with without opening
+// the file. Both the restore and the save path report through here, so a new field is added once.
+void LogSettings(_In_ DEVICE_CONTEXT* ctx, const char* action, const wchar_t* path,
+				 const Ioctl::Preference& preference)
+{
+	OA2DP_INFO(ctx, "Config",
+			   "settings %s %ws: codec preference %s (SBC bitpool %u, blocks %u, subbands %u, "
+			   "allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, "
+			   "LDAC quality %u)",
+			   action, path, CodecValueName(preference.codec), preference.sbcBitpool,
+			   preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation,
+			   preference.aacBitrate, preference.prerollMs, preference.sbcFramesPerPacket,
+			   preference.ldacQuality);
+}
 } // namespace
 
 void ConfigLoadSettings(_In_ DEVICE_CONTEXT* ctx)
@@ -200,13 +215,7 @@ void ConfigLoadSettings(_In_ DEVICE_CONTEXT* ctx)
 
 	if (stored)
 	{
-		OA2DP_INFO(ctx, "Config",
-				   "settings restored from %ws: codec preference %s (SBC bitpool %u, blocks %u, subbands %u, "
-				   "allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, LDAC "
-				   "quality %u)",
-				   sinkFile ? sinkPath : kDefaultPath, CodecValueName(preference.codec), preference.sbcBitpool,
-				   preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate,
-				   preference.prerollMs, preference.sbcFramesPerPacket, preference.ldacQuality);
+		LogSettings(ctx, "restored from", sinkFile ? sinkPath : kDefaultPath, preference);
 	}
 }
 
@@ -249,11 +258,5 @@ void ConfigSaveSettings(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 	WriteSettings(ctx, sinkPath, settings);
-	OA2DP_INFO(ctx, "Config",
-			   "settings stored in %ws: codec preference %s (SBC bitpool %u, blocks %u, subbands %u, "
-			   "allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, LDAC quality %u)",
-			   sinkPath, CodecValueName(settings.preference.codec), settings.preference.sbcBitpool,
-			   settings.preference.sbcBlocks, settings.preference.sbcSubbands, settings.preference.sbcAllocation,
-			   settings.preference.aacBitrate, settings.preference.prerollMs,
-			   settings.preference.sbcFramesPerPacket, settings.preference.ldacQuality);
+	LogSettings(ctx, "stored in", sinkPath, settings.preference);
 }
