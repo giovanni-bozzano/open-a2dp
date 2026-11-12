@@ -16,17 +16,12 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M5b Codec configuration | Done | — |
 | M5c aptX + aptX HD | Done | — |
 | M6 Config UI + install/uninstall | Done | — |
-| M7 System testing | In progress | The procedures are scripted; their runs and logs stay outside the repository |
 | M8 Signing + release | Not started | A signed package and its install path |
-| M9 LDAC | In progress | Wired end to end (SEP 5, service, preference, CLI and window); a pass on a real LDAC sink remains |
+| M9 LDAC | Done | — |
 
 ## Next
 
-1. **LDAC on hardware**: a pass with a real LDAC sink - the 990 kbps stream, forcing the codec
-   from the settings window, and each quality mode.
-2. **A first scripted pass** of the hardware procedures, kept with the build it ran on: it is the
-   only run that exercises the pause-then-switch sequence, whose matches are now covered by
-   `tests/CodecTests/SinkMatchTests.cpp`.
+1. **Signing and release (M8)**: a signed package and its install path.
 
 ## Blockers
 
