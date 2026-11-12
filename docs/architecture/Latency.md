@@ -45,7 +45,10 @@ single largest fixed part of it.
    A2DP profile. Both the CLI status and the settings window's session panel show it, next to
    `underruns` (silence sent where the ring ran dry) and `trimmed` (old audio dropped after a
    stall) - the two ways a lead that is too short for this sink shows up - so a growing backlog
-   and the effect of a shorter lead are visible before they are audible.
+   and the effect of a shorter lead are visible before they are audible. Both totals are
+   cumulative for the endpoint and never reset: a new stream, a pause or a codec change leaves
+   them alone, so a fault that happened in an earlier stream is still on the count, and zeroing
+   them means recreating the endpoint or reloading the driver.
    Next to it the report shows `latency peak`: the worst lead-plus-rings value sampled on the
    audio copy tick since the stream started (`status.latencyPeakMs`, reset by the next
    `MediaStart`). A stall that trimmed the backlog before anyone polled still leaves that
@@ -115,6 +118,7 @@ against the source - the one number no report line can supply.
   comes back down to the lead plus a packet: the stream recovered to live audio instead of
   playing late.
 - `underruns` stays 0 at 44.1 and 48 kHz stereo with the default lead, and rises as the lead is
-  shortened past what the sink needs - that curve is the per-sink measurement T31 records.
+  shortened past what the sink needs - that curve is the per-sink measurement T31 records. The
+  counters never reset, so the run starts from a freshly loaded driver.
 - A/V offset within ±20 ms, measured on hardware with a loopback. No report line carries it:
   it compares the sink's output with the source, so it belongs to the test, not the driver.

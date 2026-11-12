@@ -48,9 +48,6 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	ctx->ServiceLastFrameTime = ctx->MediaStartTime;
 	ctx->ServiceLastUnderrunLog = 0;
-	// Per stream, like the counters above: the status line describes one stream's audio.
-	InterlockedExchange64(&ctx->Underruns, 0);
-	InterlockedExchange64(&ctx->FramesTrimmed, 0);
 	InterlockedExchange(&ctx->StreamFault, 0);
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);

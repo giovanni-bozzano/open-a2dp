@@ -424,7 +424,8 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	// What the delay cost, per sink: audio the driver could not deliver in time. Silence where
 	// the stream ran dry is an underrun; audio discarded to stay near live after a stall is a
 	// trim. Both mean the lead is short for this sink, and both are worth seeing beside the
-	// latency they explain.
+	// latency they explain. Both are cumulative and never reset, so a new stream cannot hide an
+	// earlier fault and a count that stopped growing is a fault that stopped.
 	AppendLine(text, "underruns", Format("%llu packets short of PCM", status.underruns));
 	AppendLine(text, "trimmed",
 			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,

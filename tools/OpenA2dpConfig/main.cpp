@@ -378,7 +378,9 @@ RowTone ToneForLabel(const std::string& label, const std::string& value)
 		return RowTone::Error;
 	}
 	// A stream that lost audio to a short lead is a warning, not a failure: it plays, but the
-	// listener heard the gap. The values start with the count, which is zero in the good case.
+	// listener heard the gap. The counts cover everything since the sink appeared and are never
+	// reset, so the tone says this sink has lost audio, and the count itself says whether it
+	// still is: a number that stopped growing is a fault that stopped.
 	if ((label == "underruns" || label == "trimmed") && !value.empty() && value[0] != '0')
 	{
 		return RowTone::Warning;

@@ -288,10 +288,10 @@ struct Status {
 	// without a second IOCTL.
 	uint32_t endpointRate;
 	uint32_t endpointChannels;
-	// Counters, 64-bit because a stream outlives a 32-bit count: the wire RTP sequence is 16
-	// bits (minutes), and a soak reports audio discarded and packets sent over hours. They are
-	// grouped past the byte, format and setting fields so each keeps 8-byte alignment without
-	// padding the record.
+	// Counters, 64-bit because they are never reset: they cover the endpoint's whole life, so a
+	// soak reports audio discarded and packets sent from driver start. The wire RTP sequence
+	// beside them is the 16-bit one and wraps in minutes. They are grouped past the byte,
+	// format and setting fields so each keeps 8-byte alignment without padding the record.
 	uint64_t pcmTrimmedBytes;
 	uint64_t framesTrimmed;
 	uint64_t packetsSent;

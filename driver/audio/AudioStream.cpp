@@ -127,7 +127,6 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioHeard = 0;
 	ctx->AudioSkippedBytes = 0;
 	ctx->AudioDroppedBytes = 0;
-	ctx->AudioTrimmedBytes = 0;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	WdfTimerStart(ctx->AudioTimer, 0);
