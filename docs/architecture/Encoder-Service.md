@@ -8,9 +8,9 @@ SBC stays in the kernel and must keep working with no service installed, running
 v1 assumptions:
 
 - one service process per machine, one registration per codec per sink device instance;
-- AAC-LC, MPEG-2/4, 44.1/48 kHz, stereo, CBR at 96/128/160/192/256/320 kbps (the set the
-  Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at 44.1 kHz and
-  320 kbps at 48 kHz);
+- AAC-LC, MPEG-2/4, 32/44.1/48 kHz, stereo, CBR at 96/128/160/192/256/320 kbps (the rates and
+  bitrates the Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at
+  44.1 kHz, 320 kbps at 48 kHz and 192 kbps at 32 kHz);
 - aptX HD at 44.1/48 kHz stereo, 24-in-32 input, one record of ten milliseconds per RTP
   packet (110 or 111 six-byte frames at 44.1 kHz, 120 at 48 kHz; the samples a frame cannot
   hold are carried into the next record, as for classic aptX);
@@ -18,15 +18,16 @@ v1 assumptions:
   111 four-byte frames at 44.1 kHz, 120 at 48 kHz; the odd sample per span is carried into
   the next record so the clock does not drift). Its encoder takes 16-bit input, so a
   24-in-32 ring is narrowed per sample with the kernel SBC path's rounding;
-- LDAC at 44.1/48 kHz stereo. The encoder takes 128 samples per channel and returns a whole
-  media packet at a time - two transport frames at 44.1/48 kHz, about 5.8 ms - so a record
-  covers the 256 samples those frames hold, and nothing is carried between records. Its
-  payload is the encoder's own frame sequence, headers included, and it needs the 679-byte
-  2-DH5 payload, so a link whose media MTU cannot carry that never selects it. The quality
-  mode (990, 660 or 330 kbps) is local and is not negotiated;
+- LDAC at 44.1, 48, 88.2 or 96 kHz stereo. The encoder takes 128 samples per channel and
+  returns a whole media packet at a time - two transport frames at 44.1/48 kHz, about 5.8 ms -
+  so a record covers the 256 samples those frames hold, and nothing is carried between
+  records. Its payload is the encoder's own frame sequence, headers included, and it needs the
+  679-byte 2-DH5 payload, so a link whose media MTU cannot carry that never selects it. The
+  quality mode (990, 660 or 330 kbps) is local and is not negotiated;
 - one AAC LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
-- the ACX endpoint lists 16-bit formats, and 24-in-32 while aptX HD can run; the encoders
-  follow the rate Windows opened the stream with. AAC keeps 16-bit input: Media Foundation
+- the ACX endpoint lists 16-bit formats at every rate the codecs take (16 kHz to 96 kHz), and
+  24-in-32 while aptX HD or LDAC can run; the encoders follow the rate Windows opened the
+  stream with. AAC keeps 16-bit input: Media Foundation
   rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`), so a 24-in-32 ring is narrowed with
   the rounded downconvert first ([PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)).
 
@@ -377,6 +378,6 @@ created by `AacCodec::CreateEncoder` inside the service. It does not change this
 - Fragmentation of AAC frames larger than the media MTU: the selector caps the bitrate to
   what one packet carries (256 kbps at 44.1 kHz, 320 kbps at 48 kHz for the 895-byte MTU),
   and oversize records are dropped and counted.
-- VBR, mono and rates other than 44.1/48 kHz stereo.
+- VBR, mono and rates the encoders do not take (AAC below 32 kHz and above 48 kHz).
 - More than one service or more than one registration per device.
 - AVRCP absolute volume and the config UI (D4, M5b/M6).

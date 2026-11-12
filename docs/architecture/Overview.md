@@ -41,7 +41,7 @@ flowchart TD
 
     subgraph DRV["OpenA2dp driver (kernel mode)"]
         subgraph AUD["Audio endpoint"]
-            ACX["Sound device seen by Windows<br/>PCM stereo, 44.1/48 kHz<br/>16-bit, 24-in-32 for aptX HD"]
+            ACX["Sound device seen by Windows<br/>PCM stereo, 16 kHz to 96 kHz<br/>16-bit, 24-in-32 for aptX HD and LDAC"]
             PCM[("PCM ring<br/>raw audio waiting to be encoded")]
         end
 
