@@ -118,6 +118,28 @@ constexpr wchar_t kAptxHintText[] = L"16-bit stereo at a fixed bitpool: the samp
 constexpr wchar_t kAptxHdHintText[] = L"24-bit stereo at a fixed bitpool: the sample rate is the only setting.";
 constexpr wchar_t kLdacHintText[] = L"The quality LDAC encodes at. It is local: the sink is never told "
 									L"which mode is in use.";
+// The widest entry each field's list can hold, keyed by control. The sample rate list is rebuilt
+// for the open codec and the bitrate list is cut by the link, so a live measurement would move
+// the columns and resize the window on every tab switch; this is what the lists can grow to, so
+// the window is the same size whatever is open. Every number a stored value can add is shorter
+// than the "Default (...)" entries here.
+struct WidestField
+{
+	int id;
+	const wchar_t* text;
+};
+constexpr WidestField kWidestFields[] = {
+	{kFormatCombo, kWidestFormatText},
+	{kBitrateCombo, L"320 kbps"},
+	{kBitpoolCombo, L"Automatic (sink's choice)"},
+	{kBlocksCombo, L"Default (16)"},
+	{kSubbandsCombo, L"Default (8)"},
+	{kAllocationCombo, L"Default (loudness)"},
+	{kPacingLeadCombo, L"Default (60 ms)"},
+	{kSbcFramesCombo, L"Default (fill the packet)"},
+	{kLdacQualityCombo, L"High (990 kbps)"},
+};
+
 // A combo box is created with the height of its drop-down list, which is never resized.
 constexpr int kComboListHeight = 320;
 // Rows the session panel shows when the screen has room for them; it scrolls itself for the
@@ -260,6 +282,9 @@ struct SinkState
 	// Whether the message line is registered with the shared tooltip; it is only there while
 	// there is a message, so an empty line shows no box.
 	bool messageTip = false;
+	// The widest client width the layout has asked for; the window keeps it, so a measurement
+	// that changes with the open tab cannot resize it under the user's hand.
+	int laidOutWidth = 0;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
 };
 
@@ -390,6 +415,19 @@ int TextHeight(HDC dc, const wchar_t* text, int width)
 }
 
 // The widest item in a combo, which is what its width has to fit.
+// The widest entry a list can hold, or null for a control this window does not size that way.
+const wchar_t* WidestFieldText(int id)
+{
+	for (const WidestField& field : kWidestFields)
+	{
+		if (field.id == id)
+		{
+			return field.text;
+		}
+	}
+	return nullptr;
+}
+
 int ComboContentWidth(HDC dc, HWND combo)
 {
 	int widest = 0;
@@ -1177,7 +1215,6 @@ void ApplyLayout(HWND hwnd)
 
 	// Each column is as wide as its widest label plus its widest combo content. The other
 	// codecs' rows count too, so the columns do not move when another tab is opened.
-	const HWND formatCombo = GetDlgItem(hwnd, kFormatCombo);
 	int labelWidth[2] = {0, 0};
 	int fieldWidth[2] = {0, 0};
 	for (const Field& field : Fields)
@@ -1185,10 +1222,11 @@ void ApplyLayout(HWND hwnd)
 		wchar_t text[256] = {};
 		GetWindowTextW(field.label, text, ARRAYSIZE(text));
 		labelWidth[field.column] = MaxOf(labelWidth[field.column], TextWidth(dc, text));
-		// The sample rate list is rebuilt per codec, so its width comes from the widest entry
-		// any tab can hold instead of from the one the open tab happens to show.
-		const int content = field.control == formatCombo ? TextWidth(dc, kWidestFormatText)
-														 : ComboContentWidth(dc, field.control);
+		// The widest entry the list can hold, not the entries it holds now: measuring the live
+		// list would size the column to the open codec's own rates.
+		const wchar_t* widest = WidestFieldText(GetDlgCtrlID(field.control));
+		const int content =
+				widest != nullptr ? TextWidth(dc, widest) : ComboContentWidth(dc, field.control);
 		fieldWidth[field.column] = MaxOf(fieldWidth[field.column], content + arrow);
 	}
 	const int columnGap = gap * 3;
@@ -1236,6 +1274,16 @@ void ApplyLayout(HWND hwnd)
 	if (stripWidth + margin * 2 > width)
 	{
 		width = stripWidth + margin * 2;
+	}
+	// The header's sink name is the driver's to rename while it streams, and a window that
+	// changes width when its state changes reads as a glitch. It is sized once and only grows.
+	if (width < state->laidOutWidth)
+	{
+		width = state->laidOutWidth;
+	}
+	else
+	{
+		state->laidOutWidth = width;
 	}
 	const int groupLeft = margin;
 	const int groupWidth = width - margin * 2;
