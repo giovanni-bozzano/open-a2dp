@@ -396,6 +396,24 @@ void Append(char (&text)[kMaxFileBytes], size_t& length, const char* format, ...
 	}
 }
 
+// Ends a section, or drops it when nothing was written under its header: the file then holds
+// only the sections this sink has something to say about.
+void CloseSection(char (&text)[kMaxFileBytes], size_t& length, size_t start)
+{
+	size_t header = 0;
+	while (start + header < length && text[start + header] != '\n')
+	{
+		++header;
+	}
+	++header; // the newline that ends the header line
+	if (length == start + header)
+	{
+		length = start;
+		return;
+	}
+	Append(text, length, "\r\n");
+}
+
 void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const Settings& settings)
 {
 	const Ioctl::Preference& preference = settings.preference;
@@ -410,61 +428,119 @@ void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const Settings& set
 
 	Append(text, length,
 		   "# OpenA2dp settings for this sink. Delete the file to return the driver defaults.\r\n"
-		   "# One section per codec, plus [general] for what is not a codec's own setting.\r\n"
+		   "# Only what differs from the driver default is written; a key that is missing keeps its\r\n"
+		   "# default. One section per codec, plus [general] for what is not a codec's own setting.\r\n"
 		   "version = %u\r\n"
-		   "\r\n"
-		   "[general]\r\n"
-		   "# auto, sbc, aac, aptx, aptxhd or ldac\r\n"
-		   "codec = %s\r\n"
-		   "# How far ahead of the media clock the stream is sent, 0 leaves the default.\r\n"
-		   "prerollMs = %u\r\n"
 		   "\r\n",
-		   kFormatVersion, CodecFileName(forced ? preference.codec : Ioctl::kCodecCount), preference.prerollMs);
-	Append(text, length,
-		   "[sbc]\r\n"
-		   "# Each entry is a PCM rate and channel count, or auto for every format the codec plays.\r\n"
-		   "rate = %s\r\n"
-		   "channels = %s\r\n"
-		   "bitpool = %u\r\n"
-		   "blocks = %u\r\n"
-		   "subbands = %u\r\n"
-		   "allocation = %u\r\n"
-		   "framesPerPacket = %u\r\n"
-		   "\r\n",
-		   ChoiceText(format.sampleRate[Ioctl::kCodecSbc], rate),
-		   ChoiceText(format.channels[Ioctl::kCodecSbc], channels), preference.sbcBitpool,
-		   preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation,
-		   preference.sbcFramesPerPacket);
-	Append(text, length,
-		   "[aac]\r\n"
-		   "rate = %s\r\n"
-		   "channels = %s\r\n"
-		   "bitrate = %u\r\n"
-		   "\r\n",
-		   ChoiceText(format.sampleRate[Ioctl::kCodecAac], rate),
-		   ChoiceText(format.channels[Ioctl::kCodecAac], channels), preference.aacBitrate);
-	Append(text, length,
-		   "[aptx]\r\n"
-		   "rate = %s\r\n"
-		   "channels = %s\r\n"
-		   "\r\n",
-		   ChoiceText(format.sampleRate[Ioctl::kCodecAptx], rate),
-		   ChoiceText(format.channels[Ioctl::kCodecAptx], channels));
-	Append(text, length,
-		   "[aptxhd]\r\n"
-		   "rate = %s\r\n"
-		   "channels = %s\r\n"
-		   "\r\n",
-		   ChoiceText(format.sampleRate[Ioctl::kCodecAptxHd], rate),
-		   ChoiceText(format.channels[Ioctl::kCodecAptxHd], channels));
-	Append(text, length,
-		   "[ldac]\r\n"
-		   "rate = %s\r\n"
-		   "channels = %s\r\n"
-		   "# 0 = high (990 kbps), 1 = standard (660), 2 = mobile (330).\r\n"
-		   "quality = %u\r\n",
-		   ChoiceText(format.sampleRate[Ioctl::kCodecLdac], rate),
-		   ChoiceText(format.channels[Ioctl::kCodecLdac], channels), preference.ldacQuality);
+		   kFormatVersion);
+
+	// A key is written only when it differs from the default, so applying one setting stores one
+	// setting instead of restating every value the sink was already using.
+	size_t start = length;
+	Append(text, length, "[general]\r\n");
+	if (forced)
+	{
+		Append(text, length, "# auto, sbc, aac, aptx, aptxhd or ldac\r\ncodec = %s\r\n",
+			   CodecFileName(preference.codec));
+	}
+	if (preference.prerollMs != 0)
+	{
+		Append(text, length,
+			   "# How far ahead of the media clock the stream is sent, in milliseconds.\r\n"
+			   "prerollMs = %u\r\n",
+			   preference.prerollMs);
+	}
+	CloseSection(text, length, start);
+
+	start = length;
+	Append(text, length, "[sbc]\r\n");
+	if (format.sampleRate[Ioctl::kCodecSbc] != 0)
+	{
+		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecSbc], rate));
+	}
+	if (format.channels[Ioctl::kCodecSbc] != 0)
+	{
+		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecSbc], channels));
+	}
+	if (preference.sbcBitpool != 0)
+	{
+		Append(text, length, "bitpool = %u\r\n", preference.sbcBitpool);
+	}
+	if (preference.sbcBlocks != 0)
+	{
+		Append(text, length, "blocks = %u\r\n", preference.sbcBlocks);
+	}
+	if (preference.sbcSubbands != 0)
+	{
+		Append(text, length, "subbands = %u\r\n", preference.sbcSubbands);
+	}
+	if (preference.sbcAllocation != 0)
+	{
+		Append(text, length, "allocation = %u\r\n", preference.sbcAllocation);
+	}
+	if (preference.sbcFramesPerPacket != 0)
+	{
+		Append(text, length, "framesPerPacket = %u\r\n", preference.sbcFramesPerPacket);
+	}
+	CloseSection(text, length, start);
+
+	start = length;
+	Append(text, length, "[aac]\r\n");
+	if (format.sampleRate[Ioctl::kCodecAac] != 0)
+	{
+		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecAac], rate));
+	}
+	if (format.channels[Ioctl::kCodecAac] != 0)
+	{
+		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecAac], channels));
+	}
+	if (preference.aacBitrate != 0)
+	{
+		Append(text, length, "bitrate = %u\r\n", preference.aacBitrate);
+	}
+	CloseSection(text, length, start);
+
+	start = length;
+	Append(text, length, "[aptx]\r\n");
+	if (format.sampleRate[Ioctl::kCodecAptx] != 0)
+	{
+		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecAptx], rate));
+	}
+	if (format.channels[Ioctl::kCodecAptx] != 0)
+	{
+		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecAptx], channels));
+	}
+	CloseSection(text, length, start);
+
+	start = length;
+	Append(text, length, "[aptxhd]\r\n");
+	if (format.sampleRate[Ioctl::kCodecAptxHd] != 0)
+	{
+		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecAptxHd], rate));
+	}
+	if (format.channels[Ioctl::kCodecAptxHd] != 0)
+	{
+		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecAptxHd], channels));
+	}
+	CloseSection(text, length, start);
+
+	start = length;
+	Append(text, length, "[ldac]\r\n");
+	if (format.sampleRate[Ioctl::kCodecLdac] != 0)
+	{
+		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecLdac], rate));
+	}
+	if (format.channels[Ioctl::kCodecLdac] != 0)
+	{
+		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecLdac], channels));
+	}
+	if (preference.ldacQuality != 0)
+	{
+		Append(text, length, "# 0 = high (990 kbps), 1 = standard (660), 2 = mobile (330).\r\n"
+						   "quality = %u\r\n",
+			   preference.ldacQuality);
+	}
+	CloseSection(text, length, start);
 	if (length == 0)
 	{
 		OA2DP_WARN(ctx, "Config", "cannot format the settings for %ws", path);

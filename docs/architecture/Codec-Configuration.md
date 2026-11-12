@@ -79,7 +79,9 @@ codec - `[sbc]`, `[aac]`, `[aptx]`, `[aptxhd]`, `[ldac]` - plus `[general]` for 
 codec's own setting, and one `key = value` line under each, with `#` starting a comment. A key
 or a section this build does not know is ignored, so a file written by a newer build still
 loads; a value the driver cannot serve refuses the whole file rather than setting half of it,
-and a missing file simply means "no settings". `OpenA2dpCtl codec` writes the codec keys
+and a missing file simply means "no settings". Only the settings that differ from the driver
+default are written, so applying one setting stores one setting and a key the file leaves out
+keeps its default. `OpenA2dpCtl codec` writes the codec keys
 through `SET_PREFERENCE` and `format <codec> ...` writes one codec's `rate`/`channels` in
 that codec's section through `SET_ENDPOINT_FORMAT`; the driver rewrites the sink's file
 whenever either changes, so the file and the running driver never disagree. Deleting the
