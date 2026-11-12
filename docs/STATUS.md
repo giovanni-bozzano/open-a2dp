@@ -15,7 +15,7 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M5 Encoder service + streaming | Done | — |
 | M5b Codec configuration | Done | — |
 | M5c aptX + aptX HD | Done | — |
-| M6 Config UI + install/uninstall | In progress | The window's switch sequence end to end; the matches it decides on are covered by tests |
+| M6 Config UI + install/uninstall | Done | — |
 | M7 System testing | In progress | The procedures are scripted; their runs and logs stay outside the repository |
 | M8 Signing + release | Not started | A signed package and its install path |
 | M9 LDAC | In progress | Encoder vendored and compiling; capability IE, codec wrapper, service wiring and UI remain |
