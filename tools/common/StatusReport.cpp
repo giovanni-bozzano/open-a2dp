@@ -408,6 +408,59 @@ bool SplitReportLine(const std::string& line, size_t labelWidth, std::string& la
 	return !label.empty();
 }
 
+// The latency block: what the driver holds ahead of live audio and what that cost. The sink's
+// own buffering is not reported by any A2DP profile, so this is the part the driver controls,
+// not the whole mouth-to-ear delay.
+void AppendLatency(std::string& text, const Ioctl::Status& status)
+{
+	const uint32_t bufferedMs = status.pcmBufferedMs + status.frameBufferedMs;
+	AppendLine(text, "latency",
+			   Format("%u ms (driver side: lead %u + buffered %u; the sink adds its own)",
+					  status.pacingLeadMs + bufferedMs, status.pacingLeadMs, bufferedMs));
+	// The instantaneous value hides a spike that ended before the poll, so the worst case of
+	// this stream is reported next to it; it resets when the next stream starts.
+	AppendLine(text, "latency peak",
+			   Format("%u ms (worst since this stream started)", status.latencyPeakMs));
+	// What the lead had to cover: the longest the render path, the encoder service or a send
+	// held audio off. A lead at or above the largest of these has margin; one below it is what
+	// the underrun and trim counts below are paying for.
+	AppendLine(text, "worst gaps",
+			   Format("render %u ms, frames %u ms, send %u ms (worst since this stream started)",
+					  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs));
+	// Audio the driver could not deliver in time: silence where the stream ran dry is an
+	// underrun, and audio discarded to stay near live after a stall is a trim. Both are
+	// cumulative and never reset, so a new stream cannot hide an earlier fault.
+	AppendLine(text, "underruns", Format("%llu packets short of PCM", status.underruns));
+	AppendLine(text, "trimmed",
+			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,
+					  status.framesTrimmed));
+}
+
+// What the stream holds and how far ahead of the clock it runs. Milliseconds matter here: the
+// bytes alone do not say how far behind live a given format or bitrate runs.
+void AppendBuffers(std::string& text, const Ioctl::Status& status, const Ioctl::Preference& preference)
+{
+	// The driver holds the lead at one access unit of the running codec, so a stored value below
+	// that is raised rather than served: a lead shorter than a packet can only be padded. The
+	// report says so instead of showing a number the service does not use.
+	const uint32_t storedLead = Ioctl::EffectivePrerollMs(preference.prerollMs);
+	AppendLine(text, "pacing lead",
+			   status.pacingLeadMs > storedLead
+				   ? Format("%u ms ahead of the media clock (raised from the stored %u ms: one packet "
+							"does not fit in it)", status.pacingLeadMs, storedLead)
+				   : Format("%u ms ahead of the media clock", status.pacingLeadMs));
+	AppendLine(text, "buffered",
+			   Format("PCM %u ms of %u B, frames %u ms of %u B", status.pcmBufferedMs,
+					  status.pcmBufferedBytes, status.frameBufferedMs, status.frameBufferedBytes));
+	AppendLine(text, "capacity",
+			   Format("PCM %u B, frames %u B", status.pcmCapacity, status.frameCapacity));
+	AppendLine(text, "counters",
+			   Format("packets %llu, dropped %llu, underruns %llu, send failures %llu, trimmed %llu B",
+					  status.packetsSent, status.framesDropped, status.underruns, status.sendFailures,
+					  status.pcmTrimmedBytes));
+	AppendLine(text, "last error", status.lastError != 0 ? Format("0x%08X", status.lastError) : "none");
+}
+
 std::string BuildStatusReport(const StatusReportInput& input)
 {
 	if (input.status == nullptr || input.preference == nullptr)
@@ -434,32 +487,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	{
 		AppendLine(text, "sink jack", "unplugged (endpoint rebuild in progress; nothing can play)");
 	}
-	// What the driver holds ahead of live audio: the pacing lead plus whatever the rings still
-	// have to encode. The sink's own buffering is not reported by any A2DP profile, so this is
-	// the part we control, not the whole mouth-to-ear delay.
-	const uint32_t bufferedMs = status.pcmBufferedMs + status.frameBufferedMs;
-	AppendLine(text, "latency",
-			   Format("%u ms (driver side: lead %u + buffered %u; the sink adds its own)",
-					  status.pacingLeadMs + bufferedMs, status.pacingLeadMs, bufferedMs));
-	// The instantaneous value hides a spike that ended before the poll, so the worst case of
-	// this stream is reported next to it; it is reset when the next stream starts.
-	AppendLine(text, "latency peak",
-			   Format("%u ms (worst since this stream started)", status.latencyPeakMs));
-	// What the lead had to cover: the longest the render path, the encoder service or a send
-	// held audio off. A lead at or above the largest of these has margin; one below it is what
-	// the underrun and trim counts below are paying for.
-	AppendLine(text, "worst gaps",
-			   Format("render %u ms, frames %u ms, send %u ms (worst since this stream started)",
-				  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs));
-	// What the delay cost, per sink: audio the driver could not deliver in time. Silence where
-	// the stream ran dry is an underrun; audio discarded to stay near live after a stall is a
-	// trim. Both mean the lead is short for this sink, and both are worth seeing beside the
-	// latency they explain. Both are cumulative and never reset, so a new stream cannot hide an
-	// earlier fault and a count that stopped growing is a fault that stopped.
-	AppendLine(text, "underruns", Format("%llu packets short of PCM", status.underruns));
-	AppendLine(text, "trimmed",
-			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,
-					  status.framesTrimmed));
+	AppendLatency(text, status);
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);
 	AppendSinkName(text, status);
@@ -467,27 +495,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendEndpointFormat(text, status);
 	AppendPreference(text, preference);
 	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
-	// Buffered milliseconds are what matters for latency: the bytes alone do not say how far
-	// behind live the stream runs at a given format or bitrate. The driver holds the lead at
-	// one access unit of the running codec, so a stored value below that is raised rather than
-	// served - a lead shorter than a packet cannot be filled, only padded - and the report says
-	// so instead of showing a number the user did not ask for.
-	const uint32_t storedLead = Ioctl::EffectivePrerollMs(preference.prerollMs);
-	AppendLine(text, "pacing lead",
-			   status.pacingLeadMs > storedLead
-				   ? Format("%u ms ahead of the media clock (raised from the stored %u ms: one packet "
-							"does not fit in it)", status.pacingLeadMs, storedLead)
-				   : Format("%u ms ahead of the media clock", status.pacingLeadMs));
-	AppendLine(text, "buffered",
-			   Format("PCM %u ms of %u B, frames %u ms of %u B", status.pcmBufferedMs,
-					  status.pcmBufferedBytes, status.frameBufferedMs, status.frameBufferedBytes));
-	AppendLine(text, "capacity",
-			   Format("PCM %u B, frames %u B", status.pcmCapacity, status.frameCapacity));
-	AppendLine(text, "counters",
-			   Format("packets %llu, dropped %llu, underruns %llu, send failures %llu, trimmed %llu B",
-					  status.packetsSent, status.framesDropped, status.underruns, status.sendFailures,
-					  status.pcmTrimmedBytes));
-	AppendLine(text, "last error", status.lastError != 0 ? Format("0x%08X", status.lastError) : "none");
+	AppendBuffers(text, status, preference);
 	if (input.version != nullptr)
 	{
 		AppendDriver(text, *input.version);
