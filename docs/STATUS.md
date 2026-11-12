@@ -13,15 +13,16 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M3 AVDTP negotiation | Done | — |
 | M4 ACX endpoint + rings | Done | — |
 | M5 Encoder service + streaming | Done | — |
-| M5b Codec configuration | Done | — |
-| M5c aptX + aptX HD | Done | — |
-| M6 Config UI + install/uninstall | Done | — |
-| M8 Signing + release | Not started | A signed package and its install path |
+| M6 Codec configuration | Done | — |
+| M7 aptX + aptX HD | Done | — |
+| M8 Config UI + install/uninstall | Done | — |
 | M9 LDAC | Done | — |
+| M10 Setup file | Not started | One setup file that installs the driver package, the service and the tools, and removes them |
 
 ## Next
 
-1. **Signing and release (M8)**: a signed package and its install path.
+1. **A setup file (M10)**: one setup file that installs the driver package, the service and the
+   tools, and removes them.
 
 ## Blockers
 
