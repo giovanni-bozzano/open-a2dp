@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 
+#include <commctrl.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -36,6 +37,11 @@ struct ViewState
 	bool labelWidthChosen = false;
 	bool dragging = false;
 	bool dividerHot = false;
+	// The row under the pointer, and the explanation the tooltip is showing for it: rows are
+	// painted rather than controls, so one tooltip covers the pane and picks its text per row.
+	int hotRow = -1;
+	std::wstring tipText;
+	HWND tooltip = nullptr;
 	HFONT normal = nullptr;
 	HFONT bold = nullptr;
 };
@@ -387,6 +393,36 @@ void DragLabelWidth(HWND window, ViewState& state, int x)
 
 
 
+// One tooltip for the whole pane. The tool covers the view and asks the view for its text
+// (LPSTR_TEXTCALLBACKW) whenever it is about to show, so a refresh that changes values needs no
+// bookkeeping here: the answer always comes from the row the pointer is on now.
+void EnsureRowTooltip(HWND window, ViewState& state)
+{
+	if (state.tooltip != nullptr)
+	{
+		return;
+	}
+	state.tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+									WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
+									CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr, GetModuleHandleW(nullptr), nullptr);
+	if (state.tooltip == nullptr)
+	{
+		return;
+	}
+	SetWindowPos(state.tooltip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	// Slower than the fields: the pointer crosses this pane on its way to the divider, and a
+	// row explanation is worth resting on.
+	SendMessageW(state.tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 700);
+	SendMessageW(state.tooltip, TTM_SETMAXTIPWIDTH, 0, 420);
+	TTTOOLINFOW tool = {};
+	tool.cbSize = sizeof(tool);
+	tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+	tool.hwnd = window;
+	tool.uId = reinterpret_cast<UINT_PTR>(window);
+	tool.lpszText = LPSTR_TEXTCALLBACKW;
+	SendMessageW(state.tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+}
+
 void SetDividerHot(HWND window, ViewState& state, bool hot)
 {
 	if (state.dividerHot == hot)
@@ -438,6 +474,8 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 				return 0;
 			}
 			SetDividerHot(window, *state, OnDivider(*state, x));
+			// The divider and a drag have nothing to explain; a row does.
+			state->hotRow = OnDivider(*state, x) ? -1 : RowAt(*state, GET_Y_LPARAM(lParam));
 			// The highlight ends when the pointer leaves, which the window has to ask for.
 			TRACKMOUSEEVENT track = {};
 			track.cbSize = sizeof(track);
@@ -450,8 +488,24 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 		if (state != nullptr)
 		{
 			SetDividerHot(window, *state, false);
+			state->hotRow = -1;
 		}
 		return 0;
+	case WM_NOTIFY:
+		if (state != nullptr && reinterpret_cast<const NMHDR*>(lParam)->code == TTN_GETDISPINFOW)
+		{
+			LPNMTTDISPINFOW info = reinterpret_cast<LPNMTTDISPINFOW>(lParam);
+			state->tipText.clear();
+			if (state->hotRow >= 0 && state->hotRow < static_cast<int>(state->rows.size()))
+			{
+				state->tipText = state->rows[static_cast<size_t>(state->hotRow)].tip;
+			}
+			// The tooltip reads this until it hides, so the text is the view's own copy; an empty
+			// explanation (a section band, a raw field) shows nothing.
+			info->lpszText = state->tipText.data();
+			return 0;
+		}
+		break;
 	case WM_LBUTTONDOWN:
 		if (state != nullptr && OnDivider(*state, GET_X_LPARAM(lParam)))
 		{
@@ -620,6 +674,7 @@ bool CreateStatusView(HWND parent, int id, int x, int y, int width, int height, 
 		ReleaseDC(window, dc);
 	}
 	SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+	EnsureRowTooltip(window, *state);
 	UpdateScrollBar(window, *state);
 	return true;
 }
@@ -631,6 +686,11 @@ void DestroyStatusView(HWND parent, int id)
 	if (state == nullptr)
 	{
 		return;
+	}
+	if (state->tooltip != nullptr)
+	{
+		DestroyWindow(state->tooltip);
+		state->tooltip = nullptr;
 	}
 	if (state->bold != nullptr)
 	{

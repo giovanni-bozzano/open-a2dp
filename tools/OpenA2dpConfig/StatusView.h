@@ -36,6 +36,10 @@ struct StatusRow
 	std::wstring label;
 	std::wstring value;
 	RowTone tone = RowTone::Normal;
+	// Shown when the pointer rests on the row: what the value means technically, then what it
+	// means for what the listener hears. Empty leaves the row unexplained, which is the case for
+	// a section band and for the raw fields a bug report copies out.
+	std::wstring tip;
 };
 
 // Creates the panel. Returns false if the window could not be created.

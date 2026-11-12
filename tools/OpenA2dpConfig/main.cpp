@@ -414,6 +414,155 @@ std::wstring RowLabel(const std::string& label)
 	return Tools::Widen(capital);
 }
 
+// What a session row means, shown when the pointer rests on it. Every explanation has the same
+// two halves: what the value is, then what it does to what the listener hears. The labels are the
+// ones BuildStatusReport prints, so the text lives beside the row it explains instead of in a
+// help file that would drift. A row with no entry is left unexplained - the raw fields, which
+// exist to be copied into a bug report rather than read.
+struct RowTip
+{
+	const char* label;
+	const wchar_t* text;
+};
+
+constexpr RowTip kRowTips[] = {
+	{"AVDTP",
+	 L"State of the A2DP signalling link - discovery, configuration, open, streaming.\n\n"
+	 L"A sink that never reaches Streaming plays nothing, and Refused or Closed means "
+	 L"the link is the problem, not the audio format - no codec setting will help."},
+	{"media",
+	 L"Where the media path stands - idle, waiting for the encoder service, streaming, "
+	 L"suspended or failed.\n\n"
+	 L"Suspended while a player runs is silence you can see here but would not find "
+	 L"explained anywhere else."},
+	{"endpoint",
+	 L"Whether Windows' render endpoint is running or paused.\n\n"
+	 L"Windows pauses the endpoint whenever nothing is playing, so paused with music "
+	 L"running means the player stopped, not the driver."},
+	{"sink jack",
+	 L"The render jack is reported unplugged while an endpoint rebuild is in progress.\n\n"
+	 L"Windows opens no stream while it shows unplugged, so the song is silent for that "
+	 L"moment and comes back by itself."},
+	{"latency",
+	 L"Audio the driver holds ahead of live - the pacing lead plus both ring fills. The "
+	 L"sink's own buffer adds on top and no A2DP profile reports it.\n\n"
+	 L"Most of the delay between a click and hearing it. Shorter feels snappier; too "
+	 L"short and the sound starts stuttering."},
+	{"latency peak",
+	 L"The worst lead-plus-rings value sampled since this stream started, reset by the "
+	 L"next stream.\n\n"
+	 L"A number well above the lead means something stalled the audio for a moment, "
+	 L"even if it recovered before you noticed."},
+	{"worst gaps",
+	 L"The longest each stage held audio off for since the stream started - render copies, "
+	 L"encoder service records, one media send.\n\n"
+	 L"How much buffer the machine actually needed. A gap larger than the lead explains "
+	 L"the underruns or trims below; nothing larger means the setting is fine."},
+	{"underruns",
+	 L"Packets built with silence because the ring held no audio the media clock had "
+	 L"already asked for. Counted for the endpoint's whole life and never reset.\n\n"
+	 L"Each one is a tiny silent patch - a click or a small gap. A number that keeps "
+	 L"growing is a problem now; one that never changes is history."},
+	{"trimmed",
+	 L"Old audio discarded when a ring held more than the lead plus its slack for two "
+	 L"observations. Counted for the endpoint's whole life and never reset.\n\n"
+	 L"Each one is a small skip - the stream jumps forward to live sound instead of "
+	 L"staying behind. Growing means Bluetooth or the PC fell behind for a moment."},
+	{"codec",
+	 L"The codec, sample rate, channel count and bitrate the running stream uses.\n\n"
+	 L"Why one headset sounds duller than another - SBC instead of aptX, or a lower "
+	 L"bitrate, is what you hear as flat or mushy."},
+	{"media MTU",
+	 L"The largest media packet the link agreed on, and the AAC bitrate it can carry.\n\n"
+	 L"A small packet carries less audio per send and caps the bitrate, so the link - "
+	 L"not the setting - decides how good AAC can sound."},
+	{"sink name",
+	 L"The Bluetooth name the sink reported.\n\n"
+	 L"Only an identifier, so two similar headsets can be told apart."},
+	{"sink formats",
+	 L"The sample rates, channel counts and codecs the sink advertised in the last "
+	 L"discovery.\n\n"
+	 L"What the headset can accept. A codec missing here is one the driver will never "
+	 L"use, however it is forced."},
+	{"listed formats",
+	 L"The formats the endpoint is offering Windows right now.\n\n"
+	 L"Empty means Windows cannot open a stream at all, so nothing plays until a format "
+	 L"is listed again."},
+	{"refused streams",
+	 L"Streams Windows asked for that the endpoint does not offer, with the last format "
+	 L"refused.\n\n"
+	 L"A player asking for the wrong format stays silent while this count grows."},
+	{"endpoint format",
+	 L"The format the endpoint offers Windows - automatic, or pinned and therefore "
+	 L"offered alone.\n\n"
+	 L"Windows plays the first format listed and ignores the Sound-settings pick, so "
+	 L"pinning is what makes your chosen format the one you actually hear."},
+	{"preference",
+	 L"The stored codec choice: one forced codec, or automatic (aptX HD > aptX > AAC > "
+	 L"SBC).\n\n"
+	 L"Automatic gives the best both ends support; forcing a codec the sink does not "
+	 L"advertise is refused rather than silently substituted."},
+	{"SBC bitpool",
+	 L"The stored SBC bitpool - bits per frame, clamped to the sink's own range.\n\n"
+	 L"Higher is better SBC sound in larger packets. The default takes the sink's own "
+	 L"choice, usually the best it can decode."},
+	{"AAC bitrate",
+	 L"The stored AAC bitrate target, capped by what the media MTU can carry.\n\n"
+	 L"Higher is better AAC sound and uses more of the link; past the cap it is reduced "
+	 L"instead of failing."},
+	{"pacing lead",
+	 L"How far ahead of the media clock the stream is sent - the stored value, or the "
+	 L"running one raised to one packet when the stored one is too short. The kernel pacer and the "
+	 L"encoder service use the same number.\n\n"
+	 L"The main latency dial. Larger is more forgiving and a little more delayed; "
+	 L"smaller is snappier and risks the stutters the counters below report."},
+	{"SBC frames",
+	 L"Stored cap on SBC frames per packet; 0 fills the MTU.\n\n"
+	 L"Fewer frames is a shorter packet and less delay, at the cost of more packets a "
+	 L"second for the link to carry."},
+	{"SBC frame",
+	 L"The stored SBC frame shape - blocks, subbands and allocation.\n\n"
+	 L"It changes how SBC spends its bits: longer frames, finer frequency resolution, or "
+	 L"bits spread by loudness instead of evenly."},
+	{"driver",
+	 L"Driver ABI and version, maximum packet and ring sizes, and whether this window "
+	 L"speaks the same ABI.\n\n"
+	 L"A mismatch means the window and the driver came from different builds - update "
+	 L"both, or neither the numbers nor the settings can be trusted."},
+	{"encoder",
+	 L"Whether the encoder service registered its codecs for this device.\n\n"
+	 L"Not registered means AAC and aptX cannot be used at all, so the stream falls "
+	 L"back to SBC and sounds worse."},
+	{"buffered",
+	 L"What the two rings are holding right now, in milliseconds and bytes.\n\n"
+	 L"Small and steady is healthy. A number that climbs means audio is piling up and "
+	 L"will be trimmed - you hear a skip instead of growing delay."},
+	{"capacity",
+	 L"The bytes each ring can hold.\n\n"
+	 L"A limit, not a target - buffered stays well under it unless something stalled."},
+	{"counters",
+	 L"Packets sent, records the driver dropped, underruns, failed sends and PCM bytes "
+	 L"trimmed.\n\n"
+	 L"A one-line summary to copy into a bug report; the rows above say the same "
+	 L"things in readable terms."},
+	{"last error",
+	 L"NTSTATUS of the last media failure, 0 while healthy.\n\n"
+	 L"A code here means a send or a ring failed - the stream either recovered by "
+	 L"itself or fell back to another codec."},
+};
+
+const wchar_t* RowTipFor(const std::string& label)
+{
+	for (const RowTip& tip : kRowTips)
+	{
+		if (label == tip.label)
+		{
+			return tip.text;
+		}
+	}
+	return nullptr;
+}
+
 std::vector<StatusRow> BuildStatusRows(const SinkState& state)
 {
 	std::vector<StatusRow> rows;
@@ -457,7 +606,15 @@ std::vector<StatusRow> BuildStatusRows(const SinkState& state)
 				rows.push_back({true, next, std::wstring(), RowTone::Normal});
 			}
 		}
-		rows.push_back({false, RowLabel(label), Tools::Widen(value), ToneForLabel(label, value)});
+		StatusRow row;
+		row.label = RowLabel(label);
+		row.value = Tools::Widen(value);
+		row.tone = ToneForLabel(label, value);
+		if (const wchar_t* const tip = RowTipFor(label))
+		{
+			row.tip = tip;
+		}
+		rows.push_back(std::move(row));
 	}
 	return rows;
 }
@@ -497,46 +654,51 @@ struct FieldTip
 
 constexpr FieldTip kFieldTips[] = {
 	{kSinkCombo,
-	 L"The sink this window controls.\n"
-	 L"Every field below is stored for this sink alone, so two sinks can run different codecs "
-	 L"and different latencies."},
+	 L"The sink this window controls.\n\n"
+	 L"Every field below is stored for this sink alone, so two headsets keep their own "
+	 L"codec and their own latency - a setting made here never silently reshapes the other."},
 	{kCodecCombo,
-	 L"Which codec the sink may use.\n"
-	 L"Automatic takes the best both ends support: aptX HD, then aptX, then AAC, then SBC. "
-	 L"Forcing a codec the sink does not advertise is refused."},
+	 L"Which codec the sink may use.\n\n"
+	 L"Automatic takes the best both ends support - aptX HD, then aptX, then AAC, then "
+	 L"SBC - so that is what to leave it on unless a headset misbehaves. Forcing a codec the sink "
+	 L"does not advertise is refused."},
 	{kBitrateCombo,
-	 L"Bitrate the AAC encoder aims for.\n"
-	 L"Higher is better sound and takes more of the link; the default is the highest the sink "
-	 L"accepts."},
+	 L"The bitrate the AAC encoder aims for, capped by what the media packet can carry.\n\n"
+	 L"Higher is better sound and uses more of the link; the default is the highest the "
+	 L"sink accepts, which is what you want unless the link is congested."},
 	{kBitpoolCombo,
-	 L"SBC's main quality control.\n"
-	 L"A higher bitpool is better sound in larger packets; the default takes the sink's own "
-	 L"choice, capped at its maximum."},
+	 L"SBC's main quality control - bits per frame, clamped to the sink's range.\n\n"
+	 L"A higher bitpool is better sound in larger packets; the default takes the sink's "
+	 L"own choice, capped at its maximum."},
 	{kBlocksCombo,
-	 L"Samples per SBC frame.\n"
-	 L"More blocks means longer frames: fewer packets a second, and each packet takes longer to "
-	 L"encode."},
+	 L"Samples per SBC frame, in blocks of subband samples.\n\n"
+	 L"More blocks means longer frames - fewer packets a second, but each packet takes "
+	 L"longer to encode, which can add a little delay."},
 	{kSubbandsCombo,
-	 L"Frequency resolution of an SBC frame.\n"
-	 L"8 subbands spread the band finer than 4 at the same bitpool, for a little more work per "
-	 L"frame."},
+	 L"Frequency resolution of an SBC frame.\n\n"
+	 L"8 Subbands split the band finer than 4 at the same bitpool, for a little more "
+	 L"work per frame and usually cleaner treble."},
 	{kAllocationCombo,
-	 L"How SBC hands out bits across the band.\n"
-	 L"Loudness follows the ear's sensitivity; signal-to-noise spends them evenly."},
+	 L"How SBC hands out bits across the band.\n\n"
+	 L"Loudness follows the ear's sensitivity and usually sounds fuller; "
+	 L"signal-to-noise spends the bits evenly."},
 	{kPacingLeadCombo,
-	 L"How far ahead of the media clock the stream is sent, which is the audio queued in the "
-	 L"sink.\n"
-	 L"Shorter is less delay and less margin against underruns: 60 ms suits most sinks, 20 ms "
-	 L"needs one that buffers little. The session panel's latency line is this lead plus what "
-	 L"the rings hold."},
+	 L"How far ahead of the media clock the stream is sent - the audio queued in the "
+	 L"sink. It has a floor of one packet. The session panel's latency line is this lead plus what "
+	 L"the rings hold.\n\n"
+	 L"The main latency dial. Shorter is snappier and has less margin, so the sound can "
+	 L"start stuttering: 60 ms suits most sinks, 20 ms needs one that buffers little - and is "
+	 L"served at the floor instead."},
 	{kSbcFramesCombo,
-	 L"Most SBC frames one packet carries.\n"
-	 L"Fewer frames is a shorter packet and less latency, but more packets a second for the link "
-	 L"to carry. The default fills the packet the MTU allows."},
+	 L"The most SBC frames one packet carries.\n\n"
+	 L"Fewer frames is a shorter packet and less delay, but more packets a second for "
+	 L"the link to carry - past what the link can take, that is where stutters come from. The "
+	 L"default fills the packet the MTU allows."},
 	{kFormatCombo,
-	 L"The format the endpoint offers Windows.\n"
-	 L"Automatic offers every format the sink accepts; pinning one makes Windows use exactly it, "
-	 L"and needs the sink to support it."},
+	 L"The format the endpoint offers Windows.\n\n"
+	 L"Automatic offers every format the sink accepts; pinning one makes Windows use "
+	 L"exactly it, because Windows plays the first format listed. Pinning a format the sink does "
+	 L"not support leaves nothing to play."},
 };
 
 const wchar_t* TipFor(int id)
