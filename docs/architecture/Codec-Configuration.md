@@ -191,8 +191,7 @@ stream start event, and the sink is not told which one is in use.
 The MTU a negotiation is capped against is the one the driver asks for, because discovery runs
 before the media channel exists. If the sink grants less, the driver suspends and reconfigures in
 place once per connection at the highest bitrate the reported MTU carries; a second mismatch is
-left silent instead of retried. That MTU is kept for the rest of the connection, so a codec switch
-- which rediscovers with no channel open - is already capped by it, and it is dropped when the
+left silent instead of retried. That MTU is kept for the rest of the connection, so a codec switch, which rediscovers with no channel open, is already capped by it, and it is dropped when the
 connection ends.
 
 PCM depth is not a setting: `PcmFormat` carries it and the endpoint lists 24-in-32 only while
