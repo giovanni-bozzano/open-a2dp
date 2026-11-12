@@ -94,10 +94,17 @@ constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
 constexpr wchar_t kFinishSwitchText[] = L"Finish driver switch";
 constexpr wchar_t kSessionGroupText[] = L"Session";
 constexpr wchar_t kCodecGroupText[] = L"Codec";
+constexpr wchar_t kSbcGroupText[] = L"SBC";
+constexpr wchar_t kAacGroupText[] = L"AAC";
+constexpr wchar_t kLdacGroupText[] = L"LDAC";
 constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
-constexpr wchar_t kCodecHintText[] = L"The frame shape, bitpool and frames per packet apply to "
-									 L"SBC, the bitrate to AAC. The pacing lead applies to every codec: a shorter "
-									 L"lead is less latency, less margin against the sink running dry.";
+constexpr wchar_t kCodecHintText[] = L"The codec, and the pacing lead every codec shares: a shorter lead "
+									 L"is less latency, less margin against the sink running dry.";
+constexpr wchar_t kSbcHintText[] = L"The frame shape, bitpool and frames per packet, clamped to the range "
+								   L"this sink advertises.";
+constexpr wchar_t kAacHintText[] = L"The bitrate AAC aims for, capped by what one media packet carries.";
+constexpr wchar_t kLdacHintText[] = L"The quality LDAC encodes at. It is local: the sink is never told "
+									L"which mode is in use.";
 constexpr wchar_t kFormatHintText[] = L"Windows plays the first format the endpoint lists and ignores the "
 									 L"Sound-settings pick, so a pinned format is offered alone.";
 // A combo box is created with the height of its drop-down list, which is never resized.
@@ -107,13 +114,43 @@ constexpr int kComboListHeight = 320;
 constexpr int kMinPanelRows = 6;
 constexpr int kMaxPanelRows = 16;
 
-// A label and the control it describes, in one of the two columns of a group.
+// The settings groups, in the order the window stacks them. The fields are split by codec, so a
+// parameter sits beside the codec it shapes instead of in one list where SBC's bitpool and AAC's
+// bitrate look equally relevant to whatever codec is in use.
+enum class FieldGroup {
+	Codec,
+	Sbc,
+	Aac,
+	Ldac,
+	Format,
+	Count,
+};
+
+struct GroupInfo
+{
+	const wchar_t* caption;
+	const wchar_t* hint;
+};
+
+constexpr GroupInfo kGroupInfo[] = {
+	{kCodecGroupText, kCodecHintText},
+	{kSbcGroupText, kSbcHintText},
+	{kAacGroupText, kAacHintText},
+	{kLdacGroupText, kLdacHintText},
+	{kFormatGroupText, kFormatHintText},
+};
+constexpr int kGroupCount = static_cast<int>(FieldGroup::Count);
+static_assert(ARRAYSIZE(kGroupInfo) == static_cast<size_t>(kGroupCount),
+			  "a caption and a hint for every settings group");
+
+// A label and the control it describes, in one of the two columns of its group.
 struct Field
 {
 	HWND label;
 	HWND control;
+	FieldGroup group;
 	int column; // 0 = left, 1 = right
-	int row;    // row inside its column
+	int row;    // row inside its group
 };
 std::vector<Field> Fields;
 
@@ -206,8 +243,7 @@ struct SinkState
 	HCMNOTIFICATION notify = nullptr; // control-device arrival/removal
 	HWND sinkLabel = nullptr;
 	HWND sessionPanel = nullptr;
-	HWND codecHint = nullptr;
-	HWND formatHint = nullptr;
+	std::vector<HWND> hints; // one hint line per group, created with the other controls
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
@@ -768,12 +804,12 @@ HWND EnsureTooltip(HWND hwnd, SinkState* state)
 }
 
 // A label and its field, which the layout sizes from the label text and the combo contents.
-void CreateField(HWND hwnd, const wchar_t* text, int id, int column, int row, HFONT font)
+void CreateField(HWND hwnd, const wchar_t* text, int id, FieldGroup group, int column, int row, HFONT font)
 {
 	const HWND label = CreateChild(hwnd, L"STATIC", text, SS_LEFT, 0, 0, 10, 10, 0, font);
 	const HWND control = CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0,
 									 10, kComboListHeight, id, font);
-	Fields.push_back({label, control, column, row});
+	Fields.push_back({label, control, group, column, row});
 
 	SinkState* state = StateOf(hwnd);
 	if (state != nullptr)
@@ -935,28 +971,34 @@ void ApplyLayout(HWND hwnd)
 	const int innerLeft = groupLeft + inset;
 	const int innerWidth = groupWidth - inset * 2;
 
-	const int codecHintHeight = MaxOf(TextHeight(dc, kCodecHintText, innerWidth), textHeight);
-	const int formatHintHeight = MaxOf(TextHeight(dc, kFormatHintText, innerWidth), textHeight);
-	// Rows come from the fields themselves, so adding a setting does not need a height to be
-	// corrected by hand.
-	int codecRows = 1;
-	int formatRows = 1;
+	// Rows and hint heights come from the fields and the group table themselves, so moving a
+	// setting to another group does not need a height to be corrected by hand.
+	int rows[kGroupCount] = {};
+	int hintHeight[kGroupCount] = {};
+	int groupHeight[kGroupCount] = {};
+	for (int group = 0; group < kGroupCount; ++group)
+	{
+		rows[group] = 1;
+		hintHeight[group] = MaxOf(TextHeight(dc, kGroupInfo[group].hint, innerWidth), textHeight);
+	}
 	for (const Field& field : Fields)
 	{
-		int& rows = field.control == GetDlgItem(hwnd, kFormatCombo) ? formatRows : codecRows;
-		if (field.row + 1 > rows)
+		const int group = static_cast<int>(field.group);
+		if (field.row + 1 > rows[group])
 		{
-			rows = field.row + 1;
+			rows[group] = field.row + 1;
 		}
 	}
-	const int codecHeight = captionHeight + codecRows * rowHeight + codecHintHeight + gap;
-	const int formatHeight = captionHeight + formatRows * rowHeight + formatHintHeight + gap;
 	const int bottomHeight = MaxOf(applyHeight, textHeight);
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
-	const int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + codecHeight + gap +
-							formatHeight + gap + bottomHeight + margin;
+	int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + bottomHeight + margin;
+	for (int group = 0; group < kGroupCount; ++group)
+	{
+		groupHeight[group] = captionHeight + rows[group] * rowHeight + hintHeight[group] + gap;
+		fixedHeight += groupHeight[group] + gap;
+	}
 	// The border and the title bar count too, or the window as a whole would hang off the
 	// screen even though its client area fits.
 	RECT frame = {0, 0, 100, 100};
@@ -977,9 +1019,14 @@ void ApplyLayout(HWND hwnd)
 	const int headerTop = margin;
 	const int sessionTop = headerTop + rowHeight + gap * 2;
 	const int sessionHeight = captionHeight + panelHeight + gap;
-	const int codecTop = sessionTop + sessionHeight + gap;
-	const int formatTop = codecTop + codecHeight + gap;
-	const int bottomTop = formatTop + formatHeight + gap;
+	int groupTop[kGroupCount] = {};
+	int groupBelow = sessionTop + sessionHeight + gap;
+	for (int group = 0; group < kGroupCount; ++group)
+	{
+		groupTop[group] = groupBelow;
+		groupBelow += groupHeight[group] + gap;
+	}
+	const int bottomTop = groupBelow;
 	const int height = bottomTop + bottomHeight + margin;
 
 	// Header row, with the sink picker filling the space the buttons leave.
@@ -1000,29 +1047,32 @@ void ApplyLayout(HWND hwnd)
 	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, controlHeight);
 	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, controlHeight);
 
-	// The three groups: the window draws the frame, so only the rectangles are kept.
+	// The session group and one group per codec: the window draws the frames, so only the
+	// rectangles are kept.
 	state->groups.clear();
 	state->groups.push_back({groupLeft, sessionTop, groupLeft + groupWidth, sessionTop + sessionHeight,
 						  kSessionGroupText});
-	state->groups.push_back({groupLeft, codecTop, groupLeft + groupWidth, codecTop + codecHeight, kCodecGroupText});
-	state->groups.push_back({groupLeft, formatTop, groupLeft + groupWidth, formatTop + formatHeight,
-						  kFormatGroupText});
+	for (int group = 0; group < kGroupCount; ++group)
+	{
+		state->groups.push_back({groupLeft, groupTop[group], groupLeft + groupWidth,
+								 groupTop[group] + groupHeight[group], kGroupInfo[group].caption});
+	}
 	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
 
-	// One row per field: label first, then the combo it describes.
+	// One row per field: label first, then the combo it describes, inside its own group.
 	for (const Field& field : Fields)
 	{
-		const bool format = field.control == GetDlgItem(hwnd, kFormatCombo);
-		const int groupTop = format ? formatTop : codecTop;
-		const int top = groupTop + captionHeight + field.row * rowHeight;
+		const int group = static_cast<int>(field.group);
+		const int top = groupTop[group] + captionHeight + field.row * rowHeight;
 		const int left = innerLeft + (field.column == 0 ? 0 : columnWidth[0] + columnGap);
 		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight);
 		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column], kComboListHeight);
 	}
-	Place(state->codecHint, innerLeft, codecTop + captionHeight + codecRows * rowHeight, innerWidth,
-		  codecHintHeight);
-	Place(state->formatHint, innerLeft, formatTop + captionHeight + formatRows * rowHeight, innerWidth,
-		  formatHintHeight);
+	for (int group = 0; group < kGroupCount && group < static_cast<int>(state->hints.size()); ++group)
+	{
+		Place(state->hints[group], innerLeft, groupTop[group] + captionHeight + rows[group] * rowHeight,
+			  innerWidth, hintHeight[group]);
+	}
 
 	// Apply sits under the right edge, the driver switch just left of it, and the outcome of the
 	// last action fills the rest.
@@ -1106,23 +1156,26 @@ void CreateControls(HWND hwnd)
 	{
 		state->sessionPanel = GetDlgItem(hwnd, kStatusList);
 	}
-	CreateField(hwnd, L"Codec", kCodecCombo, 0, 0, font);
-	CreateField(hwnd, L"AAC bitrate", kBitrateCombo, 1, 0, font);
-	CreateField(hwnd, L"SBC bitpool", kBitpoolCombo, 0, 1, font);
-	CreateField(hwnd, L"SBC blocks", kBlocksCombo, 1, 1, font);
-	CreateField(hwnd, L"Subbands", kSubbandsCombo, 0, 2, font);
-	CreateField(hwnd, L"Allocation", kAllocationCombo, 1, 2, font);
-	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, 0, 3, font);
-	CreateField(hwnd, L"SBC frames", kSbcFramesCombo, 1, 3, font);
-	CreateField(hwnd, L"LDAC quality", kLdacQualityCombo, 0, 4, font);
+	// One group per codec, so a preference sits beside the codec it shapes; the pacing lead is
+	// with the codec choice because every codec uses it.
+	CreateField(hwnd, L"Codec", kCodecCombo, FieldGroup::Codec, 0, 0, font);
+	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, FieldGroup::Codec, 1, 0, font);
+	CreateField(hwnd, L"Bitpool", kBitpoolCombo, FieldGroup::Sbc, 0, 0, font);
+	CreateField(hwnd, L"Blocks", kBlocksCombo, FieldGroup::Sbc, 1, 0, font);
+	CreateField(hwnd, L"Subbands", kSubbandsCombo, FieldGroup::Sbc, 0, 1, font);
+	CreateField(hwnd, L"Allocation", kAllocationCombo, FieldGroup::Sbc, 1, 1, font);
+	CreateField(hwnd, L"Frames per packet", kSbcFramesCombo, FieldGroup::Sbc, 0, 2, font);
+	CreateField(hwnd, L"Bitrate", kBitrateCombo, FieldGroup::Aac, 0, 0, font);
+	CreateField(hwnd, L"Quality", kLdacQualityCombo, FieldGroup::Ldac, 0, 0, font);
+	CreateField(hwnd, L"PCM format", kFormatCombo, FieldGroup::Format, 0, 0, font);
 	if (state != nullptr)
 	{
-		state->codecHint = CreateChild(hwnd, L"STATIC", kCodecHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
-	}
-	CreateField(hwnd, L"PCM format", kFormatCombo, 0, 0, font);
-	if (state != nullptr)
-	{
-		state->formatHint = CreateChild(hwnd, L"STATIC", kFormatHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
+		state->hints.assign(kGroupCount, nullptr);
+		for (int group = 0; group < kGroupCount; ++group)
+		{
+			state->hints[group] =
+					CreateChild(hwnd, L"STATIC", kGroupInfo[group].hint, SS_LEFT, 0, 0, 10, 10, 0, font);
+		}
 	}
 
 	CreateChild(hwnd, L"BUTTON", kApplyText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kApplyButton, font);

@@ -94,8 +94,10 @@ instead of stored, so reading a preference back always shows what the driver wil
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
 `CodecPreferenceEndpointChannels` are obsolete and neither read nor written.
 
-Every field's box in the settings window explains itself when the pointer rests on it, in the
-same terms as the row above it; those texts live with the controls in
+The settings window groups these fields by codec - Codec (the choice and the pacing lead every
+codec shares), SBC, AAC, LDAC - so a parameter is set beside the codec it shapes; the endpoint
+format keeps its own group. Every field's box explains itself when the pointer rests on it, in
+the same terms as the row above it; those texts live with the controls in
 `tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together.
 
 ## How a change applies
