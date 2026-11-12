@@ -92,8 +92,8 @@ TEST(ConfigFile_RoundTripsEverySetting)
 	CHECK(ConfigFile::SameEndpointFormat(read.endpointFormat, written.endpointFormat));
 }
 
-// The flat layout of the first build is not guessed at: a file with another version number is
-// left alone, so an older or newer format can never be half applied.
+// Only this layout's version is accepted: a file numbered anything else is left alone, so a
+// format this build does not understand can never be half applied.
 TEST(ConfigFile_RejectsAnotherLayoutVersion)
 {
 	const std::string text = "version = 1\n\n[sbc]\nrate = 48000\n";

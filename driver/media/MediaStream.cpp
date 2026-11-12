@@ -184,8 +184,8 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 {
 	// Clear the flag first, atomically and without the lock: the media work item and
 	// its per-packet checks read it, so the stream stops within one packet and the
-	// work item stops taking MediaLock. In the failing hang the lock was held by a work
-	// item that kept running every 10 ms for two minutes while this thread waited.
+	// work item stops taking MediaLock. Taking the lock first would leave this thread
+	// behind a work item that keeps running every 10 ms while it holds it.
 	const bool wasActive = InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), 0) != 0;
 	InterlockedExchange(&ctx->MediaPacketPcmBytes, 0);
 	WdfTimerStop(ctx->MediaTimer, TRUE);

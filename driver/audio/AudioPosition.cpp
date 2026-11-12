@@ -77,7 +77,7 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		SignalingOnAudioHeard(ctx);
 	}
 	// With media stopped nothing consumes the ring, and the start that follows flushes it: copying
-	// now only fills it until the bound trims the whole of it away, which is a trim per tick that
+	// only fills it until the bound trims the whole of it away, which is a trim per tick that
 	// means nothing. Move the reference instead, the same way the flush drops this audio once,
 	// and count it so MediaStart can report what the wait for the stream cost.
 	if (!ctx->MediaActive)

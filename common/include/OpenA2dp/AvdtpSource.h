@@ -40,9 +40,9 @@ enum class SessionState : uint8_t {
 };
 
 // The state name in logs and in the tools' report. nullptr for a value outside the enum, so
-// each caller keeps its own word for that. Full switch on purpose: a state added to the
-// enum without a name here does not compile, and the tools no longer index a string array
-// whose order has to match the enum.
+// each caller keeps its own word for that. The switch is exhaustive on purpose: a state added
+// to the enum without a name here does not compile, and no table has to be kept in the enum's
+// order.
 constexpr const char* SessionStateName(SessionState state) noexcept
 {
 	switch (state)

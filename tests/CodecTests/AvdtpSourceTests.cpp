@@ -426,9 +426,9 @@ TEST(AvdtpSource_SelectsSbcWhenSinkHasOnlySbc)
 
 TEST(AvdtpSource_SelectsAacFromSingleSepAdvertisingBothCodecs)
 {
-	// Some sinks advertise every codec on one SEP instead of one SEP per codec.
-	// Only the first Media Codec entry used to be evaluated, which silently lost
-	// AAC whenever the sink listed SBC first.
+	// Some sinks advertise every codec on one SEP instead of one SEP per codec, so
+	// every Media Codec entry is scored; reading only the first would lose AAC
+	// whenever the sink lists SBC first.
 	SourceSession s = MakeSession();
 	uint8_t cmd[kMaxSignalPacket];
 	uint8_t rsp[kMaxSignalPacket];

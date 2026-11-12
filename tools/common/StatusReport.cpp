@@ -194,7 +194,7 @@ void AppendDriver(std::string& text, const Ioctl::VersionInfo& version)
 }
 
 // Every field, so a value the formatted lines above do not show (a mask, a counter that was
-// not worth a line, a reserved field a stale caller left unset) is still visible.
+// not worth a line, a reserved field the caller left unset) stays visible.
 void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl::Preference& preference,
 					 const Ioctl::VersionInfo* version)
 {

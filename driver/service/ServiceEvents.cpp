@@ -52,9 +52,9 @@ void LatchEvents(DEVICE_CONTEXT* ctx, uint32_t events)
 }
 
 // Completes a parked WAIT_EVENT without latching the events for later.
-// A handle closing only concerns the waiter of that handle: leaving the event
-// pending would hand it to the next registration, which is how a stale
-// kEventDeviceGone used to keep every new service session from ever waiting.
+// A handle closing only concerns the waiter of that handle: an event left
+// pending would be handed to the next registration, so a later session would
+// consume a stale kEventDeviceGone and never wait on its own.
 void ReleaseWait(DEVICE_CONTEXT* ctx, uint32_t events)
 {
 	WDFREQUEST request = nullptr;
