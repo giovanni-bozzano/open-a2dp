@@ -12,6 +12,7 @@ void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	if (!Ldac::ParseIe(ie, ieLength, sampleRates, channelModes))
 	{
 		OA2DP_WARN(ctx, "Media", "invalid LDAC configuration");
+		AbandonStream(ctx);
 		return;
 	}
 	const uint32_t sampleRate = Ldac::RateValue(sampleRates);
@@ -24,11 +25,13 @@ void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 			"LDAC %u Hz stereo does not match the endpoint format %u Hz %u ch %u-bit",
 			sampleRate, ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels),
 			static_cast<unsigned>(ctx->PinValidBits));
+		AbandonStream(ctx);
 		return;
 	}
 	if (!ServiceCodecRegistered(ctx, Ioctl::kCodecLdac))
 	{
 		OA2DP_WARN(ctx, "Media", "LDAC configured but no LDAC encoder is registered");
+		AbandonStream(ctx);
 		return;
 	}
 
@@ -66,7 +69,7 @@ void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);
 	InterlockedExchange(&ctx->MediaMode, MediaModeService);
-	ctx->MediaActive = TRUE;
+	SetMediaActive(ctx, true);
 	WdfWaitLockRelease(ctx->MediaLock);
 
 	OA2DP_INFO(ctx, "Media", "LDAC %u Hz stereo 16-bit, %u bps, frames from service", sampleRate,

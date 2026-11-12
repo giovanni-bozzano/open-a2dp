@@ -87,6 +87,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	if (!SbcFixed::ParseIe(ie, ieLength, params))
 	{
 		OA2DP_WARN(ctx, "Media", "unsupported SBC configuration");
+		AbandonStream(ctx);
 		return;
 	}
 	// The encoder reads the PCM the ACX stream produced, so the negotiated format must be
@@ -95,6 +96,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	{
 		OA2DP_WARN(ctx, "Media", "SBC %u Hz %u ch does not match the endpoint format %u Hz %u ch",
 			params.sampleRate, params.Channels(), ctx->PinSampleRate, ctx->PinChannels);
+		AbandonStream(ctx);
 		return;
 	}
 
@@ -165,12 +167,12 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		OA2DP_INFO(ctx, "Media", "stream restarted, %I64u ms of endpoint PCM lost", lostMs);
 	}
 	const ULONG packetBytes = static_cast<ULONG>(SbcFixed::FramesPerPacket(params,
-		ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket) * params.SamplesPerFrame() *
+		MediaPayloadCapacity(ctx), ctx->SbcFramesPerPacket) * params.SamplesPerFrame() *
 		ctx->PinBytesPerFrame);
 	InterlockedExchange(&ctx->MediaPacketPcmBytes, static_cast<LONG>(packetBytes));
 	InterlockedExchange(&ctx->StreamFault, 0);
 	InterlockedExchange(&ctx->MediaMode, MediaModeSbc);
-	ctx->MediaActive = TRUE;
+	SetMediaActive(ctx, true);
 	WdfWaitLockRelease(ctx->MediaLock);
 
 	OA2DP_INFO(ctx, "Media",
@@ -188,24 +190,46 @@ void MediaStop(_In_ DEVICE_CONTEXT* ctx)
 	// behind a work item that keeps running every 10 ms while it holds it.
 	const bool wasActive = InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), 0) != 0;
 	InterlockedExchange(&ctx->MediaPacketPcmBytes, 0);
+	// A tick that fired while this stop ran belongs to the stream that just ended; the next
+	// stream must not treat it as its own clock tick.
+	InterlockedExchange(&ctx->MediaTickPending, 0);
 	WdfTimerStop(ctx->MediaTimer, TRUE);
-	// MediaLock is only ever held for one bounded work item run, so this wait ends. It
-	// is retried rather than abandoned: stopping without the lock would race a send.
+	// A run holds the lock only for one bounded packet, so the wait normally ends at once. A run
+	// stuck inside the encoder, or in a completion that never arrives, must not turn teardown
+	// into a hang: the wait is bounded and the stop then goes ahead without the lock. MediaActive
+	// is already clear, so a run that outlives this still sends nothing, and MediaMode is cleared
+	// atomically below whatever that run happens to be doing.
+	bool locked = false;
+	const ULONGLONG deadline = KeQueryInterruptTime() + MediaStopLockLimit;
 	for (;;)
 	{
-		LONGLONG lockTimeout = WDF_REL_TIMEOUT_IN_MS(1000);
-		if (WdfWaitLockAcquire(ctx->MediaLock, &lockTimeout) == STATUS_SUCCESS)
+		const ULONGLONG now = KeQueryInterruptTime();
+		if (now >= deadline)
 		{
 			break;
 		}
-		OA2DP_WARN(ctx, "Media", "stop: still waiting for the media work item to release the lock");
+		LONGLONG lockTimeout = -static_cast<LONGLONG>(deadline - now);
+		if (WdfWaitLockAcquire(ctx->MediaLock, &lockTimeout) == STATUS_SUCCESS)
+		{
+			locked = true;
+			break;
+		}
 	}
 	const LONG mode = InterlockedExchange(&ctx->MediaMode, MediaModeNone);
-	if (wasActive)
+	if (locked)
 	{
-		OA2DP_INFO(ctx, "Media", "stopped after %I64u packets", ctx->PacketsSent);
+		if (wasActive)
+		{
+			OA2DP_INFO(ctx, "Media", "stopped after %I64u packets", ctx->PacketsSent);
+		}
+		WdfWaitLockRelease(ctx->MediaLock);
 	}
-	WdfWaitLockRelease(ctx->MediaLock);
+	else
+	{
+		OA2DP_WARN(ctx, "Media",
+			"stop: the media work item still holds the lock after %u ms; stopping without it",
+			MediaStopLockLimitMs);
+	}
 	// Send completions may still enqueue the work item; such a run sees MediaActive
 	// clear and returns without a lock. Flushing here, with no lock held and never from
 	// the media work item itself, guarantees no run is left once the stream is stopped.

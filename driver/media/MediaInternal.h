@@ -5,6 +5,7 @@
 
 #include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/LatencyBudget.h>
+#include <OpenA2dp/Rtp.h>
 
 using namespace OpenA2dp;
 
@@ -24,6 +25,39 @@ constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
 // indication). Measured in real time, because the watchdog wakes on demand.
 constexpr ULONG MediaBusyLimitMs = 3000;
 constexpr ULONGLONG MediaBusyLimit = MediaBusyLimitMs * 10000ull;
+// How long a stop waits for the media work item's lock before going ahead without it. A run is
+// bounded, so this only elapses when the run itself is stuck, and waiting forever would hang the
+// session that asked for the stop.
+constexpr ULONG MediaStopLockLimitMs = 2000;
+constexpr ULONGLONG MediaStopLockLimit = MediaStopLockLimitMs * 10000ull;
+// A service-encoded stream that has produced no frame for this long cannot be kept: the sink
+// would buffer silence behind a session that claims to play. Suspending leaves an Open session
+// the endpoint edge starts again instead.
+constexpr ULONGLONG ServiceSilenceLimit = 1000ull * 10000ull;
+
+// Bytes one media packet can carry after the RTP header, or 0 before a channel MTU is known.
+// Without the guard the subtraction wraps and the packet is sized for a link that is not there.
+inline size_t MediaPayloadCapacity(const DEVICE_CONTEXT* ctx) noexcept
+{
+	return ctx->MediaOutMtu > Rtp::kHeaderSize
+		? static_cast<size_t>(ctx->MediaOutMtu) - Rtp::kHeaderSize
+		: 0;
+}
+
+// MediaActive gates runs from the timer, the audio copy and the send completions, all of which
+// read it without a lock. Every write goes through one atomic so a stop is seen whole.
+inline void SetMediaActive(DEVICE_CONTEXT* ctx, bool active) noexcept
+{
+	InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), active ? 1 : 0);
+}
+
+// Ends a stream the media path could not start. Without this the sink stays in Streaming with
+// silence while the session claims to play; the suspend returns it to Open, where the endpoint
+// edge starts it again (a bounded number of times) or leaves it suspended.
+inline void AbandonStream(DEVICE_CONTEXT* ctx) noexcept
+{
+	SignalingRequestSuspend(ctx);
+}
 
 EVT_WDF_TIMER OnMediaTimer;
 EVT_WDF_WORKITEM OnMediaWorkItem;

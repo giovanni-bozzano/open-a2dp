@@ -11,6 +11,7 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	if (!AptxHd::ParseIe(ie, ieLength, capabilities))
 	{
 		OA2DP_WARN(ctx, "Media", "invalid aptX HD configuration");
+		AbandonStream(ctx);
 		return;
 	}
 	const uint32_t sampleRate = (capabilities & AptxHd::kSampleRate44100) != 0 ? 44100u : 48000u;
@@ -23,11 +24,13 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 			"aptX HD %u Hz stereo 24-bit does not match the endpoint format %u Hz %u ch %u-bit",
 			sampleRate, ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels),
 			static_cast<unsigned>(ctx->PinValidBits));
+		AbandonStream(ctx);
 		return;
 	}
 	if (!ServiceCodecRegistered(ctx, Ioctl::kCodecAptxHd))
 	{
 		OA2DP_WARN(ctx, "Media", "aptX HD configured but no aptX HD encoder is registered");
+		AbandonStream(ctx);
 		return;
 	}
 
@@ -56,7 +59,7 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);
 	InterlockedExchange(&ctx->MediaMode, MediaModeService);
-	ctx->MediaActive = TRUE;
+	SetMediaActive(ctx, true);
 	WdfWaitLockRelease(ctx->MediaLock);
 
 	OA2DP_INFO(ctx, "Media", "aptX HD %u Hz stereo 24-bit, %u bps, frames from service", sampleRate,

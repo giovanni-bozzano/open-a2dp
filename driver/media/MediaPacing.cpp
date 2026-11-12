@@ -18,7 +18,7 @@ uint32_t SbcPacketSamples(DEVICE_CONTEXT* ctx)
 {
 	const SbcFixed::Params& params = ctx->Encoder.GetParams();
 	const size_t frames =
-		SbcFixed::FramesPerPacket(params, ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket);
+		SbcFixed::FramesPerPacket(params, MediaPayloadCapacity(ctx), ctx->SbcFramesPerPacket);
 	return static_cast<uint32_t>(frames * params.SamplesPerFrame());
 }
 
@@ -97,8 +97,12 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	const ULONG length = BuildSbcPacket(ctx, due, samples);
 	if (length == 0)
 	{
-		OA2DP_ERROR(ctx, "Media", "packet build failed");
-		ctx->MediaActive = FALSE;
+		// Nothing can carry this stream - no MTU to fill, or an encoder that refused the frame -
+		// so it ends here and signaling takes the sink out of Streaming, instead of leaving a
+		// session that claims to play and sends nothing.
+		OA2DP_ERROR(ctx, "Media", "packet build failed; suspending the stream");
+		SetMediaActive(ctx, false);
+		AbandonStream(ctx);
 		return;
 	}
 	if (!SubmitPacket(ctx, length))
@@ -106,6 +110,10 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 		return;
 	}
 	ctx->MediaSamplesSent += samples;
+	// Counted only now, so the counters describe the packets the transport accepted.
+	++ctx->RtpSequence;
+	++ctx->PacketsSent;
+	ctx->RtpTimestamp += samples;
 	if ((ctx->PacketsSent & 0xFF) == 0)
 	{
 		OA2DP_INFO(ctx, "Media", "%I64u packets sent", ctx->PacketsSent);
@@ -118,6 +126,13 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 void TickService(DEVICE_CONTEXT* ctx, bool tick)
 {
 	const ULONGLONG now = KeQueryInterruptTime();
+	// While the transport still holds the previous packet no record can be consumed, so a growing
+	// gap measures the link, not the encoder: move the reference instead of reporting a stall the
+	// service did not cause as a codec underrun.
+	if (!L2capSendIdle(&ctx->MediaSend))
+	{
+		ctx->ServiceLastFrameTime = now;
+	}
 	if (MediaSendReady(ctx, tick))
 	{
 		uint32_t samples = 0;
@@ -129,6 +144,10 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 				return;
 			}
 			ctx->MediaSamplesSent += samples;
+			// Counted only now: the record was accepted for submission.
+			++ctx->RtpSequence;
+			++ctx->PacketsSent;
+			ctx->RtpTimestamp += samples;
 			ctx->ServiceLastFrameTime = now;
 		}
 	}
@@ -141,7 +160,7 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 	if (InterlockedCompareExchange(&ctx->StreamFault, 0, 0) != 0)
 	{
 		OA2DP_ERROR(ctx, "Media", "frame ring fault, suspending");
-		ctx->MediaActive = FALSE;
+		SetMediaActive(ctx, false);
 		SignalingRequestSuspend(ctx);
 		return;
 	}
@@ -190,6 +209,18 @@ void TickService(DEVICE_CONTEXT* ctx, bool tick)
 		InterlockedIncrement64(&ctx->Underruns);
 		OA2DP_WARN(ctx, "Media", "%s underrun (%I64u ms without a frame)", CodecValueName(ctx->ActiveCodec),
 			idle / 10000ull);
+	}
+	if (idle >= ServiceSilenceLimit)
+	{
+		// The service is alive and the endpoint plays, but nothing has come out of it for over a
+		// second: the stream cannot be kept, because the sink would buffer silence behind a
+		// session that claims to play. Suspending returns the session to Open, where the endpoint
+		// edge starts it again - a bounded number of times - or leaves it suspended.
+		OA2DP_ERROR(ctx, "Media", "%s produced no frame for %I64u ms; suspending the stream",
+			CodecValueName(ctx->ActiveCodec), idle / 10000ull);
+		SetMediaActive(ctx, false);
+		AbandonStream(ctx);
+		return;
 	}
 }
 

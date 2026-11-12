@@ -9,17 +9,20 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	if (!AacConfig::ParseConfiguredIe(ie, ieLength, params))
 	{
 		OA2DP_WARN(ctx, "Media", "invalid AAC configuration");
+		AbandonStream(ctx);
 		return;
 	}
 	if (params.sampleRate != ctx->PinSampleRate || params.channels != ctx->PinChannels)
 	{
 		OA2DP_WARN(ctx, "Media", "AAC %u Hz %u ch does not match the endpoint format %u Hz %u ch",
 			params.sampleRate, params.channels, ctx->PinSampleRate, ctx->PinChannels);
+		AbandonStream(ctx);
 		return;
 	}
 	if (params.bitrate == 0 || params.bitrate > AacConfig::kMaxBitrate)
 	{
 		OA2DP_WARN(ctx, "Media", "unsupported AAC bitrate %u", params.bitrate);
+		AbandonStream(ctx);
 		return;
 	}
 	// One access unit per packet: the bitrate must leave room for the LATM header and the
@@ -40,6 +43,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	if (!ServiceRegistered(ctx))
 	{
 		OA2DP_WARN(ctx, "Media", "AAC configured but no encoder service is registered");
+		AbandonStream(ctx);
 		return;
 	}
 
@@ -68,7 +72,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);
 	InterlockedExchange(&ctx->MediaMode, MediaModeService);
-	ctx->MediaActive = TRUE;
+	SetMediaActive(ctx, true);
 	WdfWaitLockRelease(ctx->MediaLock);
 
 	OA2DP_INFO(ctx, "Media", "AAC %u Hz %u ch %u bps, object 0x%02X, frames from service", params.sampleRate,

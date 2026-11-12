@@ -24,7 +24,7 @@ static void MediaSendFailed(DEVICE_CONTEXT* ctx, NTSTATUS status)
 		InterlockedIncrement64(&ctx->SendFailures);
 		InterlockedExchange(&ctx->LastMediaError, status);
 	}
-	ctx->MediaActive = FALSE;
+	SetMediaActive(ctx, false);
 	SignalingRequestSuspend(ctx);
 }
 
@@ -116,7 +116,7 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 	// A stored cap shortens the packet: less audio buffered per packet, at the cost of more
 	// packets per second. 0 keeps the MTU's fill.
 	const size_t frameCount =
-		SbcFixed::FramesPerPacket(p, ctx->MediaOutMtu - Rtp::kHeaderSize, ctx->SbcFramesPerPacket);
+		SbcFixed::FramesPerPacket(p, MediaPayloadCapacity(ctx), ctx->SbcFramesPerPacket);
 	if (frameCount == 0)
 	{
 		return 0;
@@ -163,9 +163,8 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 	}
 
 	samples = static_cast<uint32_t>(frameCount * spf);
-	++ctx->RtpSequence;
-	++ctx->PacketsSent;
-	ctx->RtpTimestamp += samples;
+	// The sequence, timestamp and count advance where the packet is accepted for submission, not
+	// here: a packet the transport refuses was never sent and must not be reported as one.
 	return static_cast<ULONG>(offset);
 }
 
@@ -250,9 +249,7 @@ ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 
 	samples = frameSamples;
 	NoteServiceRecord(ctx, frameSamples);
-	++ctx->RtpSequence;
-	++ctx->PacketsSent;
-	ctx->RtpTimestamp += frameSamples;
+	// Advanced by the caller once the packet is submitted; a refused packet was not sent.
 	return static_cast<ULONG>(offset + length);
 }
 } // namespace OpenA2dpDriver::Media

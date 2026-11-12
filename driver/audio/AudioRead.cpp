@@ -21,6 +21,9 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	if (frameBytes == 0 || channels == 0)
 	{
+		// Nothing can be read, but the caller encodes the whole buffer: leave silence rather than
+		// the previous frame, or a format teardown replays audio it reports as a gap.
+		RtlZeroMemory(pcm, frames * AudioChannels * sizeof(INT16));
 		return 0;
 	}
 
