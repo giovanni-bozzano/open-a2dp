@@ -222,6 +222,16 @@ void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 	}
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 
+	// A run that finds the slot idle again after a submit is the first run after that send
+	// completed, so this closes the interval the packet spent with the transport. Closed here
+	// rather than in the completion routine: that one runs at DISPATCH_LEVEL with the slot but no
+	// device context, so it cannot tell the media send from the signaling one.
+	if (ctx->MediaSendPending && L2capSendIdle(&ctx->MediaSend))
+	{
+		OA2dpNoteGapMs(ctx->MediaSendStarted, ctx->WorstSendMs, KeQueryInterruptTime());
+		ctx->MediaSendPending = FALSE;
+	}
+
 	// Runs come from the media clock (timer) and from send completions; only clock
 	// ticks wake the AAC service and count a busy transport.
 	const bool tick = InterlockedExchange(&ctx->MediaTickPending, 0) != 0;

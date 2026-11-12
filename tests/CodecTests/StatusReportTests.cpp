@@ -162,6 +162,20 @@ TEST(StatusReport_ShowsTheDriverSideLatency)
 	CHECK(Contains(spiked, "latency peak    180 ms (worst since this stream started)"));
 }
 
+// The gaps say what the lead had to cover, which is the cause the underrun and trim counts only
+// report as a cost: a render path held off for 12 ms, a service that took 30 ms per record, a
+// send that sat in the transport for 45 ms. A lead at or above the largest of them has margin.
+TEST(StatusReport_ShowsTheWorstGapsTheLeadHadToCover)
+{
+	Ioctl::Status status = StreamingStatus();
+	status.worstRenderGapMs = 12;
+	status.worstServiceGapMs = 30;
+	status.worstSendMs = 45;
+	const std::string report = Report(false, status, StreamingPreference());
+	CHECK(Contains(report,
+			"render 12 ms, frames 30 ms, send 45 ms (worst since this stream started)"));
+}
+
 // A lead the driver had to raise is reported as raised. A stored lead shorter than one access
 // unit cannot be served - the pacer would ask for a packet before it could be filled - so the
 // stream runs at the floor instead, and the report has to say that rather than show a number the

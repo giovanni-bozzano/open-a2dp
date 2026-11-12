@@ -313,6 +313,9 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->framesTrimmed = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->FramesTrimmed, 0, 0));
 		out->pacingLeadMs = ctx->PacingLeadMs;
 		out->latencyPeakMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->LatencyPeakMs, 0, 0));
+		out->worstRenderGapMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstRenderGapMs, 0, 0));
+		out->worstServiceGapMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstServiceGapMs, 0, 0));
+		out->worstSendMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendMs, 0, 0));
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
 		out->bitrateLimit = AacConfig::MaxBitrateForMtu(out->mediaMtu - Rtp::kHeaderSize, sampleRate);
 		// SBC PCM capabilities are the baseline, not the AAC capability set or Windows mix format.

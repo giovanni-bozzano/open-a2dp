@@ -76,6 +76,10 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 		return false;
 	}
 	ctx->MediaSendUnchecked = TRUE;
+	// The completion work item notices the send left and closes the interval, so a link that
+	// buffers or retries becomes a number instead of only a trim the user cannot explain.
+	ctx->MediaSendStarted = KeQueryInterruptTime();
+	ctx->MediaSendPending = TRUE;
 	return true;
 }
 
@@ -214,6 +218,9 @@ static void NoteServiceRecord(DEVICE_CONTEXT* ctx, uint32_t samples)
 {
 	if (samples != 0)
 	{
+		// The interval between two records is how long the service had to produce one: the
+		// driver-side lead has to cover that, or the ring empties between them.
+		OA2dpNoteGapMs(ctx->LastRecordTime, ctx->WorstServiceGapMs, KeQueryInterruptTime());
 		ctx->ServiceUnitSamples = samples;
 	}
 }

@@ -107,7 +107,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaCaughtUp = FALSE;
-	ctx->FrameTrimStrikes = 0;
+	MediaStatsReset(ctx);
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	// Hold the lead above one packet: the pacer otherwise asks for audio the copy path has not
 	// had an interval to write, and every packet of the stream is padded with silence.
@@ -139,6 +139,8 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		skipped = ctx->AudioSkippedBytes;
 		ctx->AudioSkippedBytes = 0;
 		ctx->PcmTrimStrikes = 0;
+		ctx->WorstRenderGapMs = 0;
+		ctx->LastRenderTime = 0;
 		runStamp = ctx->AudioRunStamp;
 		ctx->AudioRunStamp = 0;
 		KeReleaseSpinLock(&ctx->AudioLock, irql);

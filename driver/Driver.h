@@ -540,6 +540,19 @@ struct DEVICE_CONTEXT
 	// sampled on the audio copy tick. A transport or service stall shows up here even after the
 	// stream trimmed back to live.
 	volatile LONG LatencyPeakMs;
+	// Worst gaps this stream has seen, measured where each producer is observed: the interval
+	// between two PCM copies that carried audio, between two encoded records the pacer consumed,
+	// and how long one media send stayed with the transport. These are the need; the underrun and
+	// trim counters are what a lead too short for it cost.
+	volatile LONG WorstRenderGapMs;
+	volatile LONG WorstServiceGapMs;
+	volatile LONG WorstSendMs;
+	// Timestamps those gaps are measured from and the send in flight: LastRenderTime is guarded by
+	// AudioLock, the rest by MediaLock. 0 means nothing has been measured for this stream yet.
+	ULONGLONG LastRenderTime;
+	ULONGLONG LastRecordTime;
+	ULONGLONG MediaSendStarted;
+	BOOLEAN MediaSendPending;
 	// Consecutive observations each ring has been over its limit. A backlog has to persist before
 	// audio is dropped for it (LatencyBudget::TrimNow), so one copy tick or one record written at
 	// the wrong moment cannot cost a gap. PcmTrimStrikes is guarded by AudioLock, FrameTrimStrikes
@@ -577,6 +590,22 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, GetDeviceContext)
 inline const char* OA2dpTagOf(const DEVICE_CONTEXT* ctx)
 {
 	return ctx != nullptr ? ctx->LogTag : "-";
+}
+
+// Tracks the worst interval between two observations since a stream started: the margin a pacing
+// lead has to cover when the producer or the transport holds audio off for that long. The first
+// observation of a stream only anchors the timestamp, and a peak never shrinks on its own.
+inline void OA2dpNoteGapMs(ULONGLONG& last, volatile LONG& worstMs, ULONGLONG now)
+{
+	if (last != 0 && now > last)
+	{
+		const ULONGLONG gapMs = (now - last) / 10000ull;
+		if (gapMs > static_cast<ULONGLONG>(worstMs))
+		{
+			worstMs = static_cast<LONG>(gapMs);
+		}
+	}
+	last = now;
 }
 
 // l2cap/

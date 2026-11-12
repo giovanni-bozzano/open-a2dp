@@ -221,6 +221,9 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.framesTrimmed", status.framesTrimmed);
 	AppendField(text, "status.pacingLeadMs", status.pacingLeadMs);
 	AppendField(text, "status.latencyPeakMs", status.latencyPeakMs);
+	AppendField(text, "status.worstRenderGapMs", status.worstRenderGapMs);
+	AppendField(text, "status.worstServiceGapMs", status.worstServiceGapMs);
+	AppendField(text, "status.worstSendMs", status.worstSendMs);
 	AppendField(text, "status.packetsSent", status.packetsSent);
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
@@ -421,6 +424,12 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	// this stream is reported next to it; it is reset when the next stream starts.
 	AppendLine(text, "latency peak",
 			   Format("%u ms (worst since this stream started)", status.latencyPeakMs));
+	// What the lead had to cover: the longest the render path, the encoder service or a send
+	// held audio off. A lead at or above the largest of these has margin; one below it is what
+	// the underrun and trim counts below are paying for.
+	AppendLine(text, "worst gaps",
+			   Format("render %u ms, frames %u ms, send %u ms (worst since this stream started)",
+				  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs));
 	// What the delay cost, per sink: audio the driver could not deliver in time. Silence where
 	// the stream ran dry is an underrun; audio discarded to stay near live after a stall is a
 	// trim. Both mean the lead is short for this sink, and both are worth seeing beside the

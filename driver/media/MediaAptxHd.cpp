@@ -48,7 +48,7 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	ctx->ServiceLastFrameTime = ctx->MediaStartTime;
 	ctx->ServiceLastUnderrunLog = 0;
-	ctx->FrameTrimStrikes = 0;
+	MediaStatsReset(ctx);
 	// A record covers one clock span of the codec, so the lead has to hold one plus the copy
 	// tick that fills it.
 	ApplyLeadFloor(ctx, sampleRate * Ioctl::kServiceRecordMs / 1000);

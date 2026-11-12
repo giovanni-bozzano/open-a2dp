@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 4;
+constexpr uint32_t kAbiVersion = 5;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -269,6 +269,13 @@ struct Status {
 	// transient backlog spike is still visible after the stream trimmed back to live.
 	uint32_t pacingLeadMs;
 	uint32_t latencyPeakMs;
+	// Worst gaps since this stream started, on the same reset as latencyPeakMs: the interval
+	// between two PCM copies that carried audio, between two encoded records the pacer consumed,
+	// and how long one media send stayed with the transport. They are the margin the lead needed
+	// - a cause - where the counters below are what a margin that was too short cost.
+	uint32_t worstRenderGapMs;
+	uint32_t worstServiceGapMs;
+	uint32_t worstSendMs;
 	uint32_t lastError; // NTSTATUS of the last media failure, 0 if none
 	// Codec chosen by the last AVDTP negotiation (0 = none yet). It is valid
 	// before streaming starts, unlike `codec`, which is set by MediaStart.
@@ -398,7 +405,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 320, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 336, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

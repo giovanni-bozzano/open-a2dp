@@ -89,6 +89,12 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		ctx->AudioCopiedPosition = position;
 		return;
 	}
+	// The interval between two copies that carried audio is how long the endpoint was held off:
+	// the lead has to cover one, or the pacer finds the ring empty between them.
+	if (position > ctx->AudioCopiedPosition)
+	{
+		OA2dpNoteGapMs(ctx->LastRenderTime, ctx->WorstRenderGapMs, KeQueryInterruptTime());
+	}
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 	const ULONG readableBefore = ring.ReadableBytes();
 

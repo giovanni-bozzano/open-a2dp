@@ -60,7 +60,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	ctx->ServiceLastFrameTime = ctx->MediaStartTime;
 	ctx->ServiceLastUnderrunLog = 0;
-	ctx->FrameTrimStrikes = 0;
+	MediaStatsReset(ctx);
 	// One record per access unit covers a full AAC frame, so the lead has to hold that much
 	// plus the copy tick that fills it.
 	ApplyLeadFloor(ctx, Ioctl::kAacSamplesPerFrame);

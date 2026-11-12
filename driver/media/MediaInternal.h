@@ -35,6 +35,18 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples);
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick);
 void TickService(DEVICE_CONTEXT* ctx, bool tick);
+// Per-stream diagnostics start over with the stream: the peaks, the consecutive-over-limit count
+// and the timestamps they are measured from all describe one stream. Caller holds MediaLock; the
+// audio side resets its own pair under AudioLock.
+inline void MediaStatsReset(DEVICE_CONTEXT* ctx)
+{
+	ctx->FrameTrimStrikes = 0;
+	ctx->WorstServiceGapMs = 0;
+	ctx->WorstSendMs = 0;
+	ctx->LastRecordTime = 0;
+	ctx->MediaSendPending = FALSE;
+}
+
 // PCM samples (per channel) one SBC packet of this stream carries. Caller holds MediaLock.
 uint32_t SbcPacketSamples(DEVICE_CONTEXT* ctx);
 // Holds the pacing lead at one access unit of the negotiated codec plus the copy slack, so the
