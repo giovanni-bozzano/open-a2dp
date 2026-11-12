@@ -2150,25 +2150,64 @@ HCMNOTIFICATION RegisterInterfaceNotifications(HWND hwnd)
 	return notify;
 }
 
+// What storing one set of settings did, so the window can say it: the driver renegotiates only
+// what moved, and a set that matches what it already reports moves nothing.
+enum class StoreOutcome {
+	Failed,
+	Unchanged,
+	Applied,
+};
+
+// The ABI fields are not settings, so they do not count as a difference.
+bool SamePreference(const Ioctl::Preference& first, const Ioctl::Preference& second)
+{
+	return first.flags == second.flags && first.codec == second.codec &&
+		   first.aacBitrate == second.aacBitrate && first.sbcBitpool == second.sbcBitpool &&
+		   first.sbcBlocks == second.sbcBlocks && first.sbcSubbands == second.sbcSubbands &&
+		   first.sbcAllocation == second.sbcAllocation && first.prerollMs == second.prerollMs &&
+		   first.sbcFramesPerPacket == second.sbcFramesPerPacket &&
+		   first.ldacQuality == second.ldacQuality;
+}
+
+bool SameEndpointFormat(const Ioctl::EndpointFormat& first, const Ioctl::EndpointFormat& second)
+{
+	for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+	{
+		if (first.sampleRate[codec] != second.sampleRate[codec] ||
+			first.channels[codec] != second.channels[codec])
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 // Stores one whole set of settings and applies it. The preference goes first: the endpoint
 // format write is the one that rebuilds the listed formats and makes a running stream
 // renegotiate, so a single rebuild carries both instead of one per write. The driver clamps and
-// refuses, so the result is read back and the window shows what it will actually use.
-bool StoreSettings(HWND hwnd, const Ioctl::Preference& preference,
-				   const Ioctl::EndpointFormat& endpointFormat)
+// refuses, so the result is read back and the window shows what it will actually use. A set that
+// matches what the driver reports is not written at all: the driver would ignore it and restart
+// nothing, which is not what a message about a renegotiation would say.
+StoreOutcome StoreSettings(HWND hwnd, const Ioctl::Preference& preference,
+						   const Ioctl::EndpointFormat& endpointFormat)
 {
 	SinkState* state = StateOf(hwnd);
 	if (state == nullptr || !state->open)
 	{
 		SetMessage(hwnd, L"No device is selected.");
-		return false;
+		return StoreOutcome::Failed;
+	}
+	if (SamePreference(preference, state->preference) &&
+		SameEndpointFormat(endpointFormat, state->endpointFormat))
+	{
+		return StoreOutcome::Unchanged;
 	}
 	std::string failure;
 	if (!WritePreference(state->control, preference, failure) ||
 		!WriteEndpointFormat(state->control, endpointFormat, failure))
 	{
 		SetMessage(hwnd, Tools::Widen(failure));
-		return false;
+		return StoreOutcome::Failed;
 	}
 	Ioctl::Preference stored = {};
 	if (ReadPreference(state->control, stored, failure))
@@ -2182,7 +2221,7 @@ bool StoreSettings(HWND hwnd, const Ioctl::Preference& preference,
 	}
 	LoadPreferenceIntoControls(hwnd);
 	RefreshStatus(hwnd);
-	return true;
+	return StoreOutcome::Applied;
 }
 
 // Stores the settings the controls show. The driver applies them itself: a running stream
@@ -2224,13 +2263,19 @@ void ApplySettings(HWND hwnd)
 		return;
 	}
 
-	if (!StoreSettings(hwnd, preference, endpointFormat))
+	switch (StoreSettings(hwnd, preference, endpointFormat))
 	{
+	case StoreOutcome::Failed:
 		return;
+	case StoreOutcome::Unchanged:
+		SetMessage(hwnd, L"Nothing to apply: the sink already uses these settings.");
+		return;
+	case StoreOutcome::Applied:
+		break;
 	}
 	const bool streaming = state->status.mediaState == Ioctl::MediaState::Streaming;
-	SetMessage(hwnd, streaming ? L"Stored. The active stream renegotiates to apply it."
-							   : L"Stored. The setting applies at the next negotiation.");
+	SetMessage(hwnd, streaming ? L"Stored. The playing stream is renegotiated to apply them."
+							   : L"Stored. They apply when a stream next starts.");
 }
 
 // Puts every setting back to the driver default: the automatic codec, every codec automatic and
@@ -2244,26 +2289,40 @@ void RestoreDefaults(HWND hwnd)
 		SetMessage(hwnd, L"No device is selected.");
 		return;
 	}
-	if (MessageBoxW(hwnd,
-					L"Restore every setting of this sink to the driver default?\n\nA running stream "
-					L"renegotiates to apply it.",
-					L"Restore defaults", MB_ICONQUESTION | MB_YESNO) != IDYES)
-	{
-		return;
-	}
 	Ioctl::Preference preference = {};
 	preference.abiVersion = Ioctl::kAbiVersion;
 	Ioctl::EndpointFormat endpointFormat = {};
 	endpointFormat.abiVersion = Ioctl::kAbiVersion;
-	if (!StoreSettings(hwnd, preference, endpointFormat))
+	// Nothing is restored on a sink that already uses the defaults, so there is nothing to
+	// confirm and no stream to touch.
+	if (SamePreference(preference, state->preference) &&
+		SameEndpointFormat(endpointFormat, state->endpointFormat))
+	{
+		SetMessage(hwnd, L"Already using the driver defaults: nothing was stored and no stream was touched.");
+		return;
+	}
+	if (MessageBoxW(hwnd,
+					L"Restore every setting of this sink to the driver default?\n\nA playing stream is "
+					L"renegotiated to them; the sink itself stays connected.",
+					L"Restore defaults", MB_ICONQUESTION | MB_YESNO) != IDYES)
 	{
 		return;
+	}
+	switch (StoreSettings(hwnd, preference, endpointFormat))
+	{
+	case StoreOutcome::Failed:
+		return;
+	case StoreOutcome::Unchanged:
+		SetMessage(hwnd, L"Already using the driver defaults: nothing was stored and no stream was touched.");
+		return;
+	case StoreOutcome::Applied:
+		break;
 	}
 	// The write applies both halves the same way Apply does, so the message says what happens
 	// rather than sending the user looking for an Apply.
 	const bool streaming = state->status.mediaState == Ioctl::MediaState::Streaming;
-	SetMessage(hwnd, streaming ? L"Defaults restored. The active stream renegotiates to apply them."
-							   : L"Defaults restored. A stream opened now uses them.");
+	SetMessage(hwnd, streaming ? L"Defaults restored. The playing stream is renegotiated to them."
+							   : L"Defaults restored. They apply when a stream next starts.");
 }
 
 // A themed static or button fills its own text background with the light theme's colour and
