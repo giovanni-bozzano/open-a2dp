@@ -447,6 +447,129 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 	return writer.ok ? writer.length : 0;
 }
 
+namespace Detail {
+
+// One trimmed line: what remains after the surrounding space and any `#` comment. `cursor` is
+// moved past the line's terminator, so the caller only loops while the text remains.
+struct Line
+{
+	const char* begin;
+	const char* end;
+};
+
+inline Line NextLine(const char* textEnd, const char*& cursor) noexcept
+{
+	const char* lineEnd = cursor;
+	while (lineEnd < textEnd && *lineEnd != '\r' && *lineEnd != '\n')
+	{
+		++lineEnd;
+	}
+	const char* next = lineEnd;
+	while (next < textEnd && (*next == '\r' || *next == '\n'))
+	{
+		++next;
+	}
+
+	const char* begin = cursor;
+	const char* end = lineEnd;
+	while (begin < end && IsSpace(*begin))
+	{
+		++begin;
+	}
+	for (const char* scan = begin; scan < end; ++scan)
+	{
+		if (*scan == '#')
+		{
+			end = scan;
+			break;
+		}
+	}
+	while (end > begin && IsSpace(end[-1]))
+	{
+		--end;
+	}
+	cursor = next;
+	return {begin, end};
+}
+
+// `[name]`, with nothing but space allowed after the closing bracket. The name has to fit the
+// buffer the caller keeps the open section in.
+inline bool ReadSectionName(const Line& line, char (&section)[kMaxNameChars + 1],
+							size_t& sectionLength) noexcept
+{
+	const char* close = line.begin + 1;
+	while (close < line.end && *close != ']')
+	{
+		++close;
+	}
+	if (close >= line.end)
+	{
+		return false;
+	}
+	for (const char* scan = close + 1; scan < line.end; ++scan)
+	{
+		if (!IsSpace(*scan))
+		{
+			return false;
+		}
+	}
+	const size_t nameLength = static_cast<size_t>(close - (line.begin + 1));
+	if (nameLength == 0 || nameLength > kMaxNameChars)
+	{
+		return false;
+	}
+	for (size_t index = 0; index < nameLength; ++index)
+	{
+		section[index] = line.begin[1 + index];
+	}
+	section[nameLength] = '\0';
+	sectionLength = nameLength;
+	return true;
+}
+
+// `key = value`, with the space on either side of the `=` removed.
+struct KeyValue
+{
+	const char* key;
+	size_t keyLength;
+	const char* value;
+	size_t valueLength;
+};
+
+inline bool SplitKeyValue(const Line& line, KeyValue& pair) noexcept
+{
+	const char* equals = nullptr;
+	for (const char* scan = line.begin; scan < line.end; ++scan)
+	{
+		if (*scan == '=')
+		{
+			equals = scan;
+			break;
+		}
+	}
+	if (equals == nullptr)
+	{
+		return false;
+	}
+	const char* keyEnd = equals;
+	while (keyEnd > line.begin && IsSpace(keyEnd[-1]))
+	{
+		--keyEnd;
+	}
+	const char* value = equals + 1;
+	while (value < line.end && IsSpace(*value))
+	{
+		++value;
+	}
+	pair.key = line.begin;
+	pair.keyLength = static_cast<size_t>(keyEnd - line.begin);
+	pair.value = value;
+	pair.valueLength = static_cast<size_t>(line.end - value);
+	return true;
+}
+
+} // namespace Detail
+
 // The text as settings: the version has to be this build's, `[section]` opens a section and
 // `key = value` fills it in. False when the text is not a file this build wrote, or a known key
 // holds a value it cannot use.
@@ -467,111 +590,38 @@ inline bool Parse(const char* text, size_t length, Settings& settings) noexcept
 	uint32_t version = 0;
 	while (cursor < textEnd)
 	{
-		const char* lineEnd = cursor;
-		while (lineEnd < textEnd && *lineEnd != '\r' && *lineEnd != '\n')
-		{
-			++lineEnd;
-		}
-		const char* next = lineEnd;
-		while (next < textEnd && (*next == '\r' || *next == '\n'))
-		{
-			++next;
-		}
-
-		const char* begin = cursor;
-		const char* end = lineEnd;
-		while (begin < end && Detail::IsSpace(*begin))
-		{
-			++begin;
-		}
-		for (const char* scan = begin; scan < end; ++scan)
-		{
-			if (*scan == '#')
-			{
-				end = scan;
-				break;
-			}
-		}
-		while (end > begin && Detail::IsSpace(end[-1]))
-		{
-			--end;
-		}
-		cursor = next;
-		if (end == begin)
+		const Detail::Line line = Detail::NextLine(textEnd, cursor);
+		if (line.begin == line.end)
 		{
 			continue;
 		}
-
-		if (*begin == '[')
+		if (*line.begin == '[')
 		{
-			const char* close = begin + 1;
-			while (close < end && *close != ']')
-			{
-				++close;
-			}
-			if (close >= end)
+			if (!Detail::ReadSectionName(line, section, sectionLength))
 			{
 				return false;
 			}
-			for (const char* scan = close + 1; scan < end; ++scan)
-			{
-				if (!Detail::IsSpace(*scan))
-				{
-					return false;
-				}
-			}
-			const size_t nameLength = static_cast<size_t>(close - (begin + 1));
-			if (nameLength == 0 || nameLength > kMaxNameChars)
-			{
-				return false;
-			}
-			for (size_t index = 0; index < nameLength; ++index)
-			{
-				section[index] = begin[1 + index];
-			}
-			section[nameLength] = '\0';
-			sectionLength = nameLength;
 			continue;
 		}
 
-		const char* equals = nullptr;
-		for (const char* scan = begin; scan < end; ++scan)
-		{
-			if (*scan == '=')
-			{
-				equals = scan;
-				break;
-			}
-		}
-		if (equals == nullptr)
+		Detail::KeyValue pair = {};
+		if (!Detail::SplitKeyValue(line, pair))
 		{
 			return false;
 		}
-		const char* keyEnd = equals;
-		while (keyEnd > begin && Detail::IsSpace(keyEnd[-1]))
-		{
-			--keyEnd;
-		}
-		const char* value = equals + 1;
-		while (value < end && Detail::IsSpace(*value))
-		{
-			++value;
-		}
-		const size_t keyLength = static_cast<size_t>(keyEnd - begin);
-		const size_t valueLength = static_cast<size_t>(end - value);
-
 		// The version is metadata about the file, not a setting, so it sits above the sections.
 		if (sectionLength == 0)
 		{
-			if (!Detail::KeyIs(begin, keyLength, "version") ||
-				!Detail::ReadNumber(value, valueLength, version))
+			if (!Detail::KeyIs(pair.key, pair.keyLength, "version") ||
+				!Detail::ReadNumber(pair.value, pair.valueLength, version))
 			{
 				return false;
 			}
 			versionSeen = true;
 			continue;
 		}
-		if (!Detail::ApplyValue(section, sectionLength, begin, keyLength, value, valueLength, settings))
+		if (!Detail::ApplyValue(section, sectionLength, pair.key, pair.keyLength, pair.value,
+								pair.valueLength, settings))
 		{
 			return false;
 		}
