@@ -15,6 +15,21 @@ NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	// ACX frees the packets before it asks for new ones. A second allocation would overwrite the
+	// live MDL and its pages, leaking them and handing the next free the wrong buffer, so it is
+	// refused rather than trusted to a pin setting.
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		const bool live = ctx->AudioMdl != nullptr || ctx->AudioBuffer != nullptr;
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		if (live)
+		{
+			OA2DP_ERROR(ctx, "Audio", "RT packets requested while a set is still live; refusing");
+			return STATUS_DEVICE_BUSY;
+		}
+	}
+
 	// Whole pages, zeroed, so no stale kernel memory is mapped to user mode.
 	const SIZE_T bufferSize = ROUND_TO_PAGES(static_cast<SIZE_T>(total));
 
