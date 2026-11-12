@@ -29,7 +29,11 @@ single largest fixed part of it.
    that same limit; the RTP timestamp moves past the dropped span, so the sink hears one
    gap rather than old audio. Both are counted and reported (`trimmed`: PCM bytes and encoded
    records) and logged once per second, so a stall on the service-encoded codecs is visible in
-   the panel too.
+   the panel too. The excess has to persist to be dropped - `LatencyBudget::TrimNow` requires it
+   on two consecutive observations, `kTrimStrikes` - because a copy tick landing while the pacer
+   sits between packets is a wobble the lead absorbs, and a trim there would be a gap for
+   nothing. What a trim drops back to is the lead itself rather than the limit, so the one gap
+   it costs buys an interval of headroom instead of leaving the ring on the edge.
 2. **The lead is a stored setting.** `Preference.prerollMs` (registry
    `CodecPreferencePrerollMs`, `OpenA2dpCtl codec --preroll`) sets the pacing lead for every
    codec, 20–200 ms or 0 for the default. `MediaStart` resolves it once, the kernel pacer and
@@ -38,6 +42,12 @@ single largest fixed part of it.
    60 ms for sinks that need the margin. The whole range is honoured on both paths: the trims
    bound what the rings hold past the lead, and a pacer with less PCM than its lead pads
    silence in front, so 200 ms means 200 ms and not the trim constant.
+   The lead has a floor, `LatencyBudget::LeadFloorMs`: one access unit of the running codec
+   (the MTU's SBC frames, one AAC frame, or one service record) plus the copy slack. Below it
+   the pacer would ask for a packet before the producer had the interval to fill it, so every
+   packet would be padded - an underrun neither the sink nor the CPU could avoid. At 44.1 kHz
+   that floor is 41 ms for an MTU-filled SBC packet, 44 ms for AAC and 30 ms for aptX, so a
+   stored 20 ms runs at the floor; the report shows the raised value and the stored one.
 3. **The latency is measurable.** `status.pcmBufferedMs` and `status.frameBufferedMs` derive
    the buffered duration from the ring fills (PCM by the depth it carries, frames by the codec
    bitrate). The report's `latency` line adds the two to the pacing lead - the audio the driver
@@ -88,6 +98,18 @@ single largest fixed part of it.
    trade packets per second for a shorter packet; the default stays MTU-filled. AAC and both
    aptX codecs carry one access unit per packet, so they are already at their shortest.
 
+9. **The service is protected and not over-driven.** Its worker runs at MMCSS pro-audio
+   priority, so ordinary CPU load cannot delay a record past the 200 ms the driver allows; and
+   the driver does not ask for a record while the frame ring is over its limit, so a transport
+   stall is drained instead of being re-encoded and trimmed.
+10. **The report shows the margin that was needed, not only what it cost.** `worst gaps`
+   (`status.worstRenderGapMs`, `status.worstServiceGapMs`, `status.worstSendMs`) is the longest
+   interval the render path, the encoder service and a media send each held audio off for since
+   the stream started. They are measured where those producers are already observed - the audio
+   copy, the record the driver consumed, the run that finds the send slot idle again - so no
+   timer or poll was added. A lead at or above the largest of them has margin; one below it has
+   the `underruns` and `trimmed` growth to explain it.
+
 ## What software cannot settle
 
 Every software lever in this document is in place; what is left needs a sink and ears.
@@ -119,6 +141,12 @@ against the source - the one number no report line can supply.
   playing late.
 - `underruns` stays 0 at 44.1 and 48 kHz stereo with the default lead, and rises as the lead is
   shortened past what the sink needs - that curve is the per-sink measurement T31 records. The
-  counters never reset, so the run starts from a freshly loaded driver.
+  counters never reset, so the run starts from a freshly loaded driver, and the lead is floored
+  at one access unit, so the shortest a sweep can actually run is that floor. Asking for less
+  changes the reported `pacing lead` and nothing else, and the report says it was raised.
+- `worst gaps`' render and frames terms stay under the lead in steady state. A term above it
+  means the next `underruns` or `trimmed` increase is already earned; the send term can exceed
+  the lead without costing anything while the pacer sits between packets, because the transport
+  is not ours to schedule.
 - A/V offset within ±20 ms, measured on hardware with a loopback. No report line carries it:
   it compares the sink's output with the source, so it belongs to the test, not the driver.

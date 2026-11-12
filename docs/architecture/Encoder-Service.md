@@ -59,6 +59,14 @@ Rules:
   no additional kernel lock is needed.
 - `WAIT_EVENT` ticks come from the passive media work item; lifecycle events also
   release waits. `WaitLock` protects the parked request against cancellation.
+- The service worker registers with MMCSS (Pro Audio) for its whole life, falling back to
+  highest thread priority if registration fails and logging which of the two is in force.
+  The worker has one record per 10 ms to produce, and ordinary-priority load would otherwise
+  hold it off long enough for the driver to count a 200 ms gap as an underrun.
+- The driver stops waking the service while the frame ring is over its trim limit
+  (`LatencyBudget::RingLimitMs`): a record written then would only be trimmed away, so the
+  stall costs one gap instead of a gap plus an encode, and the backlog stops growing at the
+  expensive stage.
 - Registration uses an interlocked claim; `RingLock` serializes map/unmap and records
   the owning file. Control-device rundown protects IOCTL handlers against teardown.
 
