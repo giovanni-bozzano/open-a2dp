@@ -94,11 +94,15 @@ instead of stored, so reading a preference back always shows what the driver wil
 `CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
 `CodecPreferenceEndpointChannels` are obsolete and neither read nor written.
 
-The settings window groups these fields by codec - Codec (the choice and the pacing lead every
-codec shares), SBC, AAC, LDAC - so a parameter is set beside the codec it shapes; the endpoint
-format keeps its own group. Every field's box explains itself when the pointer rests on it, in
-the same terms as the row above it; those texts live with the controls in
-`tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together.
+The settings window is a table with one tab per codec - SBC, AAC, aptX, aptX HD and LDAC -
+and it opens on the tab of the codec in use, so a parameter is set beside the codec it
+shapes. Each body holds only that codec's settings and only the values that codec can play:
+the sample rate list is the codec's own rates (SBC's narrowed to what the sink advertised),
+the AAC bitrate list stops at what one media packet can carry, and the aptX tabs have no
+setting beyond the rate. The automatic switch above the table decides whether the codec is
+the tab's or the best both ends support. Every field's box explains itself when the pointer
+rests on it; those texts live with the controls in `tools/OpenA2dpConfig/main.cpp`, so a
+field and its explanation are reviewed together.
 
 ## How a change applies
 

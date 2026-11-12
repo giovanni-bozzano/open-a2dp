@@ -14,12 +14,16 @@
 #include "common/StatusReport.h"
 #include "common/Text.h"
 
+#include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/Ioctl.h>
+#include <OpenA2dp/Ldac.h>
+#include <OpenA2dp/SbcConfig.h>
 
 #include <windows.h>
 
 #include <commctrl.h>
 #include <uxtheme.h>
+#include <windowsx.h>
 
 // The standard controls need the version 6 common controls, or they draw with the classic
 // theme. The status panel paints itself and does not depend on it.
@@ -65,7 +69,7 @@ enum ControlId : int {
 	kCopyButton,
 	kDetailsCheck,
 	kStatusList,
-	kCodecCombo,
+	kAutomaticCheck,
 	kFormatCombo,
 	kBitrateCombo,
 	kBitpoolCombo,
@@ -93,20 +97,24 @@ constexpr wchar_t kUseWindowsText[] = L"Use Windows driver";
 constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
 constexpr wchar_t kFinishSwitchText[] = L"Finish driver switch";
 constexpr wchar_t kSessionGroupText[] = L"Session";
-constexpr wchar_t kCodecGroupText[] = L"Codec";
-constexpr wchar_t kSbcGroupText[] = L"SBC";
-constexpr wchar_t kAacGroupText[] = L"AAC";
-constexpr wchar_t kLdacGroupText[] = L"LDAC";
-constexpr wchar_t kFormatGroupText[] = L"Endpoint format";
-constexpr wchar_t kCodecHintText[] = L"The codec, and the pacing lead every codec shares: a shorter lead "
-									 L"is less latency, less margin against the sink running dry.";
+constexpr wchar_t kSbcTabText[] = L"SBC";
+constexpr wchar_t kAacTabText[] = L"AAC";
+constexpr wchar_t kAptxTabText[] = L"aptX";
+constexpr wchar_t kAptxHdTabText[] = L"aptX HD";
+constexpr wchar_t kLdacTabText[] = L"LDAC";
+constexpr wchar_t kAutomaticText[] = L"Automatic (the best both ends support)";
+// The widest sample-rate entry any tab can hold, so the columns do not move when the list is
+// rebuilt for another codec.
+constexpr wchar_t kWidestFormatText[] = L"96000 Hz, stereo";
+// One hint per tab, under its table: what that codec's settings do and what limits them, so
+// the body explains itself instead of repeating every tooltip.
 constexpr wchar_t kSbcHintText[] = L"The frame shape, bitpool and frames per packet, clamped to the range "
 								   L"this sink advertises.";
 constexpr wchar_t kAacHintText[] = L"The bitrate AAC aims for, capped by what one media packet carries.";
+constexpr wchar_t kAptxHintText[] = L"16-bit stereo at a fixed bitpool: the sample rate is the only setting.";
+constexpr wchar_t kAptxHdHintText[] = L"24-bit stereo at a fixed bitpool: the sample rate is the only setting.";
 constexpr wchar_t kLdacHintText[] = L"The quality LDAC encodes at. It is local: the sink is never told "
 									L"which mode is in use.";
-constexpr wchar_t kFormatHintText[] = L"Windows plays the first format the endpoint lists and ignores the "
-									 L"Sound-settings pick, so a pinned format is offered alone.";
 // A combo box is created with the height of its drop-down list, which is never resized.
 constexpr int kComboListHeight = 320;
 // Rows the session panel shows when the screen has room for them; it scrolls itself for the
@@ -114,43 +122,46 @@ constexpr int kComboListHeight = 320;
 constexpr int kMinPanelRows = 6;
 constexpr int kMaxPanelRows = 16;
 
-// The settings groups, in the order the window stacks them. The fields are split by codec, so a
-// parameter sits beside the codec it shapes instead of in one list where SBC's bitpool and AAC's
-// bitrate look equally relevant to whatever codec is in use.
-enum class FieldGroup {
-	Codec,
+// One tab per codec: the strip is the codec choice, and each body is that codec's table, so a
+// parameter sits beside the codec it shapes instead of in one list where SBC's bitpool and
+// AAC's bitrate look equally relevant to whatever codec is in use.
+enum class CodecTab {
 	Sbc,
 	Aac,
+	Aptx,
+	AptxHd,
 	Ldac,
-	Format,
 	Count,
 };
+constexpr int kTabCount = static_cast<int>(CodecTab::Count);
 
-struct GroupInfo
+// A row every tab shows: the sample rate and the pacing lead shape every codec.
+constexpr int kAllTabs = -1;
+
+struct TabInfo
 {
 	const wchar_t* caption;
 	const wchar_t* hint;
 };
 
-constexpr GroupInfo kGroupInfo[] = {
-	{kCodecGroupText, kCodecHintText},
-	{kSbcGroupText, kSbcHintText},
-	{kAacGroupText, kAacHintText},
-	{kLdacGroupText, kLdacHintText},
-	{kFormatGroupText, kFormatHintText},
+constexpr TabInfo kTabInfo[] = {
+	{kSbcTabText, kSbcHintText},
+	{kAacTabText, kAacHintText},
+	{kAptxTabText, kAptxHintText},
+	{kAptxHdTabText, kAptxHdHintText},
+	{kLdacTabText, kLdacHintText},
 };
-constexpr int kGroupCount = static_cast<int>(FieldGroup::Count);
-static_assert(ARRAYSIZE(kGroupInfo) == static_cast<size_t>(kGroupCount),
-			  "a caption and a hint for every settings group");
+static_assert(ARRAYSIZE(kTabInfo) == static_cast<size_t>(kTabCount),
+			  "a caption and a hint for every codec tab");
 
-// A label and the control it describes, in one of the two columns of its group.
+// A label and the control it describes, in one of the two columns of the table body.
 struct Field
 {
 	HWND label;
 	HWND control;
-	FieldGroup group;
+	int tab;    // CodecTab, or kAllTabs for a row every tab shows
 	int column; // 0 = left, 1 = right
-	int row;    // row inside its group
+	int row;    // row inside the body
 };
 std::vector<Field> Fields;
 
@@ -171,14 +182,6 @@ constexpr uint32_t FormatComboValue(uint32_t sampleRate, uint32_t channels)
 {
 	return sampleRate == 0 ? 0u : sampleRate * 10 + channels;
 }
-
-// Codec combo indices; stored in the item data so the order in the list can change.
-constexpr int kCodecAuto = 0;
-constexpr int kCodecSbcChoice = 1;
-constexpr int kCodecAacChoice = 2;
-constexpr int kCodecAptxChoice = 3;
-constexpr int kCodecAptxHdChoice = 4;
-constexpr int kCodecLdacChoice = 5;
 
 // What a sink is doing as far as the window can tell. The driver keeps a sink's control
 // device only while the link is up, so every listed sink is connected; a running stream is
@@ -243,7 +246,14 @@ struct SinkState
 	HCMNOTIFICATION notify = nullptr; // control-device arrival/removal
 	HWND sinkLabel = nullptr;
 	HWND sessionPanel = nullptr;
-	std::vector<HWND> hints; // one hint line per group, created with the other controls
+	// The tab the table body shows, whether a click pinned it there, and whether the stored
+	// choice is automatic rather than the tab's codec.
+	int tab = 0;
+	bool tabPinned = false;
+	bool automatic = true;
+	// The strip's rectangles, filled by ApplyLayout and hit-tested by a click.
+	std::vector<RECT> tabRects;
+	std::vector<HWND> hints; // one hint line per codec tab, created with the other controls
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
@@ -253,6 +263,10 @@ struct SinkState
 // code below, which the status refresh calls into.
 void UpdateDeviceItemLabel(HWND hwnd, size_t device, DeviceState state);
 void RefreshDeviceLabels(HWND hwnd);
+// The window's layout; the tab code below rebuilds lists and then asks for it.
+void ApplyLayout(HWND hwnd);
+// Puts the window in front of whatever the user was looking at when it opens.
+void BringToFront(HWND hwnd);
 // "name (address)", which the list, the message line and the report share.
 std::wstring SinkTitle(const std::string& reference, const std::wstring& name);
 
@@ -695,11 +709,12 @@ constexpr FieldTip kFieldTips[] = {
 	 L"The sink this window controls.\n\n"
 	 L"Every field below is stored for this sink alone, so two headsets keep their own "
 	 L"codec and their own latency - a setting made here never silently reshapes the other."},
-	{kCodecCombo,
+	{kAutomaticCheck,
 	 L"Which codec the sink may use.\n\n"
-	 L"Automatic takes the best both ends support - LDAC, then aptX HD, then aptX, then "
-	 L"AAC, then SBC - so that is what to leave it on unless a headset misbehaves. Forcing a "
-	 L"codec the sink does not advertise is refused."},
+	 L"Checked, the driver takes the best both ends support - LDAC, then aptX HD, then "
+	 L"aptX, then AAC, then SBC - so that is what to leave it on unless a headset "
+	 L"misbehaves. Unchecked, the codec of the open tab is the one the driver must use, "
+	 L"and one the sink does not advertise is refused."},
 	{kBitrateCombo,
 	 L"The bitrate the AAC encoder aims for, capped by what the media packet can carry.\n\n"
 	 L"Higher is better sound and uses more of the link; the default is the highest the "
@@ -739,10 +754,11 @@ constexpr FieldTip kFieldTips[] = {
 	 L"the link to carry - past what the link can take, that is where stutters come from. The "
 	 L"default fills the packet the MTU allows."},
 	{kFormatCombo,
-	 L"The format the endpoint offers Windows.\n\n"
-	 L"Automatic offers every format the sink accepts; pinning one makes Windows use "
-	 L"exactly it, because Windows plays the first format listed. Pinning a format the sink does "
-	 L"not support leaves nothing to play."},
+	 L"The sample rate and channel count the endpoint offers Windows, limited to the rates "
+	 L"the open tab's codec can play.\n\n"
+	 L"Automatic offers every format this codec can play; pinning one makes Windows use "
+	 L"exactly it, because Windows plays the first format listed. A rate this codec cannot "
+	 L"play is not offered, and is shown as Automatic instead of being pinned."},
 };
 
 const wchar_t* TipFor(int id)
@@ -804,12 +820,12 @@ HWND EnsureTooltip(HWND hwnd, SinkState* state)
 }
 
 // A label and its field, which the layout sizes from the label text and the combo contents.
-void CreateField(HWND hwnd, const wchar_t* text, int id, FieldGroup group, int column, int row, HFONT font)
+void CreateField(HWND hwnd, const wchar_t* text, int id, int tab, int column, int row, HFONT font)
 {
 	const HWND label = CreateChild(hwnd, L"STATIC", text, SS_LEFT, 0, 0, 10, 10, 0, font);
 	const HWND control = CreateChild(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0,
 									 10, kComboListHeight, id, font);
-	Fields.push_back({label, control, group, column, row});
+	Fields.push_back({label, control, tab, column, row});
 
 	SinkState* state = StateOf(hwnd);
 	if (state != nullptr)
@@ -890,8 +906,8 @@ void SelectComboValueOrAdd(HWND hwnd, int id, uint32_t value)
 	SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(count), 0);
 }
 
-// The tick box of the Details check box and the gap after it: the layout sizes the control
-// with them and the owner-drawn button paints it with them, so the caption is never cut off.
+// The tick box of an owner-drawn check box and the gap after it: the layout sizes the
+// control with them and the window paints it with them, so the caption is never cut off.
 int CheckSide(int textHeight)
 {
 	return textHeight - 4;
@@ -899,6 +915,197 @@ int CheckSide(int textHeight)
 int CheckTextGap(int textHeight)
 {
 	return textHeight / 2;
+}
+
+// The tab of a codec, and the codec of a tab; -1 when the value is not one of them.
+int TabOfCodec(uint32_t codec)
+{
+	switch (codec)
+	{
+	case Ioctl::kCodecSbc:
+		return static_cast<int>(CodecTab::Sbc);
+	case Ioctl::kCodecAac:
+		return static_cast<int>(CodecTab::Aac);
+	case Ioctl::kCodecAptx:
+		return static_cast<int>(CodecTab::Aptx);
+	case Ioctl::kCodecAptxHd:
+		return static_cast<int>(CodecTab::AptxHd);
+	case Ioctl::kCodecLdac:
+		return static_cast<int>(CodecTab::Ldac);
+	default:
+		return -1;
+	}
+}
+
+uint32_t CodecOfTab(int tab)
+{
+	switch (static_cast<CodecTab>(tab))
+	{
+	case CodecTab::Sbc:
+		return Ioctl::kCodecSbc;
+	case CodecTab::Aac:
+		return Ioctl::kCodecAac;
+	case CodecTab::Aptx:
+		return Ioctl::kCodecAptx;
+	case CodecTab::AptxHd:
+		return Ioctl::kCodecAptxHd;
+	default:
+		return Ioctl::kCodecLdac;
+	}
+}
+
+// The codec the table opens on: the stored choice when one is forced, otherwise the codec the
+// stream runs or the last negotiation chose, so the window starts on what is actually in use.
+int TabForState(const SinkState& state)
+{
+	if ((state.preference.flags & Ioctl::kPreferenceForceCodec) != 0)
+	{
+		const int forced = TabOfCodec(state.preference.codec);
+		if (forced >= 0)
+		{
+			return forced;
+		}
+	}
+	const int running = TabOfCodec(state.status.codec);
+	if (running >= 0)
+	{
+		return running;
+	}
+	const int negotiated = TabOfCodec(state.status.negotiatedCodec);
+	return negotiated >= 0 ? negotiated : static_cast<int>(CodecTab::Sbc);
+}
+
+// The sample rates one codec can play, in the order the endpoint prefers them, and the channel
+// counts it can carry as a mask (1 = mono, 2 = stereo). Every rate the endpoint offers is
+// measured against the codec's own limit; SBC's is the one advertisement the status reports per
+// codec, so that tab is narrowed to what the sink itself listed.
+int TabFormats(int tab, const Ioctl::Status& status, uint32_t* rates, uint32_t& channelMask)
+{
+	int count = 0;
+	channelMask = 3;
+	for (uint32_t i = 0; i < Ioctl::kEndpointRateCount; ++i)
+	{
+		const uint32_t rate = Ioctl::kEndpointRates[i];
+		bool plays = false;
+		if (static_cast<CodecTab>(tab) == CodecTab::Sbc)
+		{
+			plays = status.sinkRates == 0 ||
+					(status.sinkRates & SbcConfig::AdvertisedRateBit(rate)) != 0;
+		}
+		else if (static_cast<CodecTab>(tab) == CodecTab::Aac)
+		{
+			plays = AacConfig::EncoderSupportsRate(rate);
+		}
+		else if (static_cast<CodecTab>(tab) == CodecTab::Ldac)
+		{
+			// LDAC runs stereo only, so its 88.2 and 96 kHz fit where the lower rates do.
+			plays = Ldac::RateBit(rate) != 0;
+			channelMask = 2;
+		}
+		else
+		{
+			// aptX and aptX HD are 44.1 and 48 kHz stereo and have no other rate.
+			plays = rate == 44100 || rate == 48000;
+			channelMask = 2;
+		}
+		if (plays)
+		{
+			rates[count++] = rate;
+		}
+	}
+	if (static_cast<CodecTab>(tab) == CodecTab::Sbc && status.sinkChannels != 0)
+	{
+		channelMask = status.sinkChannels;
+	}
+	return count;
+}
+
+// Builds the lists whose entries depend on the codec and on the link: the sample rates this
+// codec can play, and the AAC bitrates one media packet can carry. A value the codec cannot use
+// is never offered, so the table only shows what Apply can actually store.
+void RebuildTabLists(HWND hwnd)
+{
+	const SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	uint32_t rates[8] = {};
+	uint32_t channelMask = 3;
+	const int count = TabFormats(state->tab, state->status, rates, channelMask);
+	SendMessageW(GetDlgItem(hwnd, kFormatCombo), CB_RESETCONTENT, 0, 0);
+	AddComboItem(hwnd, kFormatCombo, L"Automatic (every format this codec plays)", 0);
+	for (int i = 0; i < count; ++i)
+	{
+		const uint32_t rate = rates[i];
+		if ((channelMask & 1) != 0)
+		{
+			AddComboItem(hwnd, kFormatCombo, Format(L"%u Hz, mono", rate).c_str(),
+						 FormatComboValue(rate, 1));
+		}
+		if ((channelMask & 2) != 0)
+		{
+			AddComboItem(hwnd, kFormatCombo, Format(L"%u Hz, stereo", rate).c_str(),
+						 FormatComboValue(rate, 2));
+		}
+	}
+
+	SendMessageW(GetDlgItem(hwnd, kBitrateCombo), CB_RESETCONTENT, 0, 0);
+	AddComboItem(hwnd, kBitrateCombo, L"Highest the sink accepts", 0);
+	for (size_t i = 0; i < AacConfig::kSupportedBitrateCount; ++i)
+	{
+		const uint32_t bitrate = AacConfig::kSupportedBitrates[i];
+		if (state->status.bitrateLimit != 0 && bitrate > state->status.bitrateLimit)
+		{
+			continue;
+		}
+		AddComboItem(hwnd, kBitrateCombo, Format(L"%u kbps", bitrate / 1000).c_str(), bitrate);
+	}
+}
+
+// Shows the stored values in the controls. The sample rate falls back to the automatic entry
+// when the pinned format is not one the open codec can play, which is the only line of the
+// table whose stored value a codec can rule out.
+void SelectPreferenceValues(HWND hwnd)
+{
+	const SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	const Ioctl::Preference& preference = state->preference;
+	SelectComboValue(hwnd, kBitrateCombo, preference.aacBitrate);
+	SelectComboValue(hwnd, kBlocksCombo, preference.sbcBlocks);
+	SelectComboValue(hwnd, kSubbandsCombo, preference.sbcSubbands);
+	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
+	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
+	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
+	SelectComboValueOrAdd(hwnd, kSbcFramesCombo, preference.sbcFramesPerPacket);
+	SelectComboValue(hwnd, kLdacQualityCombo, preference.ldacQuality);
+	SelectComboValue(hwnd, kFormatCombo,
+					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
+}
+
+// Opens one codec's table. A click pins the strip there, so the next negotiation cannot swap
+// the tab out from under a setting being changed; until then the automatic switch follows the
+// codec the stream runs.
+void SelectTab(HWND hwnd, int tab, bool clicked)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr || tab < 0 || tab >= kTabCount)
+	{
+		return;
+	}
+	state->tab = tab;
+	if (clicked)
+	{
+		state->tabPinned = true;
+	}
+	RebuildTabLists(hwnd);
+	SelectPreferenceValues(hwnd);
+	ApplyLayout(hwnd);
+	// The body's rows and the strip are both replaced, so the whole client area is repainted.
+	InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 // Sizes and places every control from the strings it holds. The window has no scroll bar of
@@ -925,7 +1132,9 @@ void ApplyLayout(HWND hwnd)
 	const int arrow = GetSystemMetrics(SM_CXVSCROLL) + 6;
 	const int captionHeight = textHeight + gap;
 
-	// Each column is as wide as its widest label plus its widest combo content.
+	// Each column is as wide as its widest label plus its widest combo content. The other
+	// codecs' rows count too, so the columns do not move when another tab is opened.
+	const HWND formatCombo = GetDlgItem(hwnd, kFormatCombo);
 	int labelWidth[2] = {0, 0};
 	int fieldWidth[2] = {0, 0};
 	for (const Field& field : Fields)
@@ -933,7 +1142,11 @@ void ApplyLayout(HWND hwnd)
 		wchar_t text[256] = {};
 		GetWindowTextW(field.label, text, ARRAYSIZE(text));
 		labelWidth[field.column] = MaxOf(labelWidth[field.column], TextWidth(dc, text));
-		fieldWidth[field.column] = MaxOf(fieldWidth[field.column], ComboContentWidth(dc, field.control) + arrow);
+		// The sample rate list is rebuilt per codec, so its width comes from the widest entry
+		// any tab can hold instead of from the one the open tab happens to show.
+		const int content = field.control == formatCombo ? TextWidth(dc, kWidestFormatText)
+														 : ComboContentWidth(dc, field.control);
+		fieldWidth[field.column] = MaxOf(fieldWidth[field.column], content + arrow);
 	}
 	const int columnGap = gap * 3;
 	const int columnWidth[2] = {labelWidth[0] + gap + fieldWidth[0], labelWidth[1] + gap + fieldWidth[1]};
@@ -957,7 +1170,18 @@ void ApplyLayout(HWND hwnd)
 								  TextWidth(dc, kFinishSwitchText)) + gap * 4;
 	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + margin;
 
-	int width = contentWidth + (margin + inset) * 2;
+	// The tab strip and the automatic switch are as wide as their own captions.
+	int tabWidth[kTabCount] = {};
+	int stripWidth = 0;
+	for (int tab = 0; tab < kTabCount; ++tab)
+	{
+		tabWidth[tab] = TextWidth(dc, kTabInfo[tab].caption) + gap * 3;
+		stripWidth += tabWidth[tab];
+	}
+	const int automaticWidth =
+			CheckSide(textHeight) + CheckTextGap(textHeight) + TextWidth(dc, kAutomaticText) + 4;
+
+	int width = MaxOf(contentWidth, automaticWidth) + (margin + inset) * 2;
 	if (headerWidth > width)
 	{
 		width = headerWidth;
@@ -966,39 +1190,41 @@ void ApplyLayout(HWND hwnd)
 	{
 		width = bottomWidth;
 	}
+	if (stripWidth + margin * 2 > width)
+	{
+		width = stripWidth + margin * 2;
+	}
 	const int groupLeft = margin;
 	const int groupWidth = width - margin * 2;
 	const int innerLeft = groupLeft + inset;
 	const int innerWidth = groupWidth - inset * 2;
 
-	// Rows and hint heights come from the fields and the group table themselves, so moving a
-	// setting to another group does not need a height to be corrected by hand.
-	int rows[kGroupCount] = {};
-	int hintHeight[kGroupCount] = {};
-	int groupHeight[kGroupCount] = {};
-	for (int group = 0; group < kGroupCount; ++group)
+	// The body is as tall as the longest tab's table and its hint, so opening another tab never
+	// moves the window the user placed.
+	int rows = 1; // the automatic switch on its own
+	int hintHeight = 0;
+	for (int tab = 0; tab < kTabCount; ++tab)
 	{
-		rows[group] = 1;
-		hintHeight[group] = MaxOf(TextHeight(dc, kGroupInfo[group].hint, innerWidth), textHeight);
-	}
-	for (const Field& field : Fields)
-	{
-		const int group = static_cast<int>(field.group);
-		if (field.row + 1 > rows[group])
+		int tabRows = 1;
+		for (const Field& field : Fields)
 		{
-			rows[group] = field.row + 1;
+			if ((field.tab == tab || field.tab == kAllTabs) && field.row + 1 > tabRows)
+			{
+				tabRows = field.row + 1;
+			}
 		}
+		rows = MaxOf(rows, tabRows);
+		hintHeight = MaxOf(hintHeight, TextHeight(dc, kTabInfo[tab].hint, innerWidth));
 	}
+	hintHeight = MaxOf(hintHeight, textHeight);
 	const int bottomHeight = MaxOf(applyHeight, textHeight);
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
+	const int tabHeight = textHeight + gap;
+	const int bodyHeight = inset + rows * rowHeight + hintHeight + gap;
 	int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + bottomHeight + margin;
-	for (int group = 0; group < kGroupCount; ++group)
-	{
-		groupHeight[group] = captionHeight + rows[group] * rowHeight + hintHeight[group] + gap;
-		fixedHeight += groupHeight[group] + gap;
-	}
+	fixedHeight += tabHeight + bodyHeight + gap;
 	// The border and the title bar count too, or the window as a whole would hang off the
 	// screen even though its client area fits.
 	RECT frame = {0, 0, 100, 100};
@@ -1019,14 +1245,9 @@ void ApplyLayout(HWND hwnd)
 	const int headerTop = margin;
 	const int sessionTop = headerTop + rowHeight + gap * 2;
 	const int sessionHeight = captionHeight + panelHeight + gap;
-	int groupTop[kGroupCount] = {};
-	int groupBelow = sessionTop + sessionHeight + gap;
-	for (int group = 0; group < kGroupCount; ++group)
-	{
-		groupTop[group] = groupBelow;
-		groupBelow += groupHeight[group] + gap;
-	}
-	const int bottomTop = groupBelow;
+	const int stripTop = sessionTop + sessionHeight + gap;
+	const int bodyTop = stripTop + tabHeight;
+	const int bottomTop = bodyTop + bodyHeight + gap;
 	const int height = bottomTop + bottomHeight + margin;
 
 	// Header row, with the sink picker filling the space the buttons leave.
@@ -1041,37 +1262,54 @@ void ApplyLayout(HWND hwnd)
 	// the controls beside it are given the height it settled at instead of a guessed one.
 	RECT comboRect = {};
 	const int controlHeight = GetWindowRect(sinkCombo, &comboRect) != FALSE && comboRect.bottom > comboRect.top
-							  ? static_cast<int>(comboRect.bottom - comboRect.top)
-							  : rowHeight;
+								  ? static_cast<int>(comboRect.bottom - comboRect.top)
+								  : rowHeight;
 	Place(GetDlgItem(hwnd, kDetailsCheck), detailsLeft, headerTop, detailsWidth, controlHeight);
 	Place(GetDlgItem(hwnd, kCopyButton), copyLeft, headerTop, copyWidth, controlHeight);
 	Place(GetDlgItem(hwnd, kRefreshButton), refreshLeft, headerTop, refreshWidth, controlHeight);
 
-	// The session group and one group per codec: the window draws the frames, so only the
-	// rectangles are kept.
+	// The session frame, and the one frame the table body shares with its tab strip. The window
+	// draws both, so only the rectangles are kept; the body has no caption, because the tabs
+	// sit on its top line.
 	state->groups.clear();
 	state->groups.push_back({groupLeft, sessionTop, groupLeft + groupWidth, sessionTop + sessionHeight,
-						  kSessionGroupText});
-	for (int group = 0; group < kGroupCount; ++group)
-	{
-		state->groups.push_back({groupLeft, groupTop[group], groupLeft + groupWidth,
-								 groupTop[group] + groupHeight[group], kGroupInfo[group].caption});
-	}
+							  kSessionGroupText});
+	state->groups.push_back({groupLeft, bodyTop, groupLeft + groupWidth, bodyTop + bodyHeight, nullptr});
 	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
 
-	// One row per field: label first, then the combo it describes, inside its own group.
+	// The strip runs left to right on the body's top line; a click inside one of these
+	// rectangles opens that codec's table.
+	state->tabRects.clear();
+	int tabLeft = groupLeft;
+	for (int tab = 0; tab < kTabCount; ++tab)
+	{
+		state->tabRects.push_back({tabLeft, stripTop, tabLeft + tabWidth[tab], bodyTop});
+		tabLeft += tabWidth[tab];
+	}
+
+	// The top of the body is the same on every tab; the rows below it belong to the open codec,
+	// so the other tabs' controls are hidden rather than destroyed - their stored values keep.
+	const int contentTop = bodyTop + inset;
+	Place(GetDlgItem(hwnd, kAutomaticCheck), innerLeft, contentTop, automaticWidth, controlHeight);
 	for (const Field& field : Fields)
 	{
-		const int group = static_cast<int>(field.group);
-		const int top = groupTop[group] + captionHeight + field.row * rowHeight;
+		const bool visible = field.tab == kAllTabs || field.tab == state->tab;
+		ShowWindow(field.label, visible ? SW_SHOW : SW_HIDE);
+		ShowWindow(field.control, visible ? SW_SHOW : SW_HIDE);
+		if (!visible)
+		{
+			continue;
+		}
+		const int top = contentTop + field.row * rowHeight;
 		const int left = innerLeft + (field.column == 0 ? 0 : columnWidth[0] + columnGap);
 		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight);
-		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column], kComboListHeight);
+		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column],
+			  kComboListHeight);
 	}
-	for (int group = 0; group < kGroupCount && group < static_cast<int>(state->hints.size()); ++group)
+	for (int tab = 0; tab < kTabCount && tab < static_cast<int>(state->hints.size()); ++tab)
 	{
-		Place(state->hints[group], innerLeft, groupTop[group] + captionHeight + rows[group] * rowHeight,
-			  innerWidth, hintHeight[group]);
+		Place(state->hints[tab], innerLeft, contentTop + rows * rowHeight, innerWidth, hintHeight);
+		ShowWindow(state->hints[tab], tab == state->tab ? SW_SHOW : SW_HIDE);
 	}
 
 	// Apply sits under the right edge, the driver switch just left of it, and the outcome of the
@@ -1127,8 +1365,8 @@ void CreateControls(HWND hwnd)
 {
 	SinkState* state = StateOf(hwnd);
 	const HFONT font = state != nullptr && state->font != nullptr
-					   ? state->font
-					   : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+						   ? state->font
+						   : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 	Fields.clear();
 	// The fields' tooltips come from one window, which has to exist before the fields do.
 	EnsureTooltip(hwnd, state);
@@ -1156,25 +1394,33 @@ void CreateControls(HWND hwnd)
 	{
 		state->sessionPanel = GetDlgItem(hwnd, kStatusList);
 	}
-	// One group per codec, so a preference sits beside the codec it shapes; the pacing lead is
-	// with the codec choice because every codec uses it.
-	CreateField(hwnd, L"Codec", kCodecCombo, FieldGroup::Codec, 0, 0, font);
-	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, FieldGroup::Codec, 1, 0, font);
-	CreateField(hwnd, L"Bitpool", kBitpoolCombo, FieldGroup::Sbc, 0, 0, font);
-	CreateField(hwnd, L"Blocks", kBlocksCombo, FieldGroup::Sbc, 1, 0, font);
-	CreateField(hwnd, L"Subbands", kSubbandsCombo, FieldGroup::Sbc, 0, 1, font);
-	CreateField(hwnd, L"Allocation", kAllocationCombo, FieldGroup::Sbc, 1, 1, font);
-	CreateField(hwnd, L"Frames per packet", kSbcFramesCombo, FieldGroup::Sbc, 0, 2, font);
-	CreateField(hwnd, L"Bitrate", kBitrateCombo, FieldGroup::Aac, 0, 0, font);
-	CreateField(hwnd, L"Quality", kLdacQualityCombo, FieldGroup::Ldac, 0, 0, font);
-	CreateField(hwnd, L"PCM format", kFormatCombo, FieldGroup::Format, 0, 0, font);
+
+	// The top of every tab body: the automatic switch, then the two settings every codec
+	// shares. The rows below them belong to the open tab's codec alone, so a box is only
+	// offered where it changes something.
+	const HWND automatic = CreateChild(hwnd, L"BUTTON", kAutomaticText, BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0,
+									  10, 10, kAutomaticCheck, font);
 	if (state != nullptr)
 	{
-		state->hints.assign(kGroupCount, nullptr);
-		for (int group = 0; group < kGroupCount; ++group)
+		AddTooltip(state->tooltip, hwnd, automatic, TipFor(kAutomaticCheck));
+	}
+	CreateField(hwnd, L"Sample rate", kFormatCombo, kAllTabs, 0, 1, font);
+	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, kAllTabs, 1, 1, font);
+	CreateField(hwnd, L"Bitpool", kBitpoolCombo, static_cast<int>(CodecTab::Sbc), 0, 2, font);
+	CreateField(hwnd, L"Blocks", kBlocksCombo, static_cast<int>(CodecTab::Sbc), 1, 2, font);
+	CreateField(hwnd, L"Subbands", kSubbandsCombo, static_cast<int>(CodecTab::Sbc), 0, 3, font);
+	CreateField(hwnd, L"Allocation", kAllocationCombo, static_cast<int>(CodecTab::Sbc), 1, 3, font);
+	CreateField(hwnd, L"Frames per packet", kSbcFramesCombo, static_cast<int>(CodecTab::Sbc), 0, 4, font);
+	CreateField(hwnd, L"Bitrate", kBitrateCombo, static_cast<int>(CodecTab::Aac), 0, 2, font);
+	CreateField(hwnd, L"Quality", kLdacQualityCombo, static_cast<int>(CodecTab::Ldac), 0, 2, font);
+	if (state != nullptr)
+	{
+		// One hint line per tab, under its table; the open tab's is the only one shown.
+		state->hints.assign(kTabCount, nullptr);
+		for (int tab = 0; tab < kTabCount; ++tab)
 		{
-			state->hints[group] =
-					CreateChild(hwnd, L"STATIC", kGroupInfo[group].hint, SS_LEFT, 0, 0, 10, 10, 0, font);
+			state->hints[tab] =
+					CreateChild(hwnd, L"STATIC", kTabInfo[tab].hint, SS_LEFT, 0, 0, 10, 10, 0, font);
 		}
 	}
 
@@ -1184,34 +1430,14 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
 
-	// Worst to best, so the better format is always the lower entry: rate first, then channels.
-	AddComboItem(hwnd, kFormatCombo, L"Automatic (every sink format)", 0);
-	for (const uint32_t rate : {16000u, 32000u, 44100u, 48000u, 88200u, 96000u})
-	{
-		AddComboItem(hwnd, kFormatCombo, Format(L"%u Hz, mono", rate).c_str(), FormatComboValue(rate, 1));
-		AddComboItem(hwnd, kFormatCombo, Format(L"%u Hz, stereo", rate).c_str(), FormatComboValue(rate, 2));
-	}
-
-	AddComboItem(hwnd, kCodecCombo, L"Automatic (LDAC, aptX HD, aptX, AAC, then SBC)", kCodecAuto);
-	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);
-	AddComboItem(hwnd, kCodecCombo, L"AAC only", kCodecAacChoice);
-	AddComboItem(hwnd, kCodecCombo, L"aptX only", kCodecAptxChoice);
-	AddComboItem(hwnd, kCodecCombo, L"aptX HD only", kCodecAptxHdChoice);
-	AddComboItem(hwnd, kCodecCombo, L"LDAC only", kCodecLdacChoice);
-
-	AddComboItem(hwnd, kBitrateCombo, L"Highest the sink accepts", 0);
-	AddComboItem(hwnd, kBitrateCombo, L"96 kbps", 96000);
-	AddComboItem(hwnd, kBitrateCombo, L"128 kbps", 128000);
-	AddComboItem(hwnd, kBitrateCombo, L"160 kbps", 160000);
-	AddComboItem(hwnd, kBitrateCombo, L"192 kbps", 192000);
-	AddComboItem(hwnd, kBitrateCombo, L"256 kbps", 256000);
-	AddComboItem(hwnd, kBitrateCombo, L"320 kbps", 320000);
+	// The sample rate and AAC bitrate lists depend on the codec and on the link, so
+	// RebuildTabLists builds them; the rest are fixed ladders.
 
 	// A ladder of the values a sink is normally driven at; the sink clamps it to its own
 	// range, and a stored value outside the ladder is added when the preference is loaded.
 	AddComboItem(hwnd, kBitpoolCombo, L"Automatic (sink's choice)", 0);
 	for (const uint32_t bitpool : {2u, 8u, 16u, 24u, 32u, 35u, 40u, 45u, 50u, 53u, 60u, 70u, 80u, 100u, 120u,
-						  150u, 200u, 250u})
+								  150u, 200u, 250u})
 	{
 		AddComboItem(hwnd, kBitpoolCombo, Format(L"%u", bitpool).c_str(), bitpool);
 	}
@@ -1251,56 +1477,35 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kLdacQualityCombo, L"Standard (660 kbps)", 1);
 	AddComboItem(hwnd, kLdacQualityCombo, L"Mobile (330 kbps)", 2);
 
-	for (const int id : {kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo, kSubbandsCombo,
-						 kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo, kLdacQualityCombo})
+	for (const int id : {kBitpoolCombo, kBlocksCombo, kSubbandsCombo, kAllocationCombo, kPacingLeadCombo,
+						 kSbcFramesCombo, kLdacQualityCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
+	// The first open rebuilds the codec-dependent lists from the sink's own advertisement.
+	RebuildTabLists(hwnd);
 	ApplyLayout(hwnd);
 }
 
 // The controls show the stored preference, so a value the driver refused or clamped is
-// visible as soon as the window reads it back.
+// visible as soon as the window reads it back. The table opens on the codec in use, which is
+// what makes the window start on the settings the sink actually runs.
 void LoadPreferenceIntoControls(HWND hwnd)
 {
-	const SinkState* state = StateOf(hwnd);
+	SinkState* state = StateOf(hwnd);
 	if (state == nullptr)
 	{
 		return;
 	}
-	const Ioctl::Preference& preference = state->preference;
-	int codec = kCodecSbcChoice;
-	if ((preference.flags & Ioctl::kPreferenceForceCodec) == 0)
-	{
-		codec = kCodecAuto;
-	}
-	else if (preference.codec == Ioctl::kCodecAac)
-	{
-		codec = kCodecAacChoice;
-	}
-	else if (preference.codec == Ioctl::kCodecAptx)
-	{
-		codec = kCodecAptxChoice;
-	}
-	else if (preference.codec == Ioctl::kCodecAptxHd)
-	{
-		codec = kCodecAptxHdChoice;
-	}
-	else if (preference.codec == Ioctl::kCodecLdac)
-	{
-		codec = kCodecLdacChoice;
-	}
-	SelectComboValue(hwnd, kCodecCombo, static_cast<uint32_t>(codec));
-	SelectComboValue(hwnd, kBitrateCombo, preference.aacBitrate);
-	SelectComboValue(hwnd, kBlocksCombo, preference.sbcBlocks);
-	SelectComboValue(hwnd, kSubbandsCombo, preference.sbcSubbands);
-	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
-	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
-	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
-	SelectComboValueOrAdd(hwnd, kSbcFramesCombo, preference.sbcFramesPerPacket);
-	SelectComboValue(hwnd, kLdacQualityCombo, preference.ldacQuality);
-	SelectComboValue(hwnd, kFormatCombo,
-					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
+	state->automatic = (state->preference.flags & Ioctl::kPreferenceForceCodec) == 0;
+	SendMessageW(GetDlgItem(hwnd, kAutomaticCheck), BM_SETCHECK,
+				 state->automatic ? BST_CHECKED : BST_UNCHECKED, 0);
+	state->tab = TabForState(*state);
+	state->tabPinned = false;
+	RebuildTabLists(hwnd);
+	SelectPreferenceValues(hwnd);
+	ApplyLayout(hwnd);
+	InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 void CloseControl(SinkState& state)
@@ -1484,6 +1689,16 @@ void RefreshStatus(HWND hwnd)
 		return;
 	}
 	state->status = status;
+	// With the automatic switch on the table follows the codec the stream runs; a tab the
+	// user picked stays where it is.
+	if (state->automatic && !state->tabPinned)
+	{
+		const int tab = TabOfCodec(status.codec != 0 ? status.codec : status.negotiatedCodec);
+		if (tab >= 0 && tab != state->tab)
+		{
+			SelectTab(hwnd, tab, false);
+		}
+	}
 	RefreshStatusView(hwnd);
 }
 
@@ -1754,14 +1969,10 @@ void ApplySettings(HWND hwnd)
 
 	// Start from the stored preference so a field the window does not expose is kept.
 	Ioctl::Preference preference = state->preference;
-	const uint32_t codec = ComboValue(hwnd, kCodecCombo);
-	preference.flags = codec == kCodecAuto ? 0 : Ioctl::kPreferenceForceCodec;
-	preference.codec = codec == kCodecLdacChoice   ? Ioctl::kCodecLdac
-		: codec == kCodecAacChoice   ? Ioctl::kCodecAac
-		: codec == kCodecAptxChoice   ? Ioctl::kCodecAptx
-		: codec == kCodecAptxHdChoice ? Ioctl::kCodecAptxHd
-		: codec == kCodecSbcChoice     ? Ioctl::kCodecSbc
-													: 0;
+	// The automatic switch decides whether a codec is forced at all; the open tab is the
+	// codec that is forced when it is off.
+	preference.flags = state->automatic ? 0 : Ioctl::kPreferenceForceCodec;
+	preference.codec = state->automatic ? 0 : CodecOfTab(state->tab);
 	preference.aacBitrate = ComboValue(hwnd, kBitrateCombo);
 	preference.sbcBitpool = ComboValue(hwnd, kBitpoolCombo);
 	preference.sbcBlocks = ComboValue(hwnd, kBlocksCombo);
@@ -1832,12 +2043,14 @@ void ApplyDarkControls(HWND hwnd)
 		return;
 	}
 	EnumChildWindows(hwnd, UnthemeTextControl, 0);
-	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo,
-				 kBlocksCombo, kSubbandsCombo,						 kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo, kLdacQualityCombo})
+	for (const int id : {kSinkCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo,
+						 kSubbandsCombo, kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo,
+						 kLdacQualityCombo})
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}
-	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kDetailsCheck})
+	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kDetailsCheck,
+						 kAutomaticCheck})
 	{
 		// Owner-drawn, because a themed or classic button paints its own face from the light
 		// system colours; the window then keeps the check box's state itself.
@@ -1853,7 +2066,7 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 {
 	const HDC dc = item.hDC;
 	const Colors& colors = ThemeColors();
-	const bool checkbox = item.CtlID == kDetailsCheck;
+	const bool checkbox = item.CtlID == kDetailsCheck || item.CtlID == kAutomaticCheck;
 	const bool pressed = (item.itemState & ODS_SELECTED) != 0;
 	const bool disabled = (item.itemState & ODS_DISABLED) != 0;
 
@@ -1881,7 +2094,7 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 		bool checked = false;
 		if (const SinkState* state = StateOf(GetParent(item.hwndItem)); state != nullptr)
 		{
-			checked = state->details;
+			checked = item.CtlID == kDetailsCheck ? state->details : state->automatic;
 		}
 		const int side = CheckSide(textHeight);
 		RECT glyph = {box.left, box.top + (box.bottom - box.top - side) / 2, box.left + side, 0};
@@ -1922,6 +2135,45 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 	{
 		SelectObject(dc, previousFont);
 	}
+}
+
+// The codec tabs, drawn on the body frame's top line: the open one is filled with the window's
+// own background so the line passes behind it, the way a group caption sits on its own frame.
+void PaintTabs(HWND hwnd, HDC dc)
+{
+	const SinkState* state = StateOf(hwnd);
+	if (state == nullptr || state->tabRects.empty())
+	{
+		return;
+	}
+	const Colors& colors = ThemeColors();
+	if (state->font != nullptr)
+	{
+		SelectObject(dc, state->font);
+	}
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, colors.text);
+	const HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
+	const HGDIOBJ previousPen = SelectObject(dc, pen);
+	for (int tab = 0; tab < kTabCount && tab < static_cast<int>(state->tabRects.size()); ++tab)
+	{
+		RECT box = state->tabRects[tab];
+		if (tab != state->tab)
+		{
+			// A closed tab is only its caption, resting on the body's top line.
+			DrawTextW(dc, kTabInfo[tab].caption, -1, &box, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+			continue;
+		}
+		box.bottom += 1; // cover the body frame's own line
+		FillRect(dc, &box, BackgroundBrush());
+		MoveToEx(dc, box.left, box.bottom, nullptr);
+		LineTo(dc, box.left, box.top);
+		LineTo(dc, box.right, box.top);
+		LineTo(dc, box.right, box.bottom);
+		DrawTextW(dc, kTabInfo[tab].caption, -1, &box, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+	}
+	SelectObject(dc, previousPen);
+	DeleteObject(pen);
 }
 
 LRESULT OnEraseBackground(HWND hwnd, HDC dc)
@@ -1978,6 +2230,11 @@ void PaintGroups(HWND hwnd, HDC dc)
 	for (const GroupFrame& group : state->groups)
 	{
 		Rectangle(dc, group.rect.left, group.rect.top + textHeight / 2, group.rect.right, group.rect.bottom);
+		if (group.caption == nullptr)
+		{
+			// The table body has no caption: its tabs are drawn on the same line instead.
+			continue;
+		}
 		SIZE size = {};
 		GetTextExtentPoint32W(dc, group.caption, static_cast<int>(wcslen(group.caption)), &size);
 		RECT caption = {group.rect.left + textHeight / 2, group.rect.top,
@@ -2089,6 +2346,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 			}
 			return 0;
 		}
+		if (id == kAutomaticCheck && notification == BN_CLICKED)
+		{
+			SinkState* state = StateOf(hwnd);
+			if (state != nullptr)
+			{
+				state->automatic = !state->automatic;
+				// The dark theme's switch is owner-drawn and keeps no state of its own; the
+				// window's flag is what both themes draw from.
+				SendMessageW(GetDlgItem(hwnd, kAutomaticCheck), BM_SETCHECK,
+							 state->automatic ? BST_CHECKED : BST_UNCHECKED, 0);
+				InvalidateRect(GetDlgItem(hwnd, kAutomaticCheck), nullptr, TRUE);
+			}
+			return 0;
+		}
 		if (id == kApplyButton && notification == BN_CLICKED)
 		{
 			ApplySettings(hwnd);
@@ -2132,6 +2403,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 	case kDeviceChangeMessage:
 		ReloadDevices(hwnd);
 		return 0;
+	case WM_LBUTTONDOWN:
+	{
+		const SinkState* state = StateOf(hwnd);
+		const POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+		if (state != nullptr)
+		{
+			for (int tab = 0; tab < static_cast<int>(state->tabRects.size()); ++tab)
+			{
+				if (PtInRect(&state->tabRects[tab], point) != FALSE)
+				{
+					SelectTab(hwnd, tab, true);
+					return 0;
+				}
+			}
+		}
+		break;
+	}
 	case WM_DRAWITEM:
 		PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
 		return TRUE;
@@ -2140,6 +2428,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		PAINTSTRUCT paint = {};
 		const HDC dc = BeginPaint(hwnd, &paint);
 		PaintGroups(hwnd, dc);
+		PaintTabs(hwnd, dc);
 		EndPaint(hwnd, &paint);
 		return 0;
 	}
@@ -2181,6 +2470,31 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		break;
 	}
 	return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+// Puts the window in front of whatever the user was looking at. A process started by another
+// one - a terminal, a script, or the elevation path, which starts it from the AppInfo service -
+// is not the foreground process, so Windows shows its window without activating it and it
+// appears behind the windows already open. The foreground thread's input is joined for the one
+// call that moves the window, which is the documented way for a program that has just been
+// started to take the user's attention.
+void BringToFront(HWND hwnd)
+{
+	if (GetForegroundWindow() == hwnd)
+	{
+		return;
+	}
+	const DWORD foreground = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+	const DWORD current = GetCurrentThreadId();
+	const bool joined = foreground != 0 && foreground != current &&
+						AttachThreadInput(current, foreground, TRUE) != FALSE;
+	BringWindowToTop(hwnd);
+	SetForegroundWindow(hwnd);
+	SetActiveWindow(hwnd);
+	if (joined)
+	{
+		AttachThreadInput(current, foreground, FALSE);
+	}
 }
 
 } // namespace
@@ -2228,6 +2542,7 @@ int Run(HINSTANCE instance, int showCommand)
 	ApplyDarkControls(hwnd);
 	ShowWindow(hwnd, showCommand);
 	UpdateWindow(hwnd);
+	BringToFront(hwnd);
 
 	MSG message = {};
 	while (GetMessageW(&message, nullptr, 0, 0) > 0)
