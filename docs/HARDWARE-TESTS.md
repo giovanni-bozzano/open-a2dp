@@ -100,8 +100,10 @@ the sink has not reconnected yet, the script says so - reconnect it and rerun.
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
 ## 2. Tools used in the steps
-- `OpenA2dpCtl status|list|codec <auto|sbc|aac|aptx|aptxhd> [--bitpool n] [--bitrate bps]
-  [--blocks n] [--subbands n] [--allocation loudness|snr] [--preroll ms] [--frames n]`
+- `OpenA2dpCtl status|list|codec <auto|sbc|aac|aptx|aptxhd|ldac> [--bitrate bps] [--bitpool n]
+  [--blocks n] [--subbands n] [--allocation loudness|snr] [--preroll ms] [--frames n]
+  [--ldac-quality high|standard|mobile]`, and
+  `OpenA2dpCtl format <codec> [auto|<rate> <1|2>]`
   (elevated). `status` shows AVDTP state, media state, codec, encoder registration and
   counters; the latency lines are `latency`, `latency peak`, `pacing lead`, `buffered`,
   `underruns` and `trimmed` (see [Latency](architecture/Latency.md)).
@@ -250,13 +252,11 @@ it), reattach.
 **T21 Codec preference persistence (S/A)**
 1. `OpenA2dpCtl codec sbc`, then disable and enable the OpenA2dp device (or reboot).
    Connect and play.
-- Expect: `codec preference SBC restored from the registry` when the device starts, then
+- Expect: `settings restored from ...\devices\<address>.ini` when the device starts, then
   `configured codec SBC` with no further `codec` command.
 2. `OpenA2dpCtl codec auto`; repeat: AAC where an encoder is registered, SBC otherwise.
-- The value lives under
-  `HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters\Devices\<address>`
-  (`CodecPreferenceFlags`, `CodecPreferenceCodec`, `CodecPreferenceSbcBitpool`); deleting
-  that subkey returns the sink to auto.
+- The value lives in that sink's file, `%ProgramData%\OpenA2dp\devices\<12 hex address>.ini`,
+  under `[general] codec`; deleting the file returns the sink to auto.
 
 **T22 Codec parameters (S/A)**
 1. `OpenA2dpCtl status` lists `SBC bitpool` or `AAC bitrate` once one is stored.
@@ -309,18 +309,18 @@ it), reattach.
   resumes when the player reopens its stream.
 3. *Advanced* now offers that one format only. Choose `16 bit, 44100 Hz` there and play:
    the stream keeps running at 48 kHz.
-4. Reconnect the sink: `Config: endpoint format 48000 Hz 2 ch restored from the registry`
+4. Reconnect the sink: `Config: settings restored from ...\devices\<address>.ini`
    and `endpoint formats 48000 Hz 2 ch 16-bit` appear before Windows opens anything.
-5. `format 48000 1`, play (S).
+5. `format sbc 48000 1`, play (S).
 - Expect `endpoint format 48000 Hz 1 ch 16-bit`, `configured codec SBC` with `mode 0` and audible
   mono audio; `status` shows one channel. Repeat on A: AAC negotiates mono.
 6. On A with AAC: the service log shows `[svc] stream start: 48000 Hz, 1 ch`, `status`
    reports the 48 kHz bitrate, audio is audible.
-7. `format auto`: every sink format is listed again, `status` reads
+7. `format sbc auto`: every sink format is listed again, `status` reads
    `endpoint format automatic (every sink format)`, and the *Advanced* list grows back.
    A WASAPI exclusive-mode player can open any of them; with a pinned format it is limited
    to that one.
-8. `format 48000 2` on a 44.1-only sink is refused with the advertised masks, nothing is
+8. `format sbc 48000 2` on a 44.1-only sink is refused with the advertised masks, nothing is
    stored, and the endpoint keeps its previous list.
 9. `OpenA2dpCtl reset`: `codec preference reset to auto (aptX HD > aptX > AAC > SBC), endpoint format reset
    to automatic (every format the sink supports)`, and both settings stay there after a
@@ -386,7 +386,7 @@ These need a real player and a real sink: no scripted helper can stand in for ei
   gap is all it hears; no reconnect, no `rediscovering`.
 
 **T26 Pinned format survives a reconnect (S/A)** — pin a format, power the sink off and on.
-- Expect: `Config: endpoint format <rate> Hz <ch> ch restored from the registry` and
+- Expect: `Config: settings restored from ...\devices\<address>.ini` and
   `endpoint formats ...` appear before Windows opens anything, and the stream runs at the
   pinned format with no Apply and no format change from the window.
 

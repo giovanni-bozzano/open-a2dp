@@ -34,8 +34,8 @@ single largest fixed part of it.
    sits between packets is a wobble the lead absorbs, and a trim there would be a gap for
    nothing. What a trim drops back to is the lead itself rather than the limit, so the one gap
    it costs buys an interval of headroom instead of leaving the ring on the edge.
-2. **The lead is a stored setting.** `Preference.prerollMs` (registry
-   `CodecPreferencePrerollMs`, `OpenA2dpCtl codec --preroll`) sets the pacing lead for every
+2. **The lead is a stored setting.** `Preference.prerollMs` (the sink's file,
+   `[general] prerollMs`, `OpenA2dpCtl codec --preroll`) sets the pacing lead for every
    codec, 20–200 ms or 0 for the default. `MediaStart` resolves it once, the kernel pacer and
    the service's records both use it, the presentation position subtracts the same value, and
    `status.pacingLeadMs` reports it; a low-latency profile asks for 30 ms, the default stays

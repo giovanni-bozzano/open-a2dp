@@ -74,6 +74,10 @@ One INI file per sink, plus a machine default for a sink that has none:
 - `%ProgramData%\OpenA2dp\devices\<12 hex address>.ini` - that sink's settings, which win
   over the default.
 
+The machine default is read only when the sink has no file of its own, so it is where a
+starting point shared by every sink on the machine lives. Nothing writes it today: it is
+created by hand, and its layout is the same as a sink's file.
+
 The file is text so it can be read, backed up and edited without this build: one section per
 codec - `[sbc]`, `[aac]`, `[aptx]`, `[aptxhd]`, `[ldac]` - plus `[general]` for what is not a
 codec's own setting, and one `key = value` line under each, with `#` starting a comment. A key
