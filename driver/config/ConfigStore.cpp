@@ -1,38 +1,23 @@
 #include "../Driver.h"
 
 #include <ntstrsafe.h>
+#include <OpenA2dp/ConfigFile.h>
 
 using namespace OpenA2dp;
 
-// Stored settings, one INI text file per sink under %ProgramData%\OpenA2dp:
-//   default.ini            the machine default
+// Stored settings, one text file per sink under %ProgramData%\OpenA2dp:
+//   default.ini            the machine default, used only when the sink has no file of its own
 //   devices\<address>.ini  that sink's settings, which win over the default
-// Text rather than a binary record so the file can be read, backed up and edited without this
-// build: one section per codec plus a general one, a `key = value` line under each, and `#` for a
-// comment. A key or a section this build does not know is ignored, so a newer file still loads; a
-// value the driver cannot serve refuses the whole file instead of half applying it. Loading runs
-// while the device is added and saving from the IOCTLs the tools send; both are at PASSIVE_LEVEL
-// and both are file I/O, so there is no registry state to keep in step. An absent file means "no
-// settings".
+// The layout, the sections and what a value has to look like live in OpenA2dp/ConfigFile.h, so
+// the tests check the code the driver runs; this file only moves that text to and from disk.
+// Loading runs while the device is added and saving from the IOCTLs the tools send; both are at
+// PASSIVE_LEVEL and both are file I/O, so there is no registry state to keep in step. An absent
+// file means "no settings".
 namespace
 {
 const wchar_t kDirectory[] = L"\\??\\C:\\ProgramData\\OpenA2dp";
 const wchar_t kDevicesDirectory[] = L"\\??\\C:\\ProgramData\\OpenA2dp\\devices";
 const wchar_t kDefaultPath[] = L"\\??\\C:\\ProgramData\\OpenA2dp\\default.ini";
-// A different number is a file this build does not understand; it is ignored, not guessed at.
-// 2 is the sectioned layout: the flat keys of the first format are not read.
-constexpr uint32_t kFormatVersion = 2;
-// Room for the file below with space to spare. A longer file is refused rather than read in
-// part, so a hand edit cannot be half applied.
-constexpr ULONG kMaxFileBytes = 1024;
-constexpr size_t kMaxChoiceChars = 12;
-constexpr size_t kMaxNameChars = 16;
-
-struct Settings
-{
-	Ioctl::Preference preference;
-	Ioctl::EndpointFormat endpointFormat;
-};
 
 NTSTATUS OpenFile(const wchar_t* path, ACCESS_MASK access, ULONG disposition, HANDLE& handle)
 {
@@ -66,509 +51,10 @@ void EnsureDirectory(const wchar_t* path)
 	}
 }
 
-bool KeyIs(const char* key, size_t length, const char* name)
-{
-	size_t index = 0;
-	for (; index < length; ++index)
-	{
-		if (name[index] == '\0' || name[index] != key[index])
-		{
-			return false;
-		}
-	}
-	return name[index] == '\0';
-}
-
-bool IsSpace(char character)
-{
-	return character == ' ' || character == '\t';
-}
-
-// An unsigned decimal number that fills the value exactly; everything this file stores is a
-// count, a rate or a bitrate, so a sign, a fraction or a stray character is a file this driver
-// did not write.
-bool ReadNumber(const char* value, size_t length, uint32_t& number)
-{
-	if (length == 0)
-	{
-		return false;
-	}
-	uint64_t parsed = 0;
-	for (size_t index = 0; index < length; ++index)
-	{
-		if (value[index] < '0' || value[index] > '9')
-		{
-			return false;
-		}
-		parsed = parsed * 10 + static_cast<uint64_t>(value[index] - '0');
-		if (parsed > 0xFFFFFFFFull)
-		{
-			return false;
-		}
-	}
-	number = static_cast<uint32_t>(parsed);
-	return true;
-}
-
-// "auto" for a value the driver chooses, a number otherwise.
-bool ReadChoice(const char* value, size_t length, uint32_t& number)
-{
-	if (KeyIs(value, length, "auto"))
-	{
-		number = 0;
-		return true;
-	}
-	return ReadNumber(value, length, number);
-}
-
-// The codec a section name stands for, -1 for "auto" and -2 for a name this build does not know
-// (the same five names `OpenA2dpCtl format` takes).
-int CodecFromName(const char* name, size_t length)
-{
-	static const struct
-	{
-		const char* name;
-		uint32_t codec;
-	} kNames[] = {
-		{"sbc", Ioctl::kCodecSbc},
-		{"aptx", Ioctl::kCodecAptx},
-		{"aac", Ioctl::kCodecAac},
-		{"aptxhd", Ioctl::kCodecAptxHd},
-		{"ldac", Ioctl::kCodecLdac},
-	};
-	if (KeyIs(name, length, "auto"))
-	{
-		return -1;
-	}
-	for (const auto& entry : kNames)
-	{
-		if (KeyIs(name, length, entry.name))
-		{
-			return static_cast<int>(entry.codec);
-		}
-	}
-	return -2;
-}
-
-const char* CodecFileName(uint32_t codec)
-{
-	switch (codec)
-	{
-	case Ioctl::kCodecSbc: return "sbc";
-	case Ioctl::kCodecAptx: return "aptx";
-	case Ioctl::kCodecAac: return "aac";
-	case Ioctl::kCodecAptxHd: return "aptxhd";
-	case Ioctl::kCodecLdac: return "ldac";
-	default: return "auto";
-	}
-}
-
-// One key of one section. A key or a section this build does not write is skipped, so a newer
-// file still loads; a key that is known but holds a value this build cannot use refuses the
-// file, because silently dropping it would apply a setting the file does not ask for.
-bool ApplyValue(const char* section, size_t sectionLength, const char* key, size_t keyLength,
-				const char* value, size_t valueLength, Settings& settings)
-{
-	Ioctl::Preference& preference = settings.preference;
-	Ioctl::EndpointFormat& format = settings.endpointFormat;
-
-	if (KeyIs(section, sectionLength, "general"))
-	{
-		if (KeyIs(key, keyLength, "codec"))
-		{
-			const int codec = CodecFromName(value, valueLength);
-			if (codec == -2)
-			{
-				return false;
-			}
-			preference.flags = codec < 0 ? 0 : Ioctl::kPreferenceForceCodec;
-			preference.codec = codec < 0 ? Ioctl::kCodecSbc : static_cast<uint32_t>(codec);
-			return true;
-		}
-		if (KeyIs(key, keyLength, "prerollMs"))
-		{
-			return ReadNumber(value, valueLength, preference.prerollMs);
-		}
-		return true;
-	}
-
-	// A codec section names its codec once: rate and channels are that codec's own entry, and
-	// the parameters below exist only where the codec has such a setting.
-	const int codec = CodecFromName(section, sectionLength);
-	if (codec < 0)
-	{
-		return true;
-	}
-	if (KeyIs(key, keyLength, "rate"))
-	{
-		return ReadChoice(value, valueLength, format.sampleRate[codec]);
-	}
-	if (KeyIs(key, keyLength, "channels"))
-	{
-		return ReadChoice(value, valueLength, format.channels[codec]);
-	}
-	if (codec == static_cast<int>(Ioctl::kCodecSbc))
-	{
-		if (KeyIs(key, keyLength, "bitpool"))
-		{
-			return ReadNumber(value, valueLength, preference.sbcBitpool);
-		}
-		if (KeyIs(key, keyLength, "blocks"))
-		{
-			return ReadNumber(value, valueLength, preference.sbcBlocks);
-		}
-		if (KeyIs(key, keyLength, "subbands"))
-		{
-			return ReadNumber(value, valueLength, preference.sbcSubbands);
-		}
-		if (KeyIs(key, keyLength, "allocation"))
-		{
-			return ReadNumber(value, valueLength, preference.sbcAllocation);
-		}
-		if (KeyIs(key, keyLength, "framesPerPacket"))
-		{
-			return ReadNumber(value, valueLength, preference.sbcFramesPerPacket);
-		}
-	}
-	if (codec == static_cast<int>(Ioctl::kCodecAac) && KeyIs(key, keyLength, "bitrate"))
-	{
-		return ReadNumber(value, valueLength, preference.aacBitrate);
-	}
-	if (codec == static_cast<int>(Ioctl::kCodecLdac) && KeyIs(key, keyLength, "quality"))
-	{
-		return ReadNumber(value, valueLength, preference.ldacQuality);
-	}
-	return true;
-}
-
-// Every line of the file: blank lines and comments are skipped, `[section]` opens a section,
-// `key = value` is applied to it, and a line that is neither refuses the file. The version has
-// to be this build's and is only read before the first section.
-bool ParseSettings(const char* text, size_t length, Settings& settings)
-{
-	settings = {};
-	settings.preference.abiVersion = Ioctl::kAbiVersion;
-	settings.endpointFormat.abiVersion = Ioctl::kAbiVersion;
-	const char* cursor = text;
-	const char* const textEnd = text + length;
-	char section[kMaxNameChars + 1] = {};
-	size_t sectionLength = 0;
-	bool versionSeen = false;
-	uint32_t version = 0;
-	while (cursor < textEnd)
-	{
-		const char* lineEnd = cursor;
-		while (lineEnd < textEnd && *lineEnd != '\r' && *lineEnd != '\n')
-		{
-			++lineEnd;
-		}
-		const char* next = lineEnd;
-		while (next < textEnd && (*next == '\r' || *next == '\n'))
-		{
-			++next;
-		}
-
-		const char* begin = cursor;
-		const char* end = lineEnd;
-		while (begin < end && IsSpace(*begin))
-		{
-			++begin;
-		}
-		for (const char* scan = begin; scan < end; ++scan)
-		{
-			if (*scan == '#')
-			{
-				end = scan;
-				break;
-			}
-		}
-		while (end > begin && IsSpace(end[-1]))
-		{
-			--end;
-		}
-		cursor = next;
-		if (end == begin)
-		{
-			continue;
-		}
-
-		if (*begin == '[')
-		{
-			const char* close = begin + 1;
-			while (close < end && *close != ']')
-			{
-				++close;
-			}
-			if (close >= end)
-			{
-				return false;
-			}
-			for (const char* scan = close + 1; scan < end; ++scan)
-			{
-				if (!IsSpace(*scan))
-				{
-					return false;
-				}
-			}
-			const size_t nameLength = static_cast<size_t>(close - (begin + 1));
-			if (nameLength == 0 || nameLength > kMaxNameChars)
-			{
-				return false;
-			}
-			for (size_t index = 0; index < nameLength; ++index)
-			{
-				section[index] = begin[1 + index];
-			}
-			section[nameLength] = '\0';
-			sectionLength = nameLength;
-			continue;
-		}
-
-		const char* equals = nullptr;
-		for (const char* scan = begin; scan < end; ++scan)
-		{
-			if (*scan == '=')
-			{
-				equals = scan;
-				break;
-			}
-		}
-		if (equals == nullptr)
-		{
-			return false;
-		}
-		const char* keyEnd = equals;
-		while (keyEnd > begin && IsSpace(keyEnd[-1]))
-		{
-			--keyEnd;
-		}
-		const char* value = equals + 1;
-		while (value < end && IsSpace(*value))
-		{
-			++value;
-		}
-		const size_t keyLength = static_cast<size_t>(keyEnd - begin);
-		const size_t valueLength = static_cast<size_t>(end - value);
-
-		// The version is metadata about the file, not a setting, so it sits above the sections.
-		if (sectionLength == 0)
-		{
-			if (!KeyIs(begin, keyLength, "version") || !ReadNumber(value, valueLength, version))
-			{
-				return false;
-			}
-			versionSeen = true;
-			continue;
-		}
-		if (!ApplyValue(section, sectionLength, begin, keyLength, value, valueLength, settings))
-		{
-			return false;
-		}
-	}
-	return versionSeen && version == kFormatVersion;
-}
-
-// "auto" or the number, for the choices the driver may leave to itself.
-const char* ChoiceText(uint32_t value, char (&text)[kMaxChoiceChars])
-{
-	if (value == 0)
-	{
-		return "auto";
-	}
-	(void)RtlStringCchPrintfA(text, ARRAYSIZE(text), "%u", value);
-	return text;
-}
-
-void Append(char (&text)[kMaxFileBytes], size_t& length, const char* format, ...)
-{
-	va_list arguments;
-	va_start(arguments, format);
-	const NTSTATUS status = RtlStringCchVPrintfA(text + length, ARRAYSIZE(text) - length, format, arguments);
-	va_end(arguments);
-	if (!NT_SUCCESS(status))
-	{
-		return;
-	}
-	size_t written = 0;
-	if (NT_SUCCESS(RtlStringCchLengthA(text + length, ARRAYSIZE(text) - length, &written)))
-	{
-		length += written;
-	}
-}
-
-// Ends a section, or drops it when nothing was written under its header: the file then holds
-// only the sections this sink has something to say about.
-void CloseSection(char (&text)[kMaxFileBytes], size_t& length, size_t start)
-{
-	size_t header = 0;
-	while (start + header < length && text[start + header] != '\n')
-	{
-		++header;
-	}
-	++header; // the newline that ends the header line
-	if (length == start + header)
-	{
-		length = start;
-		return;
-	}
-	Append(text, length, "\r\n");
-}
-
-void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const Settings& settings)
-{
-	const Ioctl::Preference& preference = settings.preference;
-	const Ioctl::EndpointFormat& format = settings.endpointFormat;
-	const bool forced = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
-	char text[kMaxFileBytes] = {};
-	size_t length = 0;
-	// Two, because one section can print the rate and the channel count in the same line and each
-	// ChoiceText fills the buffer it is given.
-	char rate[kMaxChoiceChars] = {};
-	char channels[kMaxChoiceChars] = {};
-
-	Append(text, length,
-		   "# OpenA2dp settings for this sink. Delete the file to return the driver defaults.\r\n"
-		   "# Only what differs from the driver default is written; a key that is missing keeps its\r\n"
-		   "# default. One section per codec, plus [general] for what is not a codec's own setting.\r\n"
-		   "version = %u\r\n"
-		   "\r\n",
-		   kFormatVersion);
-
-	// A key is written only when it differs from the default, so applying one setting stores one
-	// setting instead of restating every value the sink was already using.
-	size_t start = length;
-	Append(text, length, "[general]\r\n");
-	if (forced)
-	{
-		Append(text, length, "# auto, sbc, aac, aptx, aptxhd or ldac\r\ncodec = %s\r\n",
-			   CodecFileName(preference.codec));
-	}
-	if (preference.prerollMs != 0)
-	{
-		Append(text, length,
-			   "# How far ahead of the media clock the stream is sent, in milliseconds.\r\n"
-			   "prerollMs = %u\r\n",
-			   preference.prerollMs);
-	}
-	CloseSection(text, length, start);
-
-	start = length;
-	Append(text, length, "[sbc]\r\n");
-	if (format.sampleRate[Ioctl::kCodecSbc] != 0)
-	{
-		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecSbc], rate));
-	}
-	if (format.channels[Ioctl::kCodecSbc] != 0)
-	{
-		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecSbc], channels));
-	}
-	if (preference.sbcBitpool != 0)
-	{
-		Append(text, length, "bitpool = %u\r\n", preference.sbcBitpool);
-	}
-	if (preference.sbcBlocks != 0)
-	{
-		Append(text, length, "blocks = %u\r\n", preference.sbcBlocks);
-	}
-	if (preference.sbcSubbands != 0)
-	{
-		Append(text, length, "subbands = %u\r\n", preference.sbcSubbands);
-	}
-	if (preference.sbcAllocation != 0)
-	{
-		Append(text, length, "allocation = %u\r\n", preference.sbcAllocation);
-	}
-	if (preference.sbcFramesPerPacket != 0)
-	{
-		Append(text, length, "framesPerPacket = %u\r\n", preference.sbcFramesPerPacket);
-	}
-	CloseSection(text, length, start);
-
-	start = length;
-	Append(text, length, "[aac]\r\n");
-	if (format.sampleRate[Ioctl::kCodecAac] != 0)
-	{
-		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecAac], rate));
-	}
-	if (format.channels[Ioctl::kCodecAac] != 0)
-	{
-		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecAac], channels));
-	}
-	if (preference.aacBitrate != 0)
-	{
-		Append(text, length, "bitrate = %u\r\n", preference.aacBitrate);
-	}
-	CloseSection(text, length, start);
-
-	start = length;
-	Append(text, length, "[aptx]\r\n");
-	if (format.sampleRate[Ioctl::kCodecAptx] != 0)
-	{
-		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecAptx], rate));
-	}
-	if (format.channels[Ioctl::kCodecAptx] != 0)
-	{
-		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecAptx], channels));
-	}
-	CloseSection(text, length, start);
-
-	start = length;
-	Append(text, length, "[aptxhd]\r\n");
-	if (format.sampleRate[Ioctl::kCodecAptxHd] != 0)
-	{
-		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecAptxHd], rate));
-	}
-	if (format.channels[Ioctl::kCodecAptxHd] != 0)
-	{
-		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecAptxHd], channels));
-	}
-	CloseSection(text, length, start);
-
-	start = length;
-	Append(text, length, "[ldac]\r\n");
-	if (format.sampleRate[Ioctl::kCodecLdac] != 0)
-	{
-		Append(text, length, "rate = %s\r\n", ChoiceText(format.sampleRate[Ioctl::kCodecLdac], rate));
-	}
-	if (format.channels[Ioctl::kCodecLdac] != 0)
-	{
-		Append(text, length, "channels = %s\r\n", ChoiceText(format.channels[Ioctl::kCodecLdac], channels));
-	}
-	if (preference.ldacQuality != 0)
-	{
-		Append(text, length, "# 0 = high (990 kbps), 1 = standard (660), 2 = mobile (330).\r\n"
-						   "quality = %u\r\n",
-			   preference.ldacQuality);
-	}
-	CloseSection(text, length, start);
-	if (length == 0)
-	{
-		OA2DP_WARN(ctx, "Config", "cannot format the settings for %ws", path);
-		return;
-	}
-
-	EnsureDirectory(kDirectory);
-	EnsureDirectory(kDevicesDirectory);
-	HANDLE handle = nullptr;
-	const NTSTATUS status = OpenFile(path, FILE_WRITE_DATA, FILE_OVERWRITE_IF, handle);
-	if (!NT_SUCCESS(status))
-	{
-		OA2DP_WARN(ctx, "Config", "cannot open %ws 0x%08X; the settings are kept in memory only", path, status);
-		return;
-	}
-	IO_STATUS_BLOCK statusBlock = {};
-	const NTSTATUS written =
-			ZwWriteFile(handle, nullptr, nullptr, nullptr, &statusBlock, text, static_cast<ULONG>(length), nullptr, nullptr);
-	ZwClose(handle);
-	if (!NT_SUCCESS(written) || statusBlock.Information != length)
-	{
-		OA2DP_WARN(ctx, "Config", "cannot write %ws 0x%08X", path, written);
-	}
-}
-
 // The text of a settings file, or false when there is none: no file is "no settings", not an
 // error, so nothing is logged for it.
-bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[kMaxFileBytes], size_t& length)
+bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[ConfigFile::kMaxBytes],
+					  size_t& length)
 {
 	HANDLE handle = nullptr;
 	if (!NT_SUCCESS(OpenFile(path, FILE_READ_DATA, FILE_OPEN, handle)))
@@ -580,7 +66,7 @@ bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[kMa
 	NTSTATUS status = ZwQueryInformationFile(handle, &statusBlock, &information, sizeof(information),
 											 FileStandardInformation);
 	const LONGLONG bytes = information.EndOfFile.QuadPart;
-	if (!NT_SUCCESS(status) || bytes <= 0 || bytes >= static_cast<LONGLONG>(kMaxFileBytes))
+	if (!NT_SUCCESS(status) || bytes <= 0 || bytes >= static_cast<LONGLONG>(ConfigFile::kMaxBytes))
 	{
 		ZwClose(handle);
 		OA2DP_WARN(ctx, "Config", "ignoring %ws: 0x%08X reading its length", path, status);
@@ -599,27 +85,32 @@ bool ReadSettingsFile(DEVICE_CONTEXT* ctx, const wchar_t* path, char (&text)[kMa
 	return true;
 }
 
-// True when nothing differs from the driver default: every codec automatic and every parameter
-// zero. Such a sink has nothing to store, so it gets no file and deleting one is the same as
-// restoring the defaults.
-bool SameDefaults(const Settings& settings)
+void WriteSettings(DEVICE_CONTEXT* ctx, const wchar_t* path, const ConfigFile::Settings& settings)
 {
-	const Ioctl::Preference& preference = settings.preference;
-	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0 || preference.aacBitrate != 0 ||
-		preference.sbcBitpool != 0 || preference.sbcBlocks != 0 || preference.sbcSubbands != 0 ||
-		preference.sbcAllocation != 0 || preference.prerollMs != 0 ||
-		preference.sbcFramesPerPacket != 0 || preference.ldacQuality != 0)
+	char text[ConfigFile::kMaxBytes] = {};
+	const size_t length = ConfigFile::Write(settings, text, sizeof(text));
+	if (length == 0)
 	{
-		return false;
+		OA2DP_WARN(ctx, "Config", "cannot format the settings for %ws", path);
+		return;
 	}
-	for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+	EnsureDirectory(kDirectory);
+	EnsureDirectory(kDevicesDirectory);
+	HANDLE handle = nullptr;
+	const NTSTATUS status = OpenFile(path, FILE_WRITE_DATA, FILE_OVERWRITE_IF, handle);
+	if (!NT_SUCCESS(status))
 	{
-		if (settings.endpointFormat.sampleRate[codec] != 0 || settings.endpointFormat.channels[codec] != 0)
-		{
-			return false;
-		}
+		OA2DP_WARN(ctx, "Config", "cannot open %ws 0x%08X; the settings are kept in memory only", path, status);
+		return;
 	}
-	return true;
+	IO_STATUS_BLOCK statusBlock = {};
+	const NTSTATUS written = ZwWriteFile(handle, nullptr, nullptr, nullptr, &statusBlock, text,
+										 static_cast<ULONG>(length), nullptr, nullptr);
+	ZwClose(handle);
+	if (!NT_SUCCESS(written) || statusBlock.Information != length)
+	{
+		OA2DP_WARN(ctx, "Config", "cannot write %ws 0x%08X", path, written);
+	}
 }
 
 // Removes the sink's file. There is nothing to remove when the sink was never changed, which is
@@ -659,22 +150,22 @@ bool SinkPath(DEVICE_CONTEXT* ctx, wchar_t (&path)[96])
 
 void ConfigLoadSettings(_In_ DEVICE_CONTEXT* ctx)
 {
-	Settings settings = {};
+	ConfigFile::Settings settings = {};
 	settings.preference.abiVersion = Ioctl::kAbiVersion;
 	settings.endpointFormat.abiVersion = Ioctl::kAbiVersion;
 
 	// The sink's own file wins over the machine default; a field the user never set is zero in
 	// both, which is the driver default.
-	char text[kMaxFileBytes] = {};
+	char text[ConfigFile::kMaxBytes] = {};
 	size_t length = 0;
 	wchar_t sinkPath[96] = {};
 	const bool sinkFile = SinkPath(ctx, sinkPath) && ReadSettingsFile(ctx, sinkPath, text, length) &&
-						  ParseSettings(text, length, settings);
+						  ConfigFile::Parse(text, length, settings);
 	bool stored = sinkFile;
 	if (!sinkFile)
 	{
 		settings = {};
-		stored = ReadSettingsFile(ctx, kDefaultPath, text, length) && ParseSettings(text, length, settings);
+		stored = ReadSettingsFile(ctx, kDefaultPath, text, length) && ConfigFile::Parse(text, length, settings);
 	}
 
 	Ioctl::Preference preference = settings.preference;
@@ -727,7 +218,7 @@ void ConfigSaveSettings(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	Settings settings = {};
+	ConfigFile::Settings settings = {};
 	{
 		KIRQL irql;
 		KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
@@ -750,7 +241,7 @@ void ConfigSaveSettings(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_WARN(ctx, "Config", "cannot name this sink's settings file; nothing is stored");
 		return;
 	}
-	if (SameDefaults(settings))
+	if (ConfigFile::SameDefaults(settings))
 	{
 		// A sink nobody changed keeps no file: the defaults are the absence of settings, so the
 		// file is removed instead of being filled with them.

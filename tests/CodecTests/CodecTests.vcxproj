@@ -33,6 +33,7 @@
 	<ClCompile Include="LdacTests.cpp" />
 	<ClCompile Include="AptxHdStreamEncoderTests.cpp" />
 	<ClCompile Include="CommonTests.cpp" />
+	<ClCompile Include="ConfigFileTests.cpp" />
 	<ClCompile Include="AvdtpSourceTests.cpp" />
 	<ClCompile Include="FrameRecordTests.cpp" />
 	<ClCompile Include="PcmBacklogTests.cpp" />
