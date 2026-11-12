@@ -23,7 +23,7 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 ## Next
 
 1. **LDAC on hardware**: a pass with a real LDAC sink - the 990 kbps stream, forcing the codec
-   from the settings window, and the quality modes through `OpenA2dpCtl --ldac-quality`.
+   from the settings window, and each quality mode.
 2. **A first scripted pass** of the hardware procedures, kept with the build it ran on: it is the
    only run that exercises the pause-then-switch sequence, whose matches are now covered by
    `tests/CodecTests/SinkMatchTests.cpp`.

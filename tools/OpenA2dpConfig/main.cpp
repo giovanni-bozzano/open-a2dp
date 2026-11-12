@@ -74,6 +74,7 @@ enum ControlId : int {
 	kAllocationCombo,
 	kPacingLeadCombo,
 	kSbcFramesCombo,
+	kLdacQualityCombo,
 	kApplyButton,
 	kDriverButton,
 	kMessageLabel,
@@ -683,6 +684,12 @@ constexpr FieldTip kFieldTips[] = {
 	 L"How SBC hands out bits across the band.\n\n"
 	 L"Loudness follows the ear's sensitivity and usually sounds fuller; "
 	 L"signal-to-noise spends the bits evenly."},
+	{kLdacQualityCombo,
+	 L"The quality LDAC encodes at, which is a local setting - the sink is never told "
+	 L"which one is in use.\n\n"
+	 L"High is 990 kbps and the reason to use LDAC at all; standard and mobile fit a "
+	 L"crowded link at 660 and 330 kbps, and only matter if high stutters with the sink at a "
+	 L"distance."},
 	{kPacingLeadCombo,
 	 L"How far ahead of the media clock the stream is sent - the audio queued in the "
 	 L"sink. It has a floor of one packet. The session panel's latency line is this lead plus what "
@@ -1107,6 +1114,7 @@ void CreateControls(HWND hwnd)
 	CreateField(hwnd, L"Allocation", kAllocationCombo, 1, 2, font);
 	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, 0, 3, font);
 	CreateField(hwnd, L"SBC frames", kSbcFramesCombo, 1, 3, font);
+	CreateField(hwnd, L"LDAC quality", kLdacQualityCombo, 0, 4, font);
 	if (state != nullptr)
 	{
 		state->codecHint = CreateChild(hwnd, L"STATIC", kCodecHintText, SS_LEFT, 0, 0, 10, 10, 0, font);
@@ -1183,8 +1191,14 @@ void CreateControls(HWND hwnd)
 		AddComboItem(hwnd, kSbcFramesCombo, Format(L"%u per packet", frames).c_str(), frames);
 	}
 
+	// LDAC's quality mode is local: it is not negotiated, so it is simply what this sink's
+	// streams encode at.
+	AddComboItem(hwnd, kLdacQualityCombo, L"High (990 kbps)", 0);
+	AddComboItem(hwnd, kLdacQualityCombo, L"Standard (660 kbps)", 1);
+	AddComboItem(hwnd, kLdacQualityCombo, L"Mobile (330 kbps)", 2);
+
 	for (const int id : {kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo, kSubbandsCombo,
-						 kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo})
+						 kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo, kLdacQualityCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -1230,6 +1244,7 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
 	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
 	SelectComboValueOrAdd(hwnd, kSbcFramesCombo, preference.sbcFramesPerPacket);
+	SelectComboValue(hwnd, kLdacQualityCombo, preference.ldacQuality);
 	SelectComboValue(hwnd, kFormatCombo,
 					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
 }
@@ -1700,6 +1715,7 @@ void ApplySettings(HWND hwnd)
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
 	preference.prerollMs = ComboValue(hwnd, kPacingLeadCombo);
 	preference.sbcFramesPerPacket = ComboValue(hwnd, kSbcFramesCombo);
+	preference.ldacQuality = ComboValue(hwnd, kLdacQualityCombo);
 
 	// The endpoint format is its own setting; the combo carries the whole format.
 	const uint32_t formatValue = ComboValue(hwnd, kFormatCombo);
@@ -1763,7 +1779,7 @@ void ApplyDarkControls(HWND hwnd)
 	}
 	EnumChildWindows(hwnd, UnthemeTextControl, 0);
 	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo,
-				 kBlocksCombo, kSubbandsCombo, kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo})
+				 kBlocksCombo, kSubbandsCombo,						 kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo, kLdacQualityCombo})
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}
