@@ -17,13 +17,14 @@ void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	const uint32_t sampleRate = (capabilities & AptxHd::kSampleRate44100) != 0 ? 44100u : 48000u;
 	// The encoder is 24-in-32 stereo by definition; a different endpoint format cannot be
 	// fed to it without a conversion this path deliberately does not do.
-	if (sampleRate != ctx->PinSampleRate || ctx->PinChannels != 2 ||
-		ctx->PinValidBits != AptxHd::kBitsPerSample)
+	const PinFormat pin = SnapshotPinFormat(ctx);
+	if (sampleRate != pin.sampleRate || pin.channels != 2 ||
+		pin.validBits != AptxHd::kBitsPerSample)
 	{
 		OA2DP_WARN(ctx, "Media",
 			"aptX HD %u Hz stereo 24-bit does not match the endpoint format %u Hz %u ch %u-bit",
-			sampleRate, ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels),
-			static_cast<unsigned>(ctx->PinValidBits));
+			sampleRate, pin.sampleRate, static_cast<unsigned>(pin.channels),
+			static_cast<unsigned>(pin.validBits));
 		AbandonStream(ctx);
 		return;
 	}

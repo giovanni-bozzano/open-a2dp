@@ -18,13 +18,14 @@ void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	const uint32_t sampleRate = Ldac::RateValue(sampleRates);
 	// The encoder takes 16-bit stereo by definition; the service narrows a 24-in-32 ring, so
 	// the endpoint may run either depth.
-	if (sampleRate == 0 || sampleRate != ctx->PinSampleRate || ctx->PinChannels != 2 ||
-		!AptxPinDepthUsable(ctx->PinValidBits, Ldac::kBitsPerSample))
+	const PinFormat pin = SnapshotPinFormat(ctx);
+	if (sampleRate == 0 || sampleRate != pin.sampleRate || pin.channels != 2 ||
+		!AptxPinDepthUsable(pin.validBits, Ldac::kBitsPerSample))
 	{
 		OA2DP_WARN(ctx, "Media",
 			"LDAC %u Hz stereo does not match the endpoint format %u Hz %u ch %u-bit",
-			sampleRate, ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels),
-			static_cast<unsigned>(ctx->PinValidBits));
+			sampleRate, pin.sampleRate, static_cast<unsigned>(pin.channels),
+			static_cast<unsigned>(pin.validBits));
 		AbandonStream(ctx);
 		return;
 	}

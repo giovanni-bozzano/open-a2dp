@@ -12,10 +12,11 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 		AbandonStream(ctx);
 		return;
 	}
-	if (params.sampleRate != ctx->PinSampleRate || params.channels != ctx->PinChannels)
+	const PinFormat pin = SnapshotPinFormat(ctx);
+	if (params.sampleRate != pin.sampleRate || params.channels != pin.channels)
 	{
 		OA2DP_WARN(ctx, "Media", "AAC %u Hz %u ch does not match the endpoint format %u Hz %u ch",
-			params.sampleRate, params.channels, ctx->PinSampleRate, ctx->PinChannels);
+			params.sampleRate, params.channels, pin.sampleRate, static_cast<unsigned>(pin.channels));
 		AbandonStream(ctx);
 		return;
 	}

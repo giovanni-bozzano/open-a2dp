@@ -58,6 +58,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		ctx->SbcUnderrunPackets = 0;
 		ctx->SbcUnderrunLogTime = 0;
 	}
+	const PinFormat pin = SnapshotPinFormat(ctx);
 	if (codec == Avdtp::CodecType::Aac)
 	{
 		StartAac(ctx, ie, ieLength);
@@ -92,10 +93,10 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	}
 	// The encoder reads the PCM the ACX stream produced, so the negotiated format must be
 	// the one Windows opened the endpoint with.
-	if (params.sampleRate != ctx->PinSampleRate || params.Channels() != ctx->PinChannels)
+	if (params.sampleRate != pin.sampleRate || params.Channels() != pin.channels)
 	{
 		OA2DP_WARN(ctx, "Media", "SBC %u Hz %u ch does not match the endpoint format %u Hz %u ch",
-			params.sampleRate, params.Channels(), ctx->PinSampleRate, ctx->PinChannels);
+			params.sampleRate, params.Channels(), pin.sampleRate, static_cast<unsigned>(pin.channels));
 		AbandonStream(ctx);
 		return;
 	}
@@ -153,8 +154,8 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		KeReleaseSpinLock(&ctx->AudioLock, irql);
 	}
 	const ULONGLONG lostBytes = static_cast<ULONGLONG>(flushed) + skipped;
-	const ULONGLONG lostMs = ctx->PinSampleRate != 0 && ctx->PinBytesPerFrame != 0
-		? lostBytes * 1000ull / (static_cast<ULONGLONG>(ctx->PinSampleRate) * ctx->PinBytesPerFrame)
+	const ULONGLONG lostMs = pin.sampleRate != 0 && pin.bytesPerFrame != 0
+		? lostBytes * 1000ull / (static_cast<ULONGLONG>(pin.sampleRate) * pin.bytesPerFrame)
 		: 0;
 	const ULONGLONG started = KeQueryInterruptTime();
 	if (runStamp != 0 && started > runStamp)
@@ -168,7 +169,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	}
 	const ULONG packetBytes = static_cast<ULONG>(SbcFixed::FramesPerPacket(params,
 		MediaPayloadCapacity(ctx), ctx->SbcFramesPerPacket) * params.SamplesPerFrame() *
-		ctx->PinBytesPerFrame);
+		pin.bytesPerFrame);
 	InterlockedExchange(&ctx->MediaPacketPcmBytes, static_cast<LONG>(packetBytes));
 	InterlockedExchange(&ctx->StreamFault, 0);
 	InterlockedExchange(&ctx->MediaMode, MediaModeSbc);

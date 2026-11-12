@@ -69,6 +69,13 @@ bool MediaSendReady(DEVICE_CONTEXT* ctx, bool tick)
 // Submits the packet in MediaBuffer. Caller holds MediaLock and checked MediaSendReady.
 bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 {
+	// A stop clears MediaActive before it waits for the lock, so this run can have built a packet
+	// for a stream that was already ended. That packet belongs to no session the sink is in, so it
+	// is dropped here rather than sent into a stream the stop has moved past.
+	if (!ctx->MediaActive)
+	{
+		return false;
+	}
 	const NTSTATUS status = L2capSendAsync(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length);
 	if (!NT_SUCCESS(status))
 	{

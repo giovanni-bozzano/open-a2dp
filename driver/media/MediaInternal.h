@@ -51,6 +51,26 @@ inline void SetMediaActive(DEVICE_CONTEXT* ctx, bool active) noexcept
 	InterlockedExchange8(reinterpret_cast<volatile CHAR*>(&ctx->MediaActive), active ? 1 : 0);
 }
 
+// The endpoint format a stream has to match. The pin fields are written under AudioLock from the
+// audio side while a start runs on the signaling path, so a start reads them once, as one set,
+// instead of comparing against a format that changed underneath it.
+struct PinFormat
+{
+	ULONG sampleRate;
+	USHORT channels;
+	USHORT validBits;
+	USHORT bytesPerFrame;
+};
+
+inline PinFormat SnapshotPinFormat(DEVICE_CONTEXT* ctx) noexcept
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const PinFormat format{ctx->PinSampleRate, ctx->PinChannels, ctx->PinValidBits, ctx->PinBytesPerFrame};
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return format;
+}
+
 // Ends a stream the media path could not start. Without this the sink stays in Streaming with
 // silence while the session claims to play; the suspend returns it to Open, where the endpoint
 // edge starts it again (a bounded number of times) or leaves it suspended.
