@@ -66,6 +66,8 @@
 	<ClCompile Include="aptx\hd\AptxHdCodec.cpp" />
 	<ClCompile Include="aptx\hd\AptxHdStreamEncoder.cpp" />
 	<ClCompile Include="aptx\classic\AptxStreamEncoder.cpp" />
+	<ClCompile Include="ldac\LdacCodec.cpp" />
+	<ClCompile Include="ldac\LdacStreamEncoder.cpp" />
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="aptx\hd\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>
