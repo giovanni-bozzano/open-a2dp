@@ -35,9 +35,9 @@ constexpr DWORD kWorkerStopWaitMs = 3000;
 
 // Set when the service (or Ctrl+C in console mode) asks the loop to stop.
 HANDLE g_stopEvent = nullptr;
-// Console mode writes to stdout (redirectable); service mode appends to a log file.
+// Console mode writes to stdout; a service has no console, so its lines go to the debugger
+// (WinDbg or DebugView) and to no file - a log file would outlive the run it describes.
 bool g_consoleMode = true;
-HANDLE g_logFile = INVALID_HANDLE_VALUE;
 std::mutex g_logLock;
 
 // QueryPerformanceCounter-based clock in microseconds.
@@ -52,9 +52,7 @@ static uint64_t ClockUs()
 	return static_cast<uint64_t>(now.QuadPart) * 1000000ULL / static_cast<uint64_t>(freq.QuadPart);
 }
 
-// One log line, timestamped. In service mode stdout does not exist, so the log
-// goes to %ProgramData%\OpenA2dp\OpenA2dpSvc.log; a failure to open it must not
-// stop the service.
+// One log line, timestamped: stdout in console mode, the debugger in service mode.
 void Log(const char* format, ...)
 {
 	char message[512];
@@ -75,32 +73,11 @@ void Log(const char* format, ...)
 		fflush(stdout);
 		return;
 	}
-	if (g_logFile != INVALID_HANDLE_VALUE) {
-		DWORD written = 0;
-		WriteFile(g_logFile, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
+	wchar_t wide[600];
+	const int length = MultiByteToWideChar(CP_UTF8, 0, line, -1, wide, ARRAYSIZE(wide));
+	if (length > 1) {
+		OutputDebugStringW(wide);
 	}
-}
-
-void OpenLog()
-{
-	wchar_t programData[MAX_PATH];
-	const DWORD len = GetEnvironmentVariableW(L"ProgramData", programData, MAX_PATH);
-	if (len == 0 || len >= MAX_PATH) {
-		return;
-	}
-	std::wstring dir = std::wstring(programData) + L"\\OpenA2dp";
-	CreateDirectoryW(dir.c_str(), nullptr);
-	std::wstring path = dir + L"\\OpenA2dpSvc.log";
-
-	// Keep the log from growing without bound across service restarts; it only
-	// records lifecycle events, so a few hundred KB is a lot of history.
-	WIN32_FILE_ATTRIBUTE_DATA info{};
-	if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info) &&
-		info.nFileSizeHigh == 0 && info.nFileSizeLow > (1u << 20)) {
-		DeleteFileW(path.c_str());
-	}
-	g_logFile = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-							OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 }
 
 // Synchronous IOCTL on an overlapped handle: the handle is opened with
@@ -753,7 +730,6 @@ void WINAPI ServiceCtrlHandler(DWORD control)
 void WINAPI ServiceMain(DWORD, wchar_t**)
 {
 	g_consoleMode = false;
-	OpenLog();
 
 	g_statusHandle = RegisterServiceCtrlHandlerW(kServiceName, ServiceCtrlHandler);
 	if (g_statusHandle == nullptr) {

@@ -33,7 +33,8 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
    - WinDbg: `.logopen C:\OpenA2dp\logs\<test-id>.txt` before the test, `.logclose` after; or
    - Sysinternals DebugView as administrator: enable *Capture Kernel* and *Enable Verbose
      Kernel Output*, clear, run the test, save as `<test-id>.log`.
-3. Service log: `%ProgramData%\OpenA2dp\OpenA2dpSvc.log` (lines prefixed `[svc]`).
+3. Service lines: the service writes them to the debugger (`[svc]`), so the WinDbg or
+   DebugView capture carries them; there is no service log file.
 
 ### 1.2 Driver Verifier
 1. Elevated prompt:

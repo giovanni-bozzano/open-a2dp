@@ -55,10 +55,6 @@ function Test-Elevated {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-ServiceLogPath {
-    return (Join-Path $env:ProgramData 'OpenA2dp\OpenA2dpSvc.log')
-}
-
 # ---------- the CLI ----------
 
 function Invoke-Ctl {
@@ -419,25 +415,19 @@ function Read-LogWindow {
 function New-LogMark {
     # Taken before every repetition: what a test asserts on is only what happened during it.
     $script:Hw.LogMark = @{
-        Service = Get-LogLength $script:Hw.ServiceLog
-        Driver  = Get-LogLength $script:Hw.DriverLog
+        Driver = Get-LogLength $script:Hw.DriverLog
     }
     $script:Hw.LogNote = $null
     if (-not $script:Hw.DriverLog) {
-        $script:Hw.LogNote = 'no kernel log: pass -DriverLog <file> (WinDbg .logopen or DbgView save) to check the driver-side lines.'
+        $script:Hw.LogNote = 'no debugger capture: pass -DriverLog <file> (WinDbg .logopen or DbgView save) to check the driver and service lines.'
     }
 }
 
 function Get-NewLog {
+    # The service writes its `[svc]` lines to the debugger, so they arrive in the same capture
+    # as the driver's lines; there is no service log file.
     param([ValidateSet('Both', 'Service', 'Driver')][string]$Kind = 'Both')
-    $lines = @()
-    if ($Kind -in 'Both', 'Service') {
-        $lines += Read-LogWindow $script:Hw.ServiceLog $script:Hw.LogMark.Service
-    }
-    if ($Kind -in 'Both', 'Driver') {
-        $lines += Read-LogWindow $script:Hw.DriverLog $script:Hw.LogMark.Driver
-    }
-    return $lines
+    return @(Read-LogWindow $script:Hw.DriverLog $script:Hw.LogMark.Driver)
 }
 
 function Wait-Log {
@@ -767,7 +757,6 @@ function Start-HwTest {
         Level       = $Level
         Device      = $Device
         DriverLog   = $DriverLog
-        ServiceLog  = Get-ServiceLogPath
         Ctl         = $null
         CtlTimeoutSec = $CtlTimeoutSec
         NonInteractive = [bool]$NonInteractive

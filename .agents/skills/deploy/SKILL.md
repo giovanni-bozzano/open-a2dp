@@ -16,8 +16,8 @@ Elevated prompt, here or in the VM; the script never reboots.
 ## Before a test session
 1. Sink paired and connected, `OpenA2dpCtl list` shows it, `sc query OpenA2dpSvc` is RUNNING.
 2. Kernel log: the `IHVDRIVER` mask in `Debug Print Filter` (reboot) or `ed
-   nt!Kd_IHVDRIVER_Mask 0xF` under WinDbg; capture with `.logopen`. Service log:
-   `%ProgramData%\OpenA2dp\OpenA2dpSvc.log`.
+   nt!Kd_IHVDRIVER_Mask 0xF` under WinDbg; capture with `.logopen`. The service writes its
+   `[svc]` lines to the same debugger output; there is no log file.
 3. Verifier: `verifier /standard /driver OpenA2dp.sys`, reboot, confirm with `verifier /query`;
    `verifier /reset` plus the `Parameters\Wdf` values to stop it.
 
