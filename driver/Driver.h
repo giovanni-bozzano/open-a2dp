@@ -425,12 +425,13 @@ struct DEVICE_CONTEXT
 	USHORT PinValidBits;
 	// Container bytes per frame, so 24 valid bits in a 32-bit container count as four.
 	USHORT PinBytesPerFrame;
-	// PCM format this endpoint offers Windows, set from SET_ENDPOINT_FORMAT and stored per
-	// sink. 0 means automatic: every format the sink supports is listed. A pinned format is
-	// listed alone, because Windows ignores the Sound-settings pick and plays the first
-	// listed format (AudioApplyEndpointFormats).
-	ULONG SelectedSampleRate;
-	USHORT SelectedChannels;
+	// The PCM format each codec's streams are played at, indexed by Ioctl::kCodec*, from
+	// SET_ENDPOINT_FORMAT and stored per sink. 0 means automatic for that codec: every format it
+	// can play stays listed. A pinned format is listed alone, because Windows ignores the
+	// Sound-settings pick and plays the first listed format (AudioApplyEndpointFormats), and it
+	// applies while that codec is the one in use.
+	ULONG CodecSampleRate[OpenA2dp::Ioctl::kCodecCount];
+	USHORT CodecChannels[OpenA2dp::Ioctl::kCodecCount];
 	// Plug-state jack on the render sink pin. Windows shows the endpoint as unplugged
 	// while the sink link is down (AudioNotifyLinkState).
 	ACXJACK SinkJack;
@@ -773,7 +774,11 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx);
 
 // True when the sink's advertised SBC capabilities carry this PCM format. A selection the
 // sink cannot play would leave the endpoint without a stream, so it is refused.
-bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels);
+bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG codec, ULONG sampleRate,
+									  USHORT channels);
+// The codec whose stored format the endpoint offers: the forced one, or Ioctl::kCodecCount when
+// the choice is automatic, which leaves every format the runnable codecs can play listed.
+ULONG AudioPinnedCodec(_In_ DEVICE_CONTEXT* ctx);
 
 // Reads up to frames of stereo PCM rendered by Windows; pads the rest with
 // silence. Returns the number of frames that came from the endpoint. Reads whole 16-bit
@@ -807,19 +812,11 @@ _IRQL_requires_(PASSIVE_LEVEL)
 void MediaStop(_In_ DEVICE_CONTEXT* ctx);
 
 // config/
-// Restores the stored codec preference: the sink's own key first, then the global
-// default. Call once the sink address is known, before negotiation.
+// Restores the stored settings: the sink's own file first, then the machine default under
+// %ProgramData%\OpenA2dp. Call once the sink address is known, before negotiation.
 _IRQL_requires_(PASSIVE_LEVEL)
-void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx);
+void ConfigLoadSettings(_In_ DEVICE_CONTEXT* ctx);
 
-// Stores the current codec preference under the sink's configuration key.
+// Stores this sink's settings, preference and endpoint formats together, in its file.
 _IRQL_requires_(PASSIVE_LEVEL)
-void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx);
-
-// Restores the endpoint format selected for this sink; 0 Hz means automatic.
-_IRQL_requires_(PASSIVE_LEVEL)
-void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx);
-
-// Stores the endpoint format selected for this sink.
-_IRQL_requires_(PASSIVE_LEVEL)
-void ConfigSaveEndpointFormat(_In_ DEVICE_CONTEXT* ctx);
+void ConfigSaveSettings(_In_ DEVICE_CONTEXT* ctx);

@@ -40,7 +40,7 @@ Usage:
                      [--allocation <loudness|snr>] [--preroll <ms>]
                      [--frames <n>] [--ldac-quality <high|standard|mobile>]
                      [--device <mac|index>]
-  OpenA2dpCtl format [<auto|16000|32000|44100|48000|88200|96000> [<1|2>]] [--device <mac|index>]
+  OpenA2dpCtl format [<codec> [<auto|16000|32000|44100|48000|88200|96000> [<1|2>]]] [--device <mac|index>]
   OpenA2dpCtl driver [<opena2dp|windows>] [--device <mac|index>]
   OpenA2dpCtl reset [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
@@ -64,11 +64,12 @@ Commands:
             Without a codec name the stored selection is kept and only the
             flags given are applied.
             Codec settings never narrow the supported endpoint format list.
-  format    Show or set the PCM format this sink's endpoint offers Windows.
-            "auto" (the default) offers every format the sink supports. A rate
-            and a channel count pin the endpoint to that one format, which is
-            then the only entry in the Windows format list. Windows plays the
-            first format the endpoint lists and ignores the Sound-settings pick,
+  format    Show or set the PCM format each codec's streams are played at.
+            Without arguments every codec's entry is printed. Each codec keeps
+            its own: "auto" offers every format that codec can play, a rate and
+            a channel count pin it to that one format, which is then the only
+            entry in the Windows format list while that codec runs. Windows
+            plays the first format the endpoint lists and ignores the pick,
             so pinning is the only way to force one; the sink has to advertise
             it. Pinning also limits WASAPI exclusive-mode players to it.
   driver    Show which A2DP source driver this sink is bound to, or move it to
@@ -211,11 +212,43 @@ bool FindDevice(const std::vector<Device>& devices, const std::string& spec, siz
 
 std::string EndpointFormatText(const Ioctl::EndpointFormat& format)
 {
-	if (format.sampleRate == 0)
+	std::string text;
+	for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
 	{
-		return "automatic (every format the sink supports)";
+		if (format.sampleRate[codec] == 0)
+		{
+			continue;
+		}
+		if (!text.empty())
+		{
+			text += ", ";
+		}
+		text += std::string(CodecName(codec)) + " " + std::to_string(format.sampleRate[codec]) + " Hz " +
+				std::to_string(format.channels[codec]) + " ch";
 	}
-	return std::to_string(format.sampleRate) + " Hz " + std::to_string(format.channels) + " ch";
+	return text.empty() ? std::string("automatic (each codec plays every format it can)") : text;
+}
+
+// The codec an argument names, or -1.
+int CodecIndexOf(const std::string& name)
+{
+	if (name == "sbc")
+	{
+		return static_cast<int>(Ioctl::kCodecSbc);
+	}
+	if (name == "aac")
+	{
+		return static_cast<int>(Ioctl::kCodecAac);
+	}
+	if (name == "aptx")
+	{
+		return static_cast<int>(Ioctl::kCodecAptx);
+	}
+	if (name == "aptxhd")
+	{
+		return static_cast<int>(Ioctl::kCodecAptxHd);
+	}
+	return name == "ldac" ? static_cast<int>(Ioctl::kCodecLdac) : -1;
 }
 
 // Prints the report the settings window shows, so a paste from either one is comparable.
@@ -612,8 +645,8 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	return 0;
 }
 
-int CommandFormat(const std::vector<Device>& devices, const std::string& spec, const std::string& rateArg,
-				  const std::string& channelsArg)
+int CommandFormat(const std::vector<Device>& devices, const std::string& spec, const std::string& codecArg,
+				  const std::string& rateArg, const std::string& channelsArg)
 {
 	size_t index = 0;
 	std::string error;
@@ -637,7 +670,7 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
 	}
-	if (rateArg.empty())
+	if (codecArg.empty())
 	{
 		std::printf("%s: endpoint format %s.\n", DeviceLabel(device).c_str(),
 					EndpointFormatText(format).c_str());
@@ -645,8 +678,17 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		return 0;
 	}
 
-	Ioctl::EndpointFormat requested = {};
-	requested.abiVersion = Ioctl::kAbiVersion;
+	const int codec = CodecIndexOf(codecArg);
+	if (codec < 0 || rateArg.empty())
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "format takes a codec (sbc, aac, aptx, aptxhd, ldac) and auto, or a codec, a rate "
+							 "(16000, 32000, 44100, 48000, 88200, 96000) and a channel count (1, 2)\n");
+		return 2;
+	}
+	Ioctl::EndpointFormat requested = format;
+	requested.sampleRate[codec] = 0;
+	requested.channels[codec] = 0;
 	if (rateArg != "auto")
 	{
 		if (!IsDecimal(rateArg) || !IsDecimal(channelsArg))
@@ -656,18 +698,19 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 								 "and a channel count (1, 2)\n");
 			return 2;
 		}
-		requested.sampleRate = static_cast<uint32_t>(std::strtoul(rateArg.c_str(), nullptr, 10));
-		requested.channels = static_cast<uint32_t>(std::strtoul(channelsArg.c_str(), nullptr, 10));
+		requested.sampleRate[codec] = static_cast<uint32_t>(std::strtoul(rateArg.c_str(), nullptr, 10));
+		requested.channels[codec] = static_cast<uint32_t>(std::strtoul(channelsArg.c_str(), nullptr, 10));
 	}
 	if (!Ioctl::ValidEndpointFormat(requested))
 	{
 		CloseHandle(handle);
-		std::fprintf(stderr, "format takes auto, or a rate (44100, 48000) and a channel count (1, 2)\n");
+		std::fprintf(stderr, "format takes auto, or a rate (16000, 32000, 44100, 48000, 88200, 96000) and a "
+							 "channel count (1, 2)\n");
 		return 2;
 	}
 
-	// The endpoint only offers what the sink advertised in the last discovery, so a format it
-	// cannot carry is named here rather than left as a refused SET.
+	// SBC's advertisement is the one the status reports per codec, so only that entry can be
+	// checked here; the driver refuses a rate the sink or the codec cannot carry.
 	Ioctl::Status status = {};
 	if (!ReadStatus(handle, status, error))
 	{
@@ -675,23 +718,18 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 		std::fprintf(stderr, "%s\n", error.c_str());
 		return 1;
 	}
-	// The mask only carries SBC's rates; a rate from another codec's set (LDAC's 88.2 and
-	// 96 kHz) is left for the driver to accept or refuse against the sink's advertisement.
-	const uint32_t rateBit = requested.sampleRate == 44100 ? 1u
-		: requested.sampleRate == 48000 ? 2u
-		: requested.sampleRate == 32000 ? 4u
-		: requested.sampleRate == 16000 ? 8u
-		: 0u;
-	if (requested.sampleRate != 0 && status.sinkRates != 0 && rateBit != 0)
+	const uint32_t rate = requested.sampleRate[codec];
+	const uint32_t rateBit = rate == 44100 ? 1u : rate == 48000 ? 2u : rate == 32000 ? 4u : rate == 16000 ? 8u : 0u;
+	if (codec == static_cast<int>(Ioctl::kCodecSbc) && rate != 0 && status.sinkRates != 0 && rateBit != 0)
 	{
-		const uint32_t channelBit = requested.channels == 1 ? 1u : 2u;
+		const uint32_t channelBit = requested.channels[codec] == 1 ? 1u : 2u;
 		if ((status.sinkRates & rateBit) == 0 || (status.sinkChannels & channelBit) == 0)
 		{
 			CloseHandle(handle);
 			std::fprintf(stderr,
-						 "the sink does not advertise %u Hz %u ch (it offered %u Hz and %u ch sets); "
-						 "nothing was stored. Use `format auto`.\n",
-						 requested.sampleRate, requested.channels, status.sinkRates, status.sinkChannels);
+						 "the sink does not advertise %u Hz %u ch (it offered %u Hz and %u ch sets); nothing "
+						 "was stored. Use `format sbc auto`.\n",
+						 rate, requested.channels[codec], status.sinkRates, status.sinkChannels);
 			return 1;
 		}
 	}
@@ -708,23 +746,23 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 
 	std::printf("%s: endpoint format set to %s.\n", DeviceLabel(device).c_str(),
 				EndpointFormatText(applied).c_str());
-	if (applied.sampleRate != 0)
+	if (applied.sampleRate[codec] != 0)
 	{
-		std::printf("note: this is now the only format the endpoint offers, so it is also the only\r\n"
-					"entry in the Windows format list. Windows rebuilds the shared-mode stream to it;\r\n"
-					"a WASAPI exclusive-mode player is limited to it as well.\r\n");
+		std::printf("note: while %s runs, this is the only format the endpoint offers, so it is also the\r\n"
+					"only entry in the Windows format list. Windows rebuilds the shared-mode stream to\r\n"
+					"it; a WASAPI exclusive-mode player is limited to it as well.\r\n",
+					CodecName(static_cast<uint32_t>(codec)));
 	}
 	else
 	{
-		std::printf("note: Windows plays the first format the endpoint lists for the shared-mode\r\n"
-					"stream; the Sound-settings pick does not reach the driver.\r\n");
+		std::printf("note: %s plays every format it can again; Windows uses the first one the endpoint\r\n"
+					"lists.\r\n",
+					CodecName(static_cast<uint32_t>(codec)));
 	}
 	CloseHandle(handle);
 	return 0;
 }
 
-// The 12 hex digits of an address, from "AA:BB:CC:DD:EE:FF" or "aabbccddeeff". Empty when the
-// text is not an address: a partial address is still resolved through the device list.
 std::string AddressDigits(const std::string& text)
 {
 	std::string digits;
@@ -868,7 +906,6 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 	}
 	return 0;
 }
-
 int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 {
 	size_t index = 0;
@@ -932,6 +969,7 @@ int main(int argc, char** argv)
 	std::string command = "status";
 	std::string deviceSpec;
 	std::string codecArg;
+	std::string formatCodecArg;
 	std::string formatRateArg;
 	std::string formatChannelsArg;
 	std::string driverArg;
@@ -958,12 +996,17 @@ int main(int argc, char** argv)
 	}
 	if (command == "format" && position < args.size() && args[position][0] != '-')
 	{
-		formatRateArg = args[position];
+		formatCodecArg = args[position];
 		++position;
 		if (position < args.size() && args[position][0] != '-')
 		{
-			formatChannelsArg = args[position];
+			formatRateArg = args[position];
 			++position;
+			if (position < args.size() && args[position][0] != '-')
+			{
+				formatChannelsArg = args[position];
+				++position;
+			}
 		}
 	}
 
@@ -1175,7 +1218,7 @@ int main(int argc, char** argv)
 	}
 	if (command == "format")
 	{
-		return CommandFormat(devices, deviceSpec, formatRateArg, formatChannelsArg);
+		return CommandFormat(devices, deviceSpec, formatCodecArg, formatRateArg, formatChannelsArg);
 	}
 	if (command == "driver")
 	{

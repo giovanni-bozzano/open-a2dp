@@ -13,8 +13,10 @@ shows both sides: the picked format arrives as a stream that is built and discar
 graph that runs is at the first listed format. Nothing in the audio stack reports the pick, so
 the only control is which formats the endpoint offers.
 
-That is the endpoint format setting (`GET`/`SET_ENDPOINT_FORMAT`, stored per sink): automatic
-offers every format the sink advertises, a pinned rate and channel count is offered alone. The
+That is the endpoint format setting (`GET`/`SET_ENDPOINT_FORMAT`): one entry per codec, so
+each codec has its own rate and channel count. Automatic offers every format that codec can
+play, a pinned rate and channel count is offered alone while that codec is the one in use, and
+an automatic codec choice keeps every format the runnable codecs can play listed. The
 driver asserts no format on its own; Windows opens the listed one and its format reaches the
 encoder when the stream runs.
 
@@ -66,17 +68,23 @@ the Windows mix format.
 
 ## Storage
 
-One preference per sink, restored when the device starts; a sink with none uses the global
-default:
+One settings file per sink, plus a machine default for a sink that has none:
 
-- `HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters` - global default.
-- `...\Parameters\Devices\<12 hex address>` - per-sink override, wins over the global key.
+- `%ProgramData%\OpenA2dp\default.cfg` - machine default.
+- `%ProgramData%\OpenA2dp\devices\<12 hex address>.cfg` - that sink's settings, which win
+  over the default.
 
-All values are `REG_DWORD`, `0` means "driver default". `OpenA2dpCtl codec` writes the codec
-fields through `SET_PREFERENCE` and `format` writes the endpoint format through
-`SET_ENDPOINT_FORMAT`; deleting the sink subkey returns it to auto. The driver reads the values
-in `OnDeviceAdd`, before the endpoint exists. A value the sink does not advertise is refused
-instead of stored, so reading a preference back always shows what the driver will use.
+Each file is one binary record: a magic, a version and the layout size, then the codec
+preference and the per-codec endpoint formats. A file whose version or size is not this
+build's is ignored rather than reinterpreted, and a missing file means "no settings", not an
+error. `OpenA2dpCtl codec` writes the codec fields through `SET_PREFERENCE` and
+`format <codec> ...` writes one codec's endpoint format through `SET_ENDPOINT_FORMAT`; the
+driver saves both to the sink's file whenever either changes, so the file and the running
+driver never disagree. Deleting the sink's file returns it to the default and
+`OpenA2dpCtl reset` writes both defaults back. The driver reads the file in `OnDeviceAdd`,
+before the endpoint exists. A value the sink does not advertise is refused instead of stored,
+so reading a preference back always shows what the driver will use. The registry is not used
+and nothing is migrated from it.
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|
@@ -89,20 +97,20 @@ instead of stored, so reading a preference back always shows what the driver wil
 | AAC bitrate | `CodecPreferenceAacBitrate` | `--bitrate bps` | 96000, 128000, 160000, 192000, 256000, 320000; clamped to the sink maximum and the media MTU | highest the sink accepts, up to the MTU ceiling |
 | Pacing lead | `CodecPreferencePrerollMs` | `--preroll ms` | 20..200 ms, 0 = default | 60 ms |
 | SBC frames per packet | `CodecPreferenceSbcFramesPerPacket` | `--frames n` | 1..15, 0 = fill the packet | fill the packet |
-| Endpoint format | `SelectedSampleRate`, `SelectedChannels` | `format [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels the sink advertises | automatic (every sink format) |
+| Sample rate per codec | part of the sink's file | `format <codec> [auto\|<rate> <channels>]` | automatic, or any rate the endpoint offers (16000, 32000, 44100, 48000, 88200, 96000 Hz) with 1 or 2 channels that codec can play | automatic (each codec plays every format it can) |
 
-`CodecPreferenceAacSampleRate`, `CodecPreferenceEndpointRate` and
-`CodecPreferenceEndpointChannels` are obsolete and neither read nor written.
+`CodecPreferenceAacSampleRate` and the registry value names earlier builds used are gone:
+the store is the file above, and nothing is read from the registry.
 
-The settings window is a table with one tab per codec - SBC, AAC, aptX, aptX HD and LDAC -
-and it opens on the tab of the codec in use, so a parameter is set beside the codec it
-shapes. Each body holds only that codec's settings and only the values that codec can play:
-the sample rate list is the codec's own rates (SBC's narrowed to what the sink advertised),
-the AAC bitrate list stops at what one media packet can carry, and the aptX tabs have no
-setting beyond the rate. The automatic switch above the table decides whether the codec is
-the tab's or the best both ends support. Every field's box explains itself when the pointer
-rests on it; those texts live with the controls in `tools/OpenA2dpConfig/main.cpp`, so a
-field and its explanation are reviewed together.
+The settings window is the Windows tab control with one tab per codec - SBC, AAC, aptX,
+aptX HD and LDAC - and it opens on the tab of the codec in use, so a parameter is set beside
+the codec it shapes. Each body holds only that codec's settings and only the values that codec
+can play: the sample rate row is that codec's own rate (SBC's narrowed to what the sink
+advertised) and is stored as that codec's entry, the AAC bitrate list stops at what one media
+packet can carry, and the aptX tabs have no setting beyond the rate. The automatic switch
+above the table decides whether the codec is the tab's or the best both ends support. Every
+field's box explains itself when the pointer rests on it; those texts live with the controls
+in `tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together.
 
 ## How a change applies
 

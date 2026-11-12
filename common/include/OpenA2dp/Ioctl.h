@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 6;
+constexpr uint32_t kAbiVersion = 7;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -304,9 +304,9 @@ struct Status {
 	// kSinkCodec* bits for the codecs the sink advertised in the last discovery, 0 until
 	// one ran. SBC is mandatory, so it is only ever clear before the first discovery.
 	uint32_t sinkCodecs;
-	// The endpoint format setting (SET/GET_ENDPOINT_FORMAT): 0/0 is automatic, otherwise the
-	// one format the endpoint offers Windows. Mirrored here so a status report shows it
-	// without a second IOCTL.
+	// The endpoint format setting that applies now (SET/GET_ENDPOINT_FORMAT): 0/0 when the codec
+	// choice is automatic, otherwise the forced codec's own entry. Mirrored here so a status
+	// report shows it without a second IOCTL.
 	uint32_t endpointRate;
 	uint32_t endpointChannels;
 	// Counters, 64-bit because they are never reset: they cover the endpoint's whole life, so a
@@ -346,16 +346,20 @@ struct Preference {
 	uint32_t ldacQuality;
 };
 
-// The PCM format the render endpoint offers Windows. Windows opens the shared-mode stream
-// with the first format the endpoint lists and ignores the Sound-settings pick, so a pinned
-// format is offered alone: that is the only way the format the user wants is the one the
-// engine plays. 0 Hz / 0 channels means every format the sink supports (the default), which
-// also keeps every format available to a WASAPI exclusive-mode player.
+// The PCM format the render endpoint is pinned to, one entry per codec and indexed by
+// kCodec*: sampleRate[i] and channels[i] are the format codec i's streams are played at, and
+// 0/0 leaves that codec automatic, which offers every format it can play. Windows opens the
+// shared-mode stream with the first format the endpoint lists and ignores the Sound-settings
+// pick, so a pinned format is offered alone: that is the only way the format the user wants is
+// the one the engine plays. An entry applies while its codec is the one in use, so pinning
+// 96 kHz for LDAC leaves SBC its own rate instead of making the two conflict.
+constexpr uint32_t kCodecCount = 5; // kCodecSbc, kCodecAptx, kCodecAac, kCodecAptxHd, kCodecLdac
+
 struct EndpointFormat {
 	uint32_t abiVersion;
-	uint32_t sampleRate; // 0 = automatic, else one of kEndpointRates
-	uint32_t channels;   // 0 = automatic, 1 or 2 otherwise
 	uint32_t reserved;
+	uint32_t sampleRate[kCodecCount]; // 0 = automatic, else one of kEndpointRates
+	uint32_t channels[kCodecCount];   // 0 = automatic, 1 or 2 otherwise
 };
 
 // The PCM rates the render endpoint offers, in the order it prefers them: 44.1 kHz leads
@@ -377,18 +381,31 @@ constexpr bool EndpointRateSupported(uint32_t sampleRate) noexcept
 	return false;
 }
 
-constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
+// One codec's entry: both fields zero (automatic) or a rate the endpoint offers with one or
+// two channels.
+constexpr bool ValidEndpointSelection(uint32_t sampleRate, uint32_t channels) noexcept
 {
-	if (format.sampleRate == 0 || format.channels == 0)
+	if (sampleRate == 0 || channels == 0)
 	{
-		return format.sampleRate == 0 && format.channels == 0;
+		return sampleRate == 0 && channels == 0;
 	}
-	const bool rateOk = EndpointRateSupported(format.sampleRate);
-	const bool channelsOk = format.channels == 1 || format.channels == 2;
-	return rateOk && channelsOk;
+	return EndpointRateSupported(sampleRate) && (channels == 1 || channels == 2);
 }
 
-static_assert(sizeof(EndpointFormat) == 16, "EndpointFormat layout is part of the driver/CLI ABI");
+constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
+{
+	for (uint32_t codec = 0; codec < kCodecCount; ++codec)
+	{
+		if (!ValidEndpointSelection(format.sampleRate[codec], format.channels[codec]))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static_assert(kCodecCount == kCodecLdac + 1, "every codec has an endpoint format entry");
+static_assert(sizeof(EndpointFormat) == 48, "EndpointFormat layout is part of the driver/CLI ABI");
 
 // Range SbcFramesPerPacket accepts (see SbcFrame::kMaxFramesPerPacket).
 constexpr uint32_t kSbcMinFramesPerPacket = 1;

@@ -324,8 +324,13 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
 		out->sinkChannels = SbcConfig::AdvertisedChannels(sinkFormats);
 		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
-		out->endpointRate = ctx->SelectedSampleRate;
-		out->endpointChannels = ctx->SelectedChannels;
+		// The format the forced codec pins, or 0/0 when the codec choice is automatic.
+		const ULONG pinnedCodec = AudioPinnedCodec(ctx);
+		KIRQL pinIrql;
+		KeAcquireSpinLock(&ctx->AudioLock, &pinIrql);
+		out->endpointRate = pinnedCodec < Ioctl::kCodecCount ? ctx->CodecSampleRate[pinnedCodec] : 0;
+		out->endpointChannels = pinnedCodec < Ioctl::kCodecCount ? ctx->CodecChannels[pinnedCodec] : 0;
+		KeReleaseSpinLock(&ctx->AudioLock, pinIrql);
 		// The name the sink reported: captured once while the device was added, before this
 		// control device existed, so it needs no lock and cannot change under the copy.
 		for (uint32_t i = 0; i + 1 < Ioctl::kSinkNameChars && ctx->RemoteName[i] != L'\0'; ++i)
@@ -428,7 +433,19 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				in->sbcAllocation, in->aacBitrate, in->prerollMs, in->sbcFramesPerPacket);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the key cannot be written.
-			ConfigSavePreference(ctx);
+			ConfigSaveSettings(ctx);
+			if (selectionChanged)
+			{
+				// Another codec pins another stored format, so the listed formats follow it in
+				// place; a list that did not move logs and notifies nothing.
+				const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+				if (!NT_SUCCESS(formatStatus))
+				{
+					OA2DP_WARN(ctx, "Service",
+							   "applying the endpoint formats after the codec change failed 0x%08X",
+							   formatStatus);
+				}
+			}
 			if (selectionChanged || parametersChanged)
 			{
 				SignalingOnPreferenceChanged(ctx);
@@ -450,8 +467,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		}
 		KIRQL irql;
 		KeAcquireSpinLock(&ctx->AudioLock, &irql);
-		out->sampleRate = ctx->SelectedSampleRate;
-		out->channels = ctx->SelectedChannels;
+		for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+		{
+			out->sampleRate[codec] = ctx->CodecSampleRate[codec];
+			out->channels[codec] = ctx->CodecChannels[codec];
+		}
 		KeReleaseSpinLock(&ctx->AudioLock, irql);
 		out->abiVersion = Ioctl::kAbiVersion;
 		out->reserved = 0;
@@ -479,38 +499,53 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_INVALID_PARAMETER);
 			return;
 		}
-		// A format the sink does not advertise would leave the endpoint with nothing to open,
-		// so it is refused instead of stored. Before the first discovery nothing is known yet.
-		const bool sinkKnown =
-			InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0) != 0;
-		if (in->sampleRate != 0 && sinkKnown &&
-			!AudioSinkSupportsEndpointFormat(ctx, in->sampleRate, static_cast<USHORT>(in->channels)))
+		// A format a codec cannot play would leave the endpoint with nothing to open while that
+		// codec runs, so it is refused instead of stored. Before the first discovery nothing is
+		// known yet.
+		const bool sinkKnown = InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0) != 0;
+		if (sinkKnown)
 		{
-			OA2DP_WARN(ctx, "Service",
-				"the sink does not advertise %u Hz %u ch, so that endpoint format is refused",
-				in->sampleRate, in->channels);
-			Complete(request, STATUS_NOT_SUPPORTED);
-			return;
+			for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+			{
+				const ULONG rate = in->sampleRate[codec];
+				if (rate == 0 || AudioSinkSupportsEndpointFormat(
+										 ctx, codec, rate, static_cast<USHORT>(in->channels[codec])))
+				{
+					continue;
+				}
+				OA2DP_WARN(ctx, "Service", "the sink cannot play %u Hz %u ch with %s, so that format is refused",
+						   rate, in->channels[codec], CodecValueName(codec));
+				Complete(request, STATUS_NOT_SUPPORTED);
+				return;
+			}
 		}
-		KIRQL irql;
-		KeAcquireSpinLock(&ctx->AudioLock, &irql);
-		const bool changed = ctx->SelectedSampleRate != in->sampleRate ||
-							 ctx->SelectedChannels != in->channels;
-			ctx->SelectedSampleRate = in->sampleRate;
-			ctx->SelectedChannels = static_cast<USHORT>(in->channels);
-		KeReleaseSpinLock(&ctx->AudioLock, irql);
+		bool changed = false;
+		{
+			KIRQL irql;
+			KeAcquireSpinLock(&ctx->AudioLock, &irql);
+			for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+			{
+				if (ctx->CodecSampleRate[codec] != in->sampleRate[codec] ||
+					ctx->CodecChannels[codec] != in->channels[codec])
+				{
+					changed = true;
+				}
+				ctx->CodecSampleRate[codec] = in->sampleRate[codec];
+				ctx->CodecChannels[codec] = static_cast<USHORT>(in->channels[codec]);
+			}
+			KeReleaseSpinLock(&ctx->AudioLock, irql);
+		}
 		if (changed)
 		{
-			if (in->sampleRate != 0)
+			for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
 			{
-				OA2DP_INFO(ctx, "Service", "endpoint format set to %u Hz %u ch", in->sampleRate,
-					in->channels);
+				if (in->sampleRate[codec] != 0)
+				{
+					OA2DP_INFO(ctx, "Service", "endpoint format for %s set to %u Hz %u ch", CodecValueName(codec),
+							   in->sampleRate[codec], in->channels[codec]);
+				}
 			}
-			else
-			{
-				OA2DP_INFO(ctx, "Service", "endpoint format set to automatic");
-			}
-			ConfigSaveEndpointFormat(ctx);
+			ConfigSaveSettings(ctx);
 			// A changed list makes Windows drop its render stream at the old format; it does not
 			// always build a new one, and while none runs the pin format moves without a stream
 			// report. The work item compares the pin with the negotiated configuration either way
@@ -518,13 +553,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
 			if (!NT_SUCCESS(formatStatus))
 			{
-				OA2DP_WARN(ctx, "Service", "applying the endpoint format failed 0x%08X", formatStatus);
+				OA2DP_WARN(ctx, "Service", "applying the endpoint formats failed 0x%08X", formatStatus);
 			}
 			// Windows keeps the format it cached for the endpoint, so only a rebuilt endpoint
-			// offers the new one: without this, a player that starts afterwards asks for the
-			// old format and is refused the stream, and nothing is heard. That holds whether or
-			// not a stream is open now. A stream Windows runs around the rebuild starts the A2DP
-			// stream only once audio reaches it, so the rebuild alone does not reach Streaming.
+			// offers the new one: without this, a player that starts afterwards asks for the old
+			// format and is refused the stream, and nothing is heard.
 			AudioRestartRenderStream(ctx);
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);

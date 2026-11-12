@@ -37,13 +37,19 @@ TEST(Ioctl_EndpointRates)
 	CHECK_EQ(Ioctl::kEndpointRateCount, uint32_t{6});
 	for (const uint32_t rate : Ioctl::kEndpointRates)
 	{
-		const Ioctl::EndpointFormat format = {Ioctl::kAbiVersion, rate, 2, 0};
+		Ioctl::EndpointFormat format = {};
+		format.abiVersion = Ioctl::kAbiVersion;
+		format.sampleRate[Ioctl::kCodecSbc] = rate;
+		format.channels[Ioctl::kCodecSbc] = 2;
 		CHECK(Ioctl::ValidEndpointFormat(format));
 	}
 	const uint32_t refused[] = {0u, 8000, 22050, 64000, 192000};
 	for (const uint32_t rate : refused)
 	{
-		const Ioctl::EndpointFormat format = {Ioctl::kAbiVersion, rate, 2, 0};
+		Ioctl::EndpointFormat format = {};
+		format.abiVersion = Ioctl::kAbiVersion;
+		format.sampleRate[Ioctl::kCodecSbc] = rate;
+		format.channels[Ioctl::kCodecSbc] = 2;
 		CHECK(!Ioctl::ValidEndpointFormat(format));
 	}
 }

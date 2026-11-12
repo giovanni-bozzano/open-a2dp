@@ -162,8 +162,8 @@ struct.
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
 | `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC, AAC, aptX or aptX HD or LDAC, and `ldacQuality` is 0..2; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. A forced codec is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks it. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
-| `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format the endpoint offers Windows. 0/0 is automatic (every sink format), otherwise the one pinned rate and channel count |
-| `SET_ENDPOINT_FORMAT` | `EndpointFormat` | – | Stored per sink (`SelectedSampleRate`/`SelectedChannels`) and applied by rebuilding the listed formats in place, which makes Windows re-query the endpoint. Automatic (`0`/`0`) or 44100/48000 Hz with 1 or 2 channels; a format the discovered sink does not advertise is refused with `STATUS_NOT_SUPPORTED`. Windows plays the first listed format and ignores the Sound-settings pick, so a pinned format is listed alone |
+| `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format each codec's streams are played at, one entry per codec (`kCodec*`). 0/0 is automatic for that codec, otherwise its pinned rate and channel count |
+| `SET_ENDPOINT_FORMAT` | `EndpointFormat` | – | Stored per sink in `%ProgramData%\OpenA2dp\devices\<address>.cfg` and applied by rebuilding the listed formats in place, which makes Windows re-query the endpoint. Automatic (`0`/`0`) or a rate with 1 or 2 channels, judged per codec; a format that codec cannot play from the sink's advertisement is refused with `STATUS_NOT_SUPPORTED`. Windows plays the first listed format and ignores the Sound-settings pick, so a pinned format is listed alone while its codec runs |
 
 The control queue is parallel, so a parked `WAIT_EVENT` does not block
 `GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
@@ -176,11 +176,11 @@ sink's SBC PCM capabilities, `sinkCodecs` its advertised codecs, and
 `endpointRate`/`endpointChannels` the endpoint format setting. A forced codec the sink does
 not advertise is refused. Negotiation follows the actual Windows stream format.
 
-ABI 2 is the current development baseline, not compatibility with an earlier layout.
+ABI 7 is the current development baseline, not compatibility with an earlier layout.
 Obsolete format preferences and fallback fields are removed, not reserved: `Preference`
-is 36 bytes, `EndpointFormat` 16 bytes, `Status` 240 bytes, `RegisterEncoderOut` 32 bytes
-and `WaitEventOut` 36 bytes. The endpoint format is its own setting, not a preference
-field. Always rebuild and install the driver, tools and service together; older
+is 44 bytes, `EndpointFormat` 48 bytes (one entry per codec), `Status` 336 bytes,
+`RegisterEncoderOut` 32 bytes and `WaitEventOut` 40 bytes. The endpoint format is its own
+setting, not a preference field. Always rebuild and install the driver, tools and service together; older
 development layouts are incompatible even when their version number matches.
 
 `REGISTER_ENCODER` enables selection of that codec, not SEP advertisement. `MAP_RINGS` is

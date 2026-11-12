@@ -69,6 +69,7 @@ enum ControlId : int {
 	kCopyButton,
 	kDetailsCheck,
 	kStatusList,
+	kCodecTabs,
 	kAutomaticCheck,
 	kFormatCombo,
 	kBitrateCombo,
@@ -251,8 +252,6 @@ struct SinkState
 	int tab = 0;
 	bool tabPinned = false;
 	bool automatic = true;
-	// The strip's rectangles, filled by ApplyLayout and hit-tested by a click.
-	std::vector<RECT> tabRects;
 	std::vector<HWND> hints; // one hint line per codec tab, created with the other controls
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
@@ -1082,8 +1081,11 @@ void SelectPreferenceValues(HWND hwnd)
 	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
 	SelectComboValueOrAdd(hwnd, kSbcFramesCombo, preference.sbcFramesPerPacket);
 	SelectComboValue(hwnd, kLdacQualityCombo, preference.ldacQuality);
+	// The sample rate row is the open codec's own entry: every codec keeps its own format.
+	const int tab = state->tab >= 0 && state->tab < kTabCount ? state->tab : 0;
 	SelectComboValue(hwnd, kFormatCombo,
-					 FormatComboValue(state->endpointFormat.sampleRate, state->endpointFormat.channels));
+					 FormatComboValue(state->endpointFormat.sampleRate[tab],
+									  state->endpointFormat.channels[tab]));
 }
 
 // Opens one codec's table. A click pins the strip there, so the next negotiation cannot swap
@@ -1097,6 +1099,7 @@ void SelectTab(HWND hwnd, int tab, bool clicked)
 		return;
 	}
 	state->tab = tab;
+	SendMessageW(GetDlgItem(hwnd, kCodecTabs), TCM_SETCURSEL, static_cast<WPARAM>(tab), 0);
 	if (clicked)
 	{
 		state->tabPinned = true;
@@ -1170,13 +1173,12 @@ void ApplyLayout(HWND hwnd)
 								  TextWidth(dc, kFinishSwitchText)) + gap * 4;
 	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + margin;
 
-	// The tab strip and the automatic switch are as wide as their own captions.
-	int tabWidth[kTabCount] = {};
+	// The tab control is as wide as its captions need, and the automatic switch as wide as its
+	// own caption.
 	int stripWidth = 0;
 	for (int tab = 0; tab < kTabCount; ++tab)
 	{
-		tabWidth[tab] = TextWidth(dc, kTabInfo[tab].caption) + gap * 3;
-		stripWidth += tabWidth[tab];
+		stripWidth += TextWidth(dc, kTabInfo[tab].caption) + gap * 3;
 	}
 	const int automaticWidth =
 			CheckSide(textHeight) + CheckTextGap(textHeight) + TextWidth(dc, kAutomaticText) + 4;
@@ -1221,7 +1223,16 @@ void ApplyLayout(HWND hwnd)
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
-	const int tabHeight = textHeight + gap;
+	// The tab control's own height comes from its first item, so a larger system font or a
+	// longer caption cannot cut the tabs off; the body frame starts under it.
+	const HWND tabs = GetDlgItem(hwnd, kCodecTabs);
+	RECT tabItem = {0, 0, 0, 0};
+	int tabHeight = textHeight + gap * 2;
+	if (tabs != nullptr && SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0) > 0 &&
+		SendMessageW(tabs, TCM_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&tabItem)) != FALSE)
+	{
+		tabHeight = (tabItem.bottom - tabItem.top) + gap + 2;
+	}
 	const int bodyHeight = inset + rows * rowHeight + hintHeight + gap;
 	int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + bottomHeight + margin;
 	fixedHeight += tabHeight + bodyHeight + gap;
@@ -1277,14 +1288,11 @@ void ApplyLayout(HWND hwnd)
 	state->groups.push_back({groupLeft, bodyTop, groupLeft + groupWidth, bodyTop + bodyHeight, nullptr});
 	Place(state->sessionPanel, innerLeft, sessionTop + captionHeight, innerWidth, panelHeight);
 
-	// The strip runs left to right on the body's top line; a click inside one of these
-	// rectangles opens that codec's table.
-	state->tabRects.clear();
-	int tabLeft = groupLeft;
-	for (int tab = 0; tab < kTabCount; ++tab)
+	// The tab control sits on the body's top edge; the table below it is the window's, which
+	// keeps its own frame and the palette's colours.
+	if (tabs != nullptr)
 	{
-		state->tabRects.push_back({tabLeft, stripTop, tabLeft + tabWidth[tab], bodyTop});
-		tabLeft += tabWidth[tab];
+		Place(tabs, groupLeft, stripTop, groupWidth, tabHeight);
 	}
 
 	// The top of the body is the same on every tab; the rows below it belong to the open codec,
@@ -1389,6 +1397,23 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"BUTTON", kDetailsText, BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0, 10, 10, kDetailsCheck,
 				font);
 
+	// The codec tabs are the real tab control: it owns the items, the selection and the
+	// keyboard behaviour, and only the table under it is this window's.
+	const HWND tabs = CreateWindowExW(0, WC_TABCONTROLW, L"",
+									  WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_HOTTRACK, 0, 0, 10, 10, hwnd,
+									  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCodecTabs)),
+									  GetModuleHandleW(nullptr), nullptr);
+	if (tabs != nullptr)
+	{
+		SendMessageW(tabs, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+		for (int tab = 0; tab < kTabCount; ++tab)
+		{
+			TCITEMW item = {};
+			item.mask = TCIF_TEXT;
+			item.pszText = const_cast<LPWSTR>(kTabInfo[tab].caption);
+			SendMessageW(tabs, TCM_INSERTITEMW, static_cast<WPARAM>(tab), reinterpret_cast<LPARAM>(&item));
+		}
+	}
 	CreateStatusView(hwnd, kStatusList, 0, 0, 10, 10, font);
 	if (state != nullptr)
 	{
@@ -1502,6 +1527,7 @@ void LoadPreferenceIntoControls(HWND hwnd)
 				 state->automatic ? BST_CHECKED : BST_UNCHECKED, 0);
 	state->tab = TabForState(*state);
 	state->tabPinned = false;
+	SendMessageW(GetDlgItem(hwnd, kCodecTabs), TCM_SETCURSEL, static_cast<WPARAM>(state->tab), 0);
 	RebuildTabLists(hwnd);
 	SelectPreferenceValues(hwnd);
 	ApplyLayout(hwnd);
@@ -1982,11 +2008,13 @@ void ApplySettings(HWND hwnd)
 	preference.sbcFramesPerPacket = ComboValue(hwnd, kSbcFramesCombo);
 	preference.ldacQuality = ComboValue(hwnd, kLdacQualityCombo);
 
-	// The endpoint format is its own setting; the combo carries the whole format.
+	// The combo carries the format of the open codec; the other codecs keep their own entry.
 	const uint32_t formatValue = ComboValue(hwnd, kFormatCombo);
-	Ioctl::EndpointFormat endpointFormat = {};
-	endpointFormat.sampleRate = formatValue / 10;
-	endpointFormat.channels = formatValue % 10;
+	Ioctl::EndpointFormat endpointFormat = state->endpointFormat;
+	const int codecIndex = state->tab >= 0 && state->tab < kTabCount ? state->tab : 0;
+	endpointFormat.sampleRate[codecIndex] = formatValue / 10;
+	endpointFormat.channels[codecIndex] = formatValue % 10;
+	endpointFormat.abiVersion = Ioctl::kAbiVersion;
 	if (!Ioctl::ValidEndpointFormat(endpointFormat))
 	{
 		SetMessage(hwnd, L"Choose a format from the list.");
@@ -2049,6 +2077,9 @@ void ApplyDarkControls(HWND hwnd)
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}
+	// The tab control draws from its theme, which stays light in a process that only opted into
+	// the dark apps mode; the dark item theme is the one Explorer's own tab strip uses.
+	SetWindowTheme(GetDlgItem(hwnd, kCodecTabs), L"DarkMode_ItemsView", nullptr);
 	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kDetailsCheck,
 						 kAutomaticCheck})
 	{
@@ -2135,45 +2166,6 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 	{
 		SelectObject(dc, previousFont);
 	}
-}
-
-// The codec tabs, drawn on the body frame's top line: the open one is filled with the window's
-// own background so the line passes behind it, the way a group caption sits on its own frame.
-void PaintTabs(HWND hwnd, HDC dc)
-{
-	const SinkState* state = StateOf(hwnd);
-	if (state == nullptr || state->tabRects.empty())
-	{
-		return;
-	}
-	const Colors& colors = ThemeColors();
-	if (state->font != nullptr)
-	{
-		SelectObject(dc, state->font);
-	}
-	SetBkMode(dc, TRANSPARENT);
-	SetTextColor(dc, colors.text);
-	const HPEN pen = CreatePen(PS_SOLID, 1, colors.border);
-	const HGDIOBJ previousPen = SelectObject(dc, pen);
-	for (int tab = 0; tab < kTabCount && tab < static_cast<int>(state->tabRects.size()); ++tab)
-	{
-		RECT box = state->tabRects[tab];
-		if (tab != state->tab)
-		{
-			// A closed tab is only its caption, resting on the body's top line.
-			DrawTextW(dc, kTabInfo[tab].caption, -1, &box, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-			continue;
-		}
-		box.bottom += 1; // cover the body frame's own line
-		FillRect(dc, &box, BackgroundBrush());
-		MoveToEx(dc, box.left, box.bottom, nullptr);
-		LineTo(dc, box.left, box.top);
-		LineTo(dc, box.right, box.top);
-		LineTo(dc, box.right, box.bottom);
-		DrawTextW(dc, kTabInfo[tab].caption, -1, &box, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-	}
-	SelectObject(dc, previousPen);
-	DeleteObject(pen);
 }
 
 LRESULT OnEraseBackground(HWND hwnd, HDC dc)
@@ -2403,20 +2395,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 	case kDeviceChangeMessage:
 		ReloadDevices(hwnd);
 		return 0;
-	case WM_LBUTTONDOWN:
+	case WM_NOTIFY:
 	{
-		const SinkState* state = StateOf(hwnd);
-		const POINT point = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-		if (state != nullptr)
+		const NMHDR* header = reinterpret_cast<const NMHDR*>(lParam);
+		if (header != nullptr && header->idFrom == kCodecTabs && header->code == TCN_SELCHANGE)
 		{
-			for (int tab = 0; tab < static_cast<int>(state->tabRects.size()); ++tab)
-			{
-				if (PtInRect(&state->tabRects[tab], point) != FALSE)
-				{
-					SelectTab(hwnd, tab, true);
-					return 0;
-				}
-			}
+			SelectTab(hwnd, static_cast<int>(SendMessageW(header->hwndFrom, TCM_GETCURSEL, 0, 0)), true);
+			return 0;
 		}
 		break;
 	}
@@ -2428,7 +2413,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		PAINTSTRUCT paint = {};
 		const HDC dc = BeginPaint(hwnd, &paint);
 		PaintGroups(hwnd, dc);
-		PaintTabs(hwnd, dc);
 		EndPaint(hwnd, &paint);
 		return 0;
 	}

@@ -201,8 +201,7 @@ NTSTATUS OnDeviceAdd(_In_ WDFDRIVER, _Inout_ PWDFDEVICE_INIT deviceInit)
 	// The stored preference keys off the sink address, so the address is read first; a failed
 	// query leaves only the parameters default.
 	(void)L2capRetrieveRemoteAddress(ctx);
-	ConfigLoadPreference(ctx);
-	ConfigLoadEndpointFormat(ctx);
+	ConfigLoadSettings(ctx);
 
 	status = AudioInitialize(ctx);
 	if (!NT_SUCCESS(status))

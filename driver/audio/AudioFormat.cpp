@@ -4,7 +4,9 @@
 
 #include <ntstrsafe.h>
 
+#include <OpenA2dp/AacConfig.h>
 #include <OpenA2dp/SbcConfig.h>
+#include <OpenA2dp/VendorAptx.h>
 
 namespace OpenA2dpDriver::Audio
 {
@@ -418,6 +420,60 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 	}
 	return supported;
 }
+// The codec whose stored format the endpoint offers: the forced one, or kCodecCount when the
+// choice is automatic. The preference is read under its own lock, before any caller takes the
+// audio lock, which is the order the two are always taken in.
+ULONG PinnedCodec(_In_ DEVICE_CONTEXT* ctx)
+{
+	const Ioctl::Preference preference = StoredPreference(ctx);
+	if ((preference.flags & Ioctl::kPreferenceForceCodec) == 0 || preference.codec >= Ioctl::kCodecCount)
+	{
+		return Ioctl::kCodecCount;
+	}
+	return preference.codec;
+}
+
+// Whether one codec can play a rate and channel count from what the sink advertised: SBC and
+// LDAC advertise both per codec, aptX and aptX HD are fixed at 44.1/48 kHz stereo, and AAC's
+// rates are the encoder's because its sink advertisement is not reported.
+bool CodecCanCarryFormat(_In_ DEVICE_CONTEXT* ctx, ULONG codec, ULONG sampleRate, USHORT channels)
+{
+	const uint8_t sinkFormats =
+			static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
+	const uint8_t aptxFormats =
+			static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkAptxCapabilities, 0, 0));
+	const uint8_t hdFormats =
+			static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0));
+	const uint8_t ldacRates =
+			static_cast<uint8_t>((InterlockedCompareExchange(&ctx->SinkLdacCapabilities, 0, 0) >> 8) & 0xFF);
+	switch (codec)
+	{
+	case Ioctl::kCodecSbc:
+		return sinkFormats == 0 ||
+			   SbcConfig::SupportsFormat(sinkFormats, sampleRate, static_cast<uint8_t>(channels));
+	case Ioctl::kCodecAac:
+		return AacConfig::EncoderSupportsRate(sampleRate) && (channels == 1 || channels == 2);
+	case Ioctl::kCodecAptx:
+	case Ioctl::kCodecAptxHd:
+	{
+		if (channels != 2 || (sampleRate != 44100 && sampleRate != 48000))
+		{
+			return false;
+		}
+		const uint8_t advertised = codec == Ioctl::kCodecAptxHd ? hdFormats : aptxFormats;
+		const uint8_t bit = sampleRate == 44100 ? VendorAptx::kSampleRate44100 : VendorAptx::kSampleRate48000;
+		return advertised == 0 || (advertised & bit) != 0;
+	}
+	case Ioctl::kCodecLdac:
+	{
+		const uint8_t bit = Ldac::RateBit(sampleRate);
+		return channels == 2 && bit != 0 && (ldacRates == 0 || (ldacRates & bit) != 0);
+	}
+	default:
+		return false;
+	}
+}
+
 } // namespace
 
 NTSTATUS CreateRenderFormats(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin)
@@ -489,11 +545,20 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	// Sound-settings pick, so a pinned format is offered alone: listing it first is enough
 	// for the engine to use it but leaves the other formats selectable, which is how the pick
 	// ends up ignored. With no selection every sink-supported format stays listed.
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	const ULONG selectedRate = ctx->SelectedSampleRate;
-	const USHORT selectedChannels = ctx->SelectedChannels;
-	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	// The codec in use decides which stored format this endpoint offers: with one forced, its
+	// own entry; an automatic choice leaves every format the runnable codecs can play listed,
+	// so whichever codec the sink ends up with plays the endpoint's own format.
+	const ULONG pinnedCodec = AudioPinnedCodec(ctx);
+	ULONG selectedRate = 0;
+	USHORT selectedChannels = 0;
+	if (pinnedCodec < Ioctl::kCodecCount)
+	{
+		KIRQL irql;
+		KeAcquireSpinLock(&ctx->AudioLock, &irql);
+		selectedRate = ctx->CodecSampleRate[pinnedCodec];
+		selectedChannels = ctx->CodecChannels[pinnedCodec];
+		KeReleaseSpinLock(&ctx->AudioLock, irql);
+	}
 	ULONG startIndex = FirstListed(desired);
 	if (selectedRate != 0)
 	{
@@ -602,11 +667,24 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx)
 	return NT_SUCCESS(status) ? defaultStatus : status;
 }
 
-bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT channels)
+bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG codec, ULONG sampleRate, USHORT channels)
 {
-	const ULONG desired = DesiredFormats(ctx);
-	const ULONG bits16 = RenderFormatIndex(sampleRate, channels, 16);
-	const ULONG bits24 = RenderFormatIndex(sampleRate, channels, AptxHd::kBitsPerSample);
-	return (bits16 < AudioRenderFormatCount && (desired & (1u << bits16)) != 0) ||
-		   (bits24 < AudioRenderFormatCount && (desired & (1u << bits24)) != 0);
+	if (sampleRate == 0)
+	{
+		return true; // automatic: every format this codec can play
+	}
+	if (codec >= Ioctl::kCodecCount)
+	{
+		return false;
+	}
+	// The format has to be one the endpoint can list at all - a rate and channel count from the
+	// render table - and one this codec can carry from what the sink advertised.
+	const bool known = RenderFormatIndex(sampleRate, channels, 16) < AudioRenderFormatCount ||
+					   RenderFormatIndex(sampleRate, channels, AptxHd::kBitsPerSample) < AudioRenderFormatCount;
+	return known && CodecCanCarryFormat(ctx, codec, sampleRate, channels);
+}
+
+ULONG AudioPinnedCodec(_In_ DEVICE_CONTEXT* ctx)
+{
+	return PinnedCodec(ctx);
 }
