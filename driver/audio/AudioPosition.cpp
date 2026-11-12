@@ -136,7 +136,18 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		const uint32_t limitMs =
 			LatencyBudget::RingLimitMs(ctx->PacingLeadMs, LatencyBudget::kPcmSlackMs);
 		const uint32_t limit = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, limitMs);
-		ctx->AudioTrimmedBytes += PcmBacklog::Trim(ring, limit, frameBytes);
+		// A backlog that shows up on one copy tick is a wobble, not a stall: the pacer may simply
+		// be between packets. Only an excess that persists is dropped, and it is dropped back to
+		// the lead rather than to the limit, so the one gap it costs buys an interval of headroom
+		// instead of leaving the ring on the edge where the next burst trims again.
+		const uint32_t targetMs =
+			LatencyBudget::TrimTargetMs(ctx->PacingLeadMs, LatencyBudget::kPcmSlackMs);
+		const uint32_t target = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, targetMs);
+		if (LatencyBudget::TrimNow(PcmBacklog::OverLimit(ring, limit, frameBytes),
+								ctx->PcmTrimStrikes))
+		{
+			ctx->AudioTrimmedBytes += PcmBacklog::Trim(ring, target, frameBytes);
+		}
 
 		// Peak driver-side latency for this stream. An instantaneous reading hides the spike a
 		// stall caused, so the worst the lead and both rings have been is kept until the next

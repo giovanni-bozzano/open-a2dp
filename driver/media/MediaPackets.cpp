@@ -178,11 +178,19 @@ static void TrimFrameBacklog(DEVICE_CONTEXT* ctx)
 	}
 	RingBufferView frames(ctx->FrameRingHeader, ctx->FrameRingData);
 	// The lead is what the sink is meant to have queued, so only what the ring holds past it is
-	// excess worth dropping.
+	// excess worth dropping. As on the PCM side that excess has to persist to be dropped, and it
+	// is then dropped back to the lead itself so one trim buys an interval of headroom.
 	const uint32_t limitMs =
 		LatencyBudget::RingLimitMs(ctx->PacingLeadMs, LatencyBudget::kFrameSlackMs);
 	const uint32_t limit = ctx->ActiveSampleRate * limitMs / 1000;
-	const uint32_t trimmedSamples = FrameRecord::Trim(frames, limit);
+	const uint32_t targetMs =
+		LatencyBudget::TrimTargetMs(ctx->PacingLeadMs, LatencyBudget::kFrameSlackMs);
+	const uint32_t target = ctx->ActiveSampleRate * targetMs / 1000;
+	if (!LatencyBudget::TrimNow(FrameRecord::Buffered(frames) > limit, ctx->FrameTrimStrikes))
+	{
+		return;
+	}
+	const uint32_t trimmedSamples = FrameRecord::Trim(frames, target);
 	if (trimmedSamples == 0)
 	{
 		return;

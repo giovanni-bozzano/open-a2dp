@@ -202,6 +202,37 @@ TEST(LatencyBudget_TrimLimitsNeverCapTheLead)
 	}
 }
 
+// A backlog has to persist before audio is dropped for it. One observation over the limit is a
+// wobble - the pacer between packets, a record written as the ring emptied - and the gap a trim
+// costs is worse than the few milliseconds of latency that would have absorbed it.
+TEST(LatencyBudget_TrimNeedsAPersistentBacklog)
+{
+	using namespace LatencyBudget;
+	uint32_t strikes = 0;
+	// The first excess is left alone.
+	CHECK(!TrimNow(true, strikes));
+	// One observation under the limit clears the count, so the next excess starts over.
+	CHECK(!TrimNow(false, strikes));
+	CHECK_EQ(strikes, uint32_t{0});
+	CHECK(!TrimNow(true, strikes));
+	// Only the excess that survived an interval is dropped, and a backlog that stays is.
+	CHECK(TrimNow(true, strikes));
+	CHECK(TrimNow(true, strikes));
+}
+
+// What a trim drops back to: the lead itself, so the gap it costs leaves an interval of headroom
+// instead of the ring sitting on the edge. Without a lead the limit the caller computed is kept.
+TEST(LatencyBudget_TrimTargetIsTheLead)
+{
+	using namespace LatencyBudget;
+	for (uint32_t lead = Ioctl::kMinPrerollMs; lead <= Ioctl::kMaxPrerollMs; lead += 10)
+	{
+		CHECK_EQ(TrimTargetMs(lead, kPcmSlackMs) + kPcmSlackMs, RingLimitMs(lead, kPcmSlackMs));
+		CHECK(TrimTargetMs(lead, kPcmSlackMs) <= RingLimitMs(lead, kPcmSlackMs));
+	}
+	CHECK_EQ(TrimTargetMs(0, kFrameSlackMs), kFrameSlackMs);
+}
+
 // An underrun is audio the media clock asked for that the ring did not have. Two kinds of
 // silence are normal and must not count, or the number the panel shows would fire on a stream
 // with nothing wrong with it: the lead a stream pads at start, and the tail of a packet, which

@@ -47,6 +47,25 @@ uint32_t FirstFrameIndex(TestRing& ring)
 
 } // namespace
 
+// The over-limit test is what a caller uses to require the excess to persist before it trims;
+// it has to agree with Trim's own margin, or a ring would be called over the limit while Trim
+// would still decline to drop anything.
+TEST(PcmBacklog_OverLimitMatchesTheTrimMargin)
+{
+	TestRing ring(4096);
+	FillFrames(ring, 100); // 400 bytes
+
+	CHECK(!PcmBacklog::OverLimit(ring.view, 800, kFrameBytes));
+	// Exactly the allowance plus one frame: Trim leaves it alone, so this is not over.
+	CHECK(!PcmBacklog::OverLimit(ring.view, 396, kFrameBytes));
+	CHECK(PcmBacklog::OverLimit(ring.view, 392, kFrameBytes));
+	// Without a frame size nothing can be measured or dropped.
+	CHECK(!PcmBacklog::OverLimit(ring.view, 0, 0));
+	// Over the limit by two frames, and Trim drops exactly that much.
+	CHECK_EQ(PcmBacklog::Trim(ring.view, 392, kFrameBytes), uint32_t{8});
+	CHECK_EQ(ring.view.ReadableBytes(), uint32_t{392});
+}
+
 TEST(PcmBacklog_LeavesAFittingRingAlone)
 {
 	TestRing ring(4096);

@@ -60,6 +60,7 @@ void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	ctx->ServiceLastFrameTime = ctx->MediaStartTime;
 	ctx->ServiceLastUnderrunLog = 0;
+	ctx->FrameTrimStrikes = 0;
 	InterlockedExchange(&ctx->StreamFault, 0);
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);

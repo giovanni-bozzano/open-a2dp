@@ -23,6 +23,50 @@ constexpr uint32_t RingLimitMs(uint32_t leadMs, uint32_t slackMs) noexcept
 	return leadMs + slackMs;
 }
 
+// A backlog has to persist before audio is dropped for it. One observation over the limit is a
+// wobble - a copy tick landing while the pacer sits between packets, a record written just as
+// the consumer empties the ring - and trimming it costs a gap the few milliseconds of extra
+// latency would have paid for. The excess has to be seen on `kTrimStrikes` consecutive
+// observations, which at every supported format is tens of milliseconds; a stall is far longer.
+constexpr uint32_t kTrimStrikes = 2;
+
+// Whether this observation should trim, given the caller's running count of consecutive
+// over-limit observations. One observation under the limit clears the count, so only a backlog
+// that persists reaches the trim.
+constexpr bool TrimNow(bool overLimit, uint32_t& strikes) noexcept
+{
+	if (!overLimit) {
+		strikes = 0;
+		return false;
+	}
+	if (strikes < kTrimStrikes) {
+		++strikes;
+	}
+	return strikes >= kTrimStrikes;
+}
+
+// What a trim drops back to. The trigger is the lead plus the slack, but trimming to exactly
+// that leaves the ring on the edge where the next small burst trims again; dropping the slack
+// too buys a full interval of headroom for the one gap it costs. With no lead configured the
+// target is the trigger itself, which is the behaviour a stream without a lead had before.
+constexpr uint32_t TrimTargetMs(uint32_t leadMs, uint32_t slackMs) noexcept
+{
+	return leadMs != 0 ? leadMs : leadMs + slackMs;
+}
+
+// The least lead a stream can run with: one access unit plus the copy tick that has to fill it.
+// Below that the pacer asks for a packet's audio before the producer has had a chance to write
+// it, so the deficit is padded with silence on every packet - an underrun that no sink and no
+// amount of CPU could avoid. `unitSamples` is what one access unit of the negotiated codec
+// carries: the SBC frames the MTU fits, or one record of the encoder service.
+constexpr uint32_t LeadFloorMs(uint32_t unitSamples, uint32_t sampleRate) noexcept
+{
+	if (sampleRate == 0 || unitSamples == 0) {
+		return 0;
+	}
+	return (unitSamples * 1000u + sampleRate - 1) / sampleRate + kPcmSlackMs;
+}
+
 // PCM the media clock asked for that the ring did not have - the gap a listener hears.
 //
 // A packet carries more samples than the clock has asked for, because it is built whole, and

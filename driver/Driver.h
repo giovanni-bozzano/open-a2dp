@@ -540,6 +540,12 @@ struct DEVICE_CONTEXT
 	// sampled on the audio copy tick. A transport or service stall shows up here even after the
 	// stream trimmed back to live.
 	volatile LONG LatencyPeakMs;
+	// Consecutive observations each ring has been over its limit. A backlog has to persist before
+	// audio is dropped for it (LatencyBudget::TrimNow), so one copy tick or one record written at
+	// the wrong moment cannot cost a gap. PcmTrimStrikes is guarded by AudioLock, FrameTrimStrikes
+	// by MediaLock, and both start over with the stream.
+	uint32_t PcmTrimStrikes;
+	uint32_t FrameTrimStrikes;
 	// Most SBC frames one packet carries for this stream, from the stored preference at
 	// MediaStart; 0 lets the MTU decide. Shorter packets carry less audio each.
 	volatile ULONG SbcFramesPerPacket;

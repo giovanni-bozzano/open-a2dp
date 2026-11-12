@@ -22,6 +22,18 @@ constexpr uint32_t LimitBytes(uint32_t sampleRate, uint32_t frameBytes, uint32_t
 	return static_cast<uint32_t>(static_cast<uint64_t>(sampleRate) * frameBytes * backlogMs / 1000);
 }
 
+// The test Trim applies before it drops anything: more than the allowance plus one frame, so a
+// ring that is only marginally over is left alone. Exposed separately so a caller can require
+// the excess to persist across several observations (LatencyBudget::TrimNow) before it pays for
+// a gap by dropping audio.
+inline bool OverLimit(const RingBufferView& ring, uint32_t limitBytes, uint32_t frameBytes) noexcept
+{
+	if (frameBytes == 0) {
+		return false;
+	}
+	return ring.ReadableBytes() > limitBytes + frameBytes;
+}
+
 // Drops the oldest whole frames while the ring holds more than `limitBytes`, and returns the
 // number of bytes dropped (always a whole number of frames). Frames are never split, so the
 // consumer still reads aligned audio, and the newest frame is always kept.
