@@ -59,9 +59,12 @@ constexpr uint32_t EffectivePrerollMs(uint32_t preferred) noexcept
 // shorter than the interval in which the producer hands audio over cannot be served.
 constexpr uint32_t kServiceRecordMs = 10;
 
-// Ring capacities, bytes (powers of two). PCM holds ~370 ms of 44.1 kHz stereo;
-// the frame ring holds ~1.6 s at 320 kbps.
-constexpr uint32_t kPcmRingBytes = 64 * 1024;
+// Ring capacities, bytes (powers of two). The frame ring holds ~1.6 s at 320 kbps. PCM is sized
+// by time at the widest stream the endpoint offers rather than as a count of bytes: 96 kHz
+// stereo in 24-in-32 is eight bytes a frame, and the ring has to hold the longest pacing lead
+// the preference allows (kMaxPrerollMs) plus the trim slack, so a long lead is buffered instead
+// of trimmed or dropped. At 44.1 kHz stereo that leaves about 1.4 s of headroom.
+constexpr uint32_t kPcmRingBytes = 256 * 1024;
 constexpr uint32_t kFrameRingBytes = 64 * 1024;
 
 // A record is header + payload; size is exact, so records are never padded.

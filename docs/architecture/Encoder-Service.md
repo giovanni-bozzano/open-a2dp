@@ -83,10 +83,10 @@ The driver allocates one contiguous non-paged block per device and maps it once,
 the process that called `MAP_RINGS`:
 
 ```
-offset 0                    RingHeader PCM      (192 bytes, 64-byte aligned)
-offset 192                  PCM data            (64 KiB, power of two)
-offset 192 + 64 KiB         RingHeader frames   (192 bytes)
-offset 192 + 64 KiB + 192   Frame data          (64 KiB, power of two)
+offset 0                      RingHeader PCM      (192 bytes, 64-byte aligned)
+offset 192                    PCM data            (256 KiB, power of two)
+offset 192 + 256 KiB          RingHeader frames   (192 bytes)
+offset 192 + 256 KiB + 192    Frame data          (64 KiB, power of two)
 ```
 
 `SharedRings` (the `MAP_RINGS` output) carries the offsets, capacities and the user-mode

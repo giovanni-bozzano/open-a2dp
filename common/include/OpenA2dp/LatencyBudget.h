@@ -18,6 +18,15 @@ namespace OpenA2dp::LatencyBudget {
 constexpr uint32_t kPcmSlackMs = 20;   // one packet plus a copy tick
 constexpr uint32_t kFrameSlackMs = 40; // a couple of encoded records
 
+// The PCM ring has to hold the longest lead a preference allows plus that slack at the widest
+// format the endpoint offers - 96 kHz stereo in 24-in-32, eight bytes a frame - or the trims
+// would fight the configured lead and a full ring would drop audio instead of buffering it.
+constexpr uint32_t kPcmRingMaxBytesPerFrame = 8;
+constexpr uint32_t kPcmRingMaxRate = 96000;
+static_assert(Ioctl::kPcmRingBytes * 1000u >=
+					  (Ioctl::kMaxPrerollMs + kPcmSlackMs) * kPcmRingMaxRate * kPcmRingMaxBytesPerFrame,
+			  "the PCM ring must hold the longest pacing lead at the widest supported format");
+
 constexpr uint32_t RingLimitMs(uint32_t leadMs, uint32_t slackMs) noexcept
 {
 	return leadMs + slackMs;

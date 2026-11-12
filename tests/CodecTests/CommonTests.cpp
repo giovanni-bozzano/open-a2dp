@@ -17,6 +17,19 @@ using namespace OpenA2dp;
 // driver) and a maximum-size frame must fit in one ring record.
 static_assert(Ioctl::kMaxFramePayload + sizeof(Ioctl::FrameRecordHeader) <= Ioctl::kMaxFrameRecordBytes);
 
+// The PCM ring is sized for the longest lead a preference allows at the widest format the
+// endpoint offers, so a long lead is buffered rather than trimmed or dropped.
+TEST(Ioctl_PcmRingHoldsTheLongestLead)
+{
+	const uint64_t bytesPerSecond =
+		static_cast<uint64_t>(LatencyBudget::kPcmRingMaxRate) * LatencyBudget::kPcmRingMaxBytesPerFrame;
+	const uint64_t trimLimit = bytesPerSecond *
+		LatencyBudget::RingLimitMs(Ioctl::kMaxPrerollMs, LatencyBudget::kPcmSlackMs) / 1000;
+	CHECK(trimLimit <= Ioctl::kPcmRingBytes);
+	// Past the trim limit a record still fits, so a full ring is never on the edge of the limit.
+	CHECK(static_cast<uint64_t>(Ioctl::kPcmRingBytes) - trimLimit >= bytesPerSecond / 100);
+}
+
 // The endpoint rates are exactly the ones the encoders take; anything else is not a format it
 // can offer, whichever codec asks for it.
 TEST(Ioctl_EndpointRates)

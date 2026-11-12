@@ -32,8 +32,8 @@ carries (`RegisterEncoderOut`/`WaitEventOut.pcmValidBits`).
   keeps whole bytes in the ring; packed 3-byte 24 is legal but rarely accepted.
 - Ring: the depth comes from the actual stream format, so `PinBytesPerFrame` is channels
   times the container size and `AudioReadPcm`, `ctx->PcmBuffer` and the render format table
-  become depth aware. At 48 kHz stereo, 24-in-32 halves the 64 KiB ring to about 170 ms,
-  still above the preroll.
+  become depth aware. The PCM ring is sized by time at the widest format, 96 kHz stereo in
+  24-in-32, so it holds the longest lead a preference allows (200 ms) at every rate.
 - Encoder seam: `PcmFormat` carries the depth and `Encode` takes bytes. SBC, AAC and
   classic aptX declare 16 and reject anything else; HD declares 24-in-32.
 - HD input: `aptxhdbtenc_encodestereo(state, pcmL[4], pcmR[4], out[2])` wants four 24-bit
