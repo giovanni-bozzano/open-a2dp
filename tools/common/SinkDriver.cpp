@@ -572,6 +572,23 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 		{
 			switched = RestartNode(dev, error);
 		}
+		// Ask the node which driver it actually bound rather than trusting the install call:
+		// a package that installs but loses the bind leaves the sink with no A2DP driver at all,
+		// and that has to be a failed switch that says so, not a success reported from what the
+		// call returned.
+		if (switched)
+		{
+			const std::wstring bound = StringProperty(set, dev, SPDRP_SERVICE);
+			if (DriverOfServiceName(bound) != target)
+			{
+				error = bound.empty()
+							? std::string("the package installed, but the sink's A2DP node bound no driver; "
+										  "reconnect the sink")
+							: "the package installed, but the sink's A2DP node is still on " + Utf8(bound) +
+									  "; reconnect the sink and try again";
+				switched = false;
+			}
+		}
 	}
 	(void)SetupDiDestroyDriverInfoList(set, &dev, SPDIT_COMPATDRIVER);
 	SetupDiDestroyDeviceInfoList(set);
