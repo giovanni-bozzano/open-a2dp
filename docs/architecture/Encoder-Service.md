@@ -2,8 +2,8 @@
 
 ## 1. Scope
 
-`OpenA2dpSvc.exe` encodes the service-side codecs: AAC-LC, classic aptX and aptX HD. SBC
-stays in the kernel and must keep working with no service installed, running or reachable.
+`OpenA2dpSvc.exe` encodes the service-side codecs: AAC-LC, classic aptX, aptX HD and LDAC.
+SBC stays in the kernel and must keep working with no service installed, running or reachable.
 
 v1 assumptions:
 
@@ -18,6 +18,12 @@ v1 assumptions:
   111 four-byte frames at 44.1 kHz, 120 at 48 kHz; the odd sample per span is carried into
   the next record so the clock does not drift). Its encoder takes 16-bit input, so a
   24-in-32 ring is narrowed per sample with the kernel SBC path's rounding;
+- LDAC at 44.1/48 kHz stereo. The encoder takes 128 samples per channel and returns a whole
+  media packet at a time - two transport frames at 44.1/48 kHz, about 5.8 ms - so a record
+  covers the 256 samples those frames hold, and nothing is carried between records. Its
+  payload is the encoder's own frame sequence, headers included, and it needs the 679-byte
+  2-DH5 payload, so a link whose media MTU cannot carry that never selects it. The quality
+  mode (990, 660 or 330 kbps) is local and is not negotiated;
 - one AAC LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
 - the ACX endpoint lists 16-bit formats, and 24-in-32 while aptX HD can run; the encoders
   follow the rate Windows opened the stream with. AAC keeps 16-bit input: Media Foundation
@@ -154,7 +160,7 @@ struct.
 | `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
 | `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M5b). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
 | `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
-| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC, AAC, aptX or aptX HD; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. A forced codec is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks it. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
+| `SET_PREFERENCE` | `Preference` | – | Stored under the driver's `Parameters\Devices\<addr>` key and restored at device start (`driver/config/`). A forced codec must be SBC, AAC, aptX or aptX HD or LDAC, and `ldacQuality` is 0..2; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. A forced codec is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks it. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
 | `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format the endpoint offers Windows. 0/0 is automatic (every sink format), otherwise the one pinned rate and channel count |
 | `SET_ENDPOINT_FORMAT` | `EndpointFormat` | – | Stored per sink (`SelectedSampleRate`/`SelectedChannels`) and applied by rebuilding the listed formats in place, which makes Windows re-query the endpoint. Automatic (`0`/`0`) or 44100/48000 Hz with 1 or 2 channels; a format the discovered sink does not advertise is refused with `STATUS_NOT_SUPPORTED`. Windows plays the first listed format and ignores the Sound-settings pick, so a pinned format is listed alone |
 
@@ -215,7 +221,7 @@ symbolic link `\DosDevices\OpenA2dpCtl-<address>`):
    exists) and when a worker ends. There is no polling.
 2. `CreateFile` on `\\.\OpenA2dpCtl-<address>`.
 3. `GET_VERSION`; refuse to continue on an ABI mismatch.
-4. `REGISTER_ENCODER` once per codec the service provides (AAC, aptX, aptX HD), with the
+4. `REGISTER_ENCODER` once per codec the service provides (AAC, aptX, aptX HD, LDAC), with the
    service frame limit. AAC is required; each aptX codec is optional.
 5. `MAP_RINGS`; build the two `RingBufferView`s.
 6. `WAIT_EVENT` loop.
@@ -273,7 +279,10 @@ Consequences:
 - SEID 3: aptX HD (vendor `0x000000D7` / codec `0x0024`), always advertised; selectable
   only while its provider is registered, in 24-bit stereo at the endpoint's rate;
 - SEID 4: classic aptX (vendor `0x0000004F` / codec `0x0001`), always advertised; selectable
-  only while its provider is registered, in 16-bit stereo at the endpoint's rate.
+  only while its provider is registered, in 16-bit stereo at the endpoint's rate;
+- SEID 5: LDAC (vendor `0x0000012D` / codec `0x00AA`), always advertised; selectable only
+  while its provider is registered, in 16- or 24-in-32 stereo at the endpoint's rate and only
+  on a link whose media payload carries LDAC's 679 bytes.
 
 The session answers DISCOVER with every local SEP, answers GET_CAPABILITIES per SEID,
 validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
@@ -281,9 +290,9 @@ validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
 local SEP by their vendor and codec IDs; SBC is checked inside the session, other codecs
 through the `ConfigValidator` callback).
 
-Policy: forced codec (if available) > aptX HD > aptX > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s
+Policy: forced codec (if available) > LDAC > aptX HD > aptX > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s
 `SelectConfig` has the AAC branch (`AacConfig::Select`, the endpoint rate, highest bitrate the
-sink accepts) and one vendor branch that tells the two aptX codecs apart by their IDs, scoring
+sink accepts) and one vendor branch that tells the codecs apart by their IDs, scoring LDAC 5,
 HD 4, aptX 3, AAC 2 and SBC 1. Every scored sink SEP is kept as a candidate in descending order; when the sink
 rejects a `SET_CONFIGURATION`, the session configures the next candidate for the same sink
 SEP, so a capable sink that refuses the best codec falls back without a reconnect.
@@ -291,9 +300,11 @@ SEP, so a capable sink that refuses the best codec falls back without a reconnec
 
 `MediaStart` dispatches on `SelectedCodec()`: SBC keeps the current kernel encoder; AAC
 validates the IE with `AacConfig::ParseConfiguredIe` and enters the service path; a vendor
-configuration is parsed as aptX HD or classic aptX and checked against the pin's depth in
-stereo, then enters the same service path with `ActiveCodec = kCodecAptxHd` or
-`kCodecAptx`, so `WAIT_EVENT` names the codec the service must encode.
+configuration is parsed as LDAC, aptX HD or classic aptX and checked against the pin's depth
+in stereo, then enters the same service path with `ActiveCodec` set to `kCodecLdac`,
+`kCodecAptxHd` or `kCodecAptx`, so `WAIT_EVENT` names the codec the service must encode. The
+event also carries the stored LDAC quality, which is the only codec parameter the service
+cannot read from the IE.
 
 ## 9. Failure handling and counters
 

@@ -53,7 +53,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			return;
 		}
 		if (in->codec != Ioctl::kCodecAac && in->codec != Ioctl::kCodecAptx &&
-			in->codec != Ioctl::kCodecAptxHd)
+			in->codec != Ioctl::kCodecAptxHd && in->codec != Ioctl::kCodecLdac)
 		{
 			Complete(request, STATUS_NOT_SUPPORTED);
 			return;
@@ -101,7 +101,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->pcmChannels = ctx->PinChannels;
 		out->pcmValidBits = ctx->PinValidBits;
 		OA2DP_INFO(ctx, "Service", "%s encoder registered (max frame %u bytes)",
-			in->codec == Ioctl::kCodecAptxHd ? "aptX HD"
+			in->codec == Ioctl::kCodecLdac   ? "LDAC"
+			: in->codec == Ioctl::kCodecAptxHd ? "aptX HD"
 			: in->codec == Ioctl::kCodecAptx   ? "aptX"
 													 : "AAC",
 			out->maxFramePayload);
@@ -380,12 +381,14 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		const LONG requiredBit = in->codec == Ioctl::kCodecAac    ? static_cast<LONG>(Ioctl::kSinkCodecAac)
 			: in->codec == Ioctl::kCodecAptx   ? static_cast<LONG>(Ioctl::kSinkCodecAptx)
 			: in->codec == Ioctl::kCodecAptxHd ? static_cast<LONG>(Ioctl::kSinkCodecAptxHd)
+			: in->codec == Ioctl::kCodecLdac   ? static_cast<LONG>(Ioctl::kSinkCodecLdac)
 													   : 0;
 		if ((in->flags & Ioctl::kPreferenceForceCodec) != 0 && requiredBit != 0 && sinkCodecs != 0 &&
 			(sinkCodecs & requiredBit) == 0)
 		{
 			OA2DP_WARN(ctx, "Service", "the sink does not advertise %s, so forcing it is refused",
-				in->codec == Ioctl::kCodecAptxHd ? "aptX HD"
+				in->codec == Ioctl::kCodecLdac   ? "LDAC"
+				: in->codec == Ioctl::kCodecAptxHd ? "aptX HD"
 				: in->codec == Ioctl::kCodecAptx   ? "aptX"
 														 : "AAC");
 			Complete(request, STATUS_NOT_SUPPORTED);

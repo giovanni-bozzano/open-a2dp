@@ -42,7 +42,13 @@ void ConfigFormat(Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength, ui
 	else if (codec == Avdtp::CodecType::Vendor)
 	{
 		uint8_t capabilities = 0;
-		if (AptxHd::ParseIe(ie, ieLength, capabilities) || Aptx::ParseIe(ie, ieLength, capabilities))
+		uint8_t channelModes = 0;
+		if (Ldac::ParseIe(ie, ieLength, capabilities, channelModes))
+		{
+			sampleRate = (capabilities & Ldac::kSampleRate44100) != 0 ? 44100u : 48000u;
+			channels = (channelModes & Ldac::kChannelStereo) != 0 ? 2u : 1u;
+		}
+		else if (AptxHd::ParseIe(ie, ieLength, capabilities) || Aptx::ParseIe(ie, ieLength, capabilities))
 		{
 			sampleRate = (capabilities & VendorAptx::kSampleRate44100) != 0 ? 44100u : 48000u;
 			channels = (capabilities & VendorAptx::kChannelStereo) != 0 ? 2u : 1u;
@@ -222,6 +228,58 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 
 	if (codec == Avdtp::CodecType::Vendor)
 	{
+		uint8_t ldacRates = 0;
+		uint8_t ldacModes = 0;
+		if (Ldac::ParseIe(remoteIe, remoteIeLength, ldacRates, ldacModes))
+		{
+			// Record the advertisement whether or not the codec can run now, for the same reason
+			// as the aptX ones: the settings window refuses to force a codec the sink lacks.
+			const bool ldacOffered = (InterlockedOr(&ctx->SinkCodecs,
+											  static_cast<LONG>(Ioctl::kSinkCodecLdac)) &
+									 static_cast<LONG>(Ioctl::kSinkCodecLdac)) != 0;
+			InterlockedExchange(&ctx->SinkLdacCapabilities,
+				static_cast<LONG>((static_cast<LONG>(ldacRates) << 8) | ldacModes));
+			if (!ldacOffered)
+			{
+				OA2DP_INFO(ctx, "AVDTP", "sink offers LDAC (rates 0x%02X, modes 0x%02X)",
+					static_cast<unsigned>(ldacRates), static_cast<unsigned>(ldacModes));
+			}
+			if (!ServiceCodecRegistered(ctx, Ioctl::kCodecLdac) ||
+				(forceCodec && preference.codec != Ioctl::kCodecLdac))
+			{
+				return 0;
+			}
+			// LDAC is specified around 2-DH5 packets; a link whose payload is smaller cannot
+			// carry it, and the encoder would spend the stream cutting frames to fit.
+			const size_t ldacPayload =
+				(ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
+			if (ldacPayload < Ldac::kMinMtuBytes)
+			{
+				OA2DP_WARN(ctx, "AVDTP", "the link carries %u bytes per packet, LDAC needs %u",
+					static_cast<unsigned>(ldacPayload), static_cast<unsigned>(Ldac::kMinMtuBytes));
+				return 0;
+			}
+			if (ctx->PinChannels != 2 || !AptxPinDepthUsable(ctx->PinValidBits, Ldac::kBitsPerSample))
+			{
+				OA2DP_WARN(ctx, "AVDTP", "LDAC needs 16- or 24-bit stereo, the endpoint format is %u ch %u-bit",
+					static_cast<unsigned>(ctx->PinChannels), static_cast<unsigned>(ctx->PinValidBits));
+				return 0;
+			}
+			const uint8_t ldacRate = ctx->PinSampleRate == 44100 ? Ldac::kSampleRate44100
+				: ctx->PinSampleRate == 48000
+				? Ldac::kSampleRate48000
+				: 0;
+			if (ldacRate == 0 || (ldacRates & ldacRate) == 0)
+			{
+				OA2DP_WARN(ctx, "AVDTP", "the sink cannot serve the endpoint's %u Hz with LDAC",
+					ctx->PinSampleRate);
+				return 0;
+			}
+			Ldac::WriteIe(ldacRate, Ldac::kChannelStereo, configIe);
+			configIeLength = Ldac::kIeLength;
+			return AcceptSelected(ctx, codec, configIe, configIeLength, 5);
+		}
+
 		uint8_t capabilities = 0;
 		const bool hd = AptxHd::ParseIe(remoteIe, remoteIeLength, capabilities);
 		const bool aptx = !hd && Aptx::ParseIe(remoteIe, remoteIeLength, capabilities);
@@ -341,9 +399,42 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 	}
 	if (codec == Avdtp::CodecType::Vendor)
 	{
-		// The aptX SEPs are always advertised, so a sink can propose their configurations even
-		// while no encoder exists. Refusing them here keeps the stream from opening into a
-		// codec the driver has nothing to encode with.
+		// The vendor SEPs are always advertised, so a sink can propose their configurations
+		// even while no encoder exists. Refusing them here keeps the stream from opening into
+		// a codec the driver has nothing to encode with.
+		uint8_t ldacRates = 0;
+		uint8_t ldacModes = 0;
+		if (Ldac::ParseIe(ie, ieLength, ldacRates, ldacModes))
+		{
+			const uint8_t ldacError = Ldac::ValidateIe(ie, ieLength);
+			if (ldacError != 0)
+			{
+				return ldacError;
+			}
+			if (!ServiceCodecRegistered(ctx, Ioctl::kCodecLdac))
+			{
+				return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
+			}
+			const size_t ldacPayload =
+				(ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
+			if (ldacPayload < Ldac::kMinMtuBytes)
+			{
+				return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
+			}
+			if (ctx->PinChannels != 2 || !AptxPinDepthUsable(ctx->PinValidBits, Ldac::kBitsPerSample))
+			{
+				return static_cast<uint8_t>(Avdtp::ErrorCode::UnsupportedConfiguration);
+			}
+			const uint8_t rate = ctx->PinSampleRate == 44100 ? Ldac::kSampleRate44100
+				: ctx->PinSampleRate == 48000
+				? Ldac::kSampleRate48000
+				: 0;
+			if (rate == 0 || (ldacRates & rate) == 0)
+			{
+				return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedSamplingFrequency);
+			}
+			return 0;
+		}
 		uint8_t capabilities = 0;
 		if (AptxHd::ParseIe(ie, ieLength, capabilities))
 		{
@@ -422,6 +513,13 @@ bool SelectedCodecValue(DEVICE_CONTEXT* ctx, uint32_t& codecValue)
 		return false;
 	}
 	uint8_t capabilities = 0;
+	uint8_t channelModes = 0;
+	if (Ldac::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities,
+					  channelModes))
+	{
+		codecValue = Ioctl::kCodecLdac;
+		return true;
+	}
 	if (AptxHd::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
 	{
 		codecValue = Ioctl::kCodecAptxHd;
@@ -470,6 +568,10 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	uint8_t aptxIe[Aptx::kIeLength] = {};
 	Aptx::WriteIe(static_cast<uint8_t>(Aptx::kSampleRate44100 | Aptx::kSampleRate48000), aptxIe);
 	ctx->Session.SetLocalSep(Avdtp::kLocalAptxSeid, Avdtp::CodecType::Vendor, aptxIe, sizeof(aptxIe));
+	uint8_t ldacIe[Ldac::kIeLength] = {};
+	Ldac::WriteIe(static_cast<uint8_t>(Ldac::kSampleRate44100 | Ldac::kSampleRate48000),
+		Ldac::kChannelStereo, ldacIe);
+	ctx->Session.SetLocalSep(Avdtp::kLocalLdacSeid, Avdtp::CodecType::Vendor, ldacIe, sizeof(ldacIe));
 	ctx->LoggedState = Avdtp::SessionState::Idle;
 	ctx->ResponseDeadline = 0;
 	InterlockedExchange(&ctx->MediaOpenPending, 0);
@@ -492,6 +594,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->SinkCodecs, 0);
 	InterlockedExchange(&ctx->SinkHdCapabilities, 0);
 	InterlockedExchange(&ctx->SinkAptxCapabilities, 0);
+	InterlockedExchange(&ctx->SinkLdacCapabilities, 0);
 	ctx->AppliedPreferenceParameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	// Packets queued for the previous session must not reach the next one.
 	ctx->SignalQueueHead = 0;

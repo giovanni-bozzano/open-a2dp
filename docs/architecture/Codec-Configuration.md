@@ -74,7 +74,8 @@ instead of stored, so reading a preference back always shows what the driver wil
 
 | Setting | Registry value | CLI | Values | Default |
 |---|---|---|---|---|
-| Codec choice | `CodecPreferenceFlags`, `CodecPreferenceCodec` | `codec auto\|sbc\|aac\|aptx\|aptxhd` | auto, SBC, AAC, aptX, aptX HD | auto (aptX HD, aptX, then AAC, as registered encoders and the sink allow, else SBC) |
+| Codec choice | `CodecPreferenceFlags`, `CodecPreferenceCodec` | `codec auto\|sbc\|aac\|aptx\|aptxhd\|ldac` | auto, SBC, AAC, aptX, aptX HD, LDAC | auto (LDAC, aptX HD, aptX, then AAC, as registered encoders and the sink allow, else SBC) |
+| LDAC quality | `CodecPreferenceLdacQuality` | `--ldac-quality high\|standard\|mobile` | 0 (990 kbps), 1 (660), 2 (330) | 0 |
 | SBC bitpool | `CodecPreferenceSbcBitpool` | `--bitpool n` | 2..250, clamped to the sink's range | 53 |
 | SBC block length | `CodecPreferenceSbcBlocks` | `--blocks n` | 4, 8, 12, 16 | 16 |
 | SBC subbands | `CodecPreferenceSbcSubbands` | `--subbands n` | 4, 8 | 8 |

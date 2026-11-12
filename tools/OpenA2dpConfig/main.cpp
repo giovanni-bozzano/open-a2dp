@@ -140,6 +140,7 @@ constexpr int kCodecSbcChoice = 1;
 constexpr int kCodecAacChoice = 2;
 constexpr int kCodecAptxChoice = 3;
 constexpr int kCodecAptxHdChoice = 4;
+constexpr int kCodecLdacChoice = 5;
 
 // What a sink is doing as far as the window can tell. The driver keeps a sink's control
 // device only while the link is up, so every listed sink is connected; a running stream is
@@ -498,8 +499,8 @@ constexpr RowTip kRowTips[] = {
 	 L"Windows plays the first format listed and ignores the Sound-settings pick, so "
 	 L"pinning is what makes your chosen format the one you actually hear."},
 	{"preference",
-	 L"The stored codec choice: one forced codec, or automatic (aptX HD > aptX > AAC > "
-	 L"SBC).\n\n"
+	 L"The stored codec choice: one forced codec, or automatic (LDAC > aptX HD > aptX > "
+	 L"AAC > SBC).\n\n"
 	 L"Automatic gives the best both ends support; forcing a codec the sink does not "
 	 L"advertise is refused rather than silently substituted."},
 	{"SBC bitpool",
@@ -659,9 +660,9 @@ constexpr FieldTip kFieldTips[] = {
 	 L"codec and their own latency - a setting made here never silently reshapes the other."},
 	{kCodecCombo,
 	 L"Which codec the sink may use.\n\n"
-	 L"Automatic takes the best both ends support - aptX HD, then aptX, then AAC, then "
-	 L"SBC - so that is what to leave it on unless a headset misbehaves. Forcing a codec the sink "
-	 L"does not advertise is refused."},
+	 L"Automatic takes the best both ends support - LDAC, then aptX HD, then aptX, then "
+	 L"AAC, then SBC - so that is what to leave it on unless a headset misbehaves. Forcing a "
+	 L"codec the sink does not advertise is refused."},
 	{kBitrateCombo,
 	 L"The bitrate the AAC encoder aims for, capped by what the media packet can carry.\n\n"
 	 L"Higher is better sound and uses more of the link; the default is the highest the "
@@ -1129,11 +1130,12 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, mono", FormatComboValue(48000, 1));
 	AddComboItem(hwnd, kFormatCombo, L"48000 Hz, stereo", FormatComboValue(48000, 2));
 
-	AddComboItem(hwnd, kCodecCombo, L"Automatic (aptX HD, aptX, AAC, then SBC)", kCodecAuto);
+	AddComboItem(hwnd, kCodecCombo, L"Automatic (LDAC, aptX HD, aptX, AAC, then SBC)", kCodecAuto);
 	AddComboItem(hwnd, kCodecCombo, L"SBC only", kCodecSbcChoice);
 	AddComboItem(hwnd, kCodecCombo, L"AAC only", kCodecAacChoice);
 	AddComboItem(hwnd, kCodecCombo, L"aptX only", kCodecAptxChoice);
 	AddComboItem(hwnd, kCodecCombo, L"aptX HD only", kCodecAptxHdChoice);
+	AddComboItem(hwnd, kCodecCombo, L"LDAC only", kCodecLdacChoice);
 
 	AddComboItem(hwnd, kBitrateCombo, L"Highest the sink accepts", 0);
 	AddComboItem(hwnd, kBitrateCombo, L"96 kbps", 96000);
@@ -1215,6 +1217,10 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	else if (preference.codec == Ioctl::kCodecAptxHd)
 	{
 		codec = kCodecAptxHdChoice;
+	}
+	else if (preference.codec == Ioctl::kCodecLdac)
+	{
+		codec = kCodecLdacChoice;
 	}
 	SelectComboValue(hwnd, kCodecCombo, static_cast<uint32_t>(codec));
 	SelectComboValue(hwnd, kBitrateCombo, preference.aacBitrate);
@@ -1681,7 +1687,8 @@ void ApplySettings(HWND hwnd)
 	Ioctl::Preference preference = state->preference;
 	const uint32_t codec = ComboValue(hwnd, kCodecCombo);
 	preference.flags = codec == kCodecAuto ? 0 : Ioctl::kPreferenceForceCodec;
-	preference.codec = codec == kCodecAacChoice     ? Ioctl::kCodecAac
+	preference.codec = codec == kCodecLdacChoice   ? Ioctl::kCodecLdac
+		: codec == kCodecAacChoice   ? Ioctl::kCodecAac
 		: codec == kCodecAptxChoice   ? Ioctl::kCodecAptx
 		: codec == kCodecAptxHdChoice ? Ioctl::kCodecAptxHd
 		: codec == kCodecSbcChoice     ? Ioctl::kCodecSbc

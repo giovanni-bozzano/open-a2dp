@@ -18,13 +18,12 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M6 Config UI + install/uninstall | Done | — |
 | M7 System testing | In progress | The procedures are scripted; their runs and logs stay outside the repository |
 | M8 Signing + release | Not started | A signed package and its install path |
-| M9 LDAC | In progress | Capability IE, `LdacCodec` and `LdacStreamEncoder` done; service wiring, driver negotiation and UI remain |
+| M9 LDAC | In progress | Wired end to end (SEP 5, service, preference, CLI and window); a pass on a real LDAC sink remains |
 
 ## Next
 
-1. **LDAC plumbing**: start the stream from `OpenA2dpSvc.exe`, advertise and negotiate the codec
-   in the driver, then the settings window and CLI entry. The IE, codec and stream encoder are
-   in place.
+1. **LDAC on hardware**: a pass with a real LDAC sink - the 990 kbps stream, forcing the codec
+   from the settings window, and the quality modes through `OpenA2dpCtl --ldac-quality`.
 2. **A first scripted pass** of the hardware procedures, kept with the build it ran on: it is the
    only run that exercises the pause-then-switch sequence, whose matches are now covered by
    `tests/CodecTests/SinkMatchTests.cpp`.

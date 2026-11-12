@@ -99,7 +99,7 @@ static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
 static bool ProviderCodec(uint32_t codecValue) noexcept
 {
 	return codecValue == Ioctl::kCodecAac || codecValue == Ioctl::kCodecAptx ||
-		codecValue == Ioctl::kCodecAptxHd;
+		codecValue == Ioctl::kCodecAptxHd || codecValue == Ioctl::kCodecLdac;
 }
 
 static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t& codecValue)
@@ -120,6 +120,12 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 	// Classic aptX takes 16-bit PCM and narrows a 24-in-32 pin in the service, in stereo.
 	const bool aptxUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptx) && offers(Ioctl::kSinkCodecAptx) &&
 		AptxPinDepthUsable(ctx->PinValidBits, Aptx::kBitsPerSample) && ctx->PinChannels == 2;
+	// LDAC likewise narrows a 24-in-32 pin, and needs a link that carries its 2-DH5 payload.
+	const size_t ldacPayload =
+		(ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu) - Rtp::kHeaderSize;
+	const bool ldacUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecLdac) && offers(Ioctl::kSinkCodecLdac) &&
+		AptxPinDepthUsable(ctx->PinValidBits, Ldac::kBitsPerSample) && ctx->PinChannels == 2 &&
+		ldacPayload >= Ldac::kMinMtuBytes;
 	// A forced codec that cannot run keeps the stream silent, which is what the preference
 	// asks for - except while a provider that served the configured stream is missing: the
 	// fallback then takes a codec the driver encodes itself, and the provider's return
@@ -134,6 +140,14 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 			codec = Avdtp::CodecType::Sbc;
 			codecValue = Ioctl::kCodecSbc;
 			return true;
+		case Ioctl::kCodecLdac:
+			if (ldacUsable)
+			{
+				codec = Avdtp::CodecType::Vendor;
+				codecValue = Ioctl::kCodecLdac;
+				return true;
+			}
+			break;
 		case Ioctl::kCodecAptxHd:
 			if (hdUsable)
 			{
@@ -166,8 +180,14 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 			return false;
 		}
 	}
-	// Automatic order is quality order: aptX HD, classic aptX, AAC, then the mandatory SBC
-	// fallback.
+	// Automatic order is quality order: LDAC, aptX HD, classic aptX, AAC, then the mandatory
+	// SBC fallback.
+	if (ldacUsable)
+	{
+		codec = Avdtp::CodecType::Vendor;
+		codecValue = Ioctl::kCodecLdac;
+		return true;
+	}
 	if (hdUsable)
 	{
 		codec = Avdtp::CodecType::Vendor;

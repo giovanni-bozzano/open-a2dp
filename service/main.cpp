@@ -7,6 +7,7 @@
 #include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AptxHdStreamEncoder.h>
 #include <OpenA2dp/AptxStreamEncoder.h>
+#include <OpenA2dp/LdacStreamEncoder.h>
 
 #include <windows.h>
 #include <avrt.h>
@@ -311,6 +312,7 @@ void DeviceLoop(const std::wstring& linkName)
 	}
 	(void)RegisterEncoder(h, Ioctl::kCodecAptx, "aptX");
 	(void)RegisterEncoder(h, Ioctl::kCodecAptxHd, "aptX HD");
+	(void)RegisterEncoder(h, Ioctl::kCodecLdac, "LDAC");
 
 	// Map rings.
 	Ioctl::SharedRings rings = {};
@@ -340,6 +342,7 @@ void DeviceLoop(const std::wstring& linkName)
 	AacStreamEncoder streamEncoder;
 	AptxHdStreamEncoder hdStreamEncoder;
 	AptxStreamEncoder aptxStreamEncoder;
+	LdacStreamEncoder ldacStreamEncoder;
 
 	// Main event loop.
 	for (;;) {
@@ -370,6 +373,51 @@ void DeviceLoop(const std::wstring& linkName)
 			streamEncoder.Stop();
 			hdStreamEncoder.Stop();
 			aptxStreamEncoder.Stop();
+			ldacStreamEncoder.Stop();
+
+			if (ev.codec == Ioctl::kCodecLdac) {
+				Log("[svc] LDAC stream start: %u Hz, %u ch, %u-bit", ev.sampleRate, ev.channels,
+					ev.pcmValidBits);
+				// The encoder is fed 16-bit stereo and narrows a 24-in-32 ring itself.
+				if (ev.channels != 2 ||
+					(ev.pcmValidBits != Ldac::kBitsPerSample && ev.pcmValidBits != 24)) {
+					Log("[svc] LDAC needs 16- or 24-bit stereo, got %u ch %u-bit", ev.channels,
+						ev.pcmValidBits);
+					continue;
+				}
+
+				uint8_t ie[Ldac::kIeLength] = {};
+				Ldac::WriteIe(ev.sampleRate == 44100 ? Ldac::kSampleRate44100 : Ldac::kSampleRate48000,
+					Ldac::kChannelStereo, ie);
+				A2dpCodecConfig config = {};
+				config.codec = CodecType::Vendor;
+				std::memcpy(config.ie, ie, sizeof(ie));
+				config.ieLength = static_cast<uint8_t>(sizeof(ie));
+
+				// The quality mode is a local setting, so the encoder is built with whatever the
+				// driver reported in the start event rather than negotiated again here.
+				auto codec = CreateVendorCodec(Ldac::kVendorId, Ldac::kCodecId);
+				if (!codec) {
+					Log("[svc] LDAC codec is not available");
+					continue;
+				}
+				std::unique_ptr<IA2dpEncoder> encoder;
+				if (FAILED(codec->CreateEncoder(config, encoder))) {
+					Log("[svc] LDAC CreateEncoder failed");
+					continue;
+				}
+
+				LdacStreamParams params;
+				params.sampleRate = ev.sampleRate;
+				params.channels = static_cast<uint16_t>(ev.channels);
+				params.bitsPerSample = static_cast<uint16_t>(ev.pcmValidBits);
+				params.quality = static_cast<uint8_t>(ev.ldacQuality);
+				params.prerollMs = ev.prerollMs;
+				if (!ldacStreamEncoder.Start(std::move(encoder), params, pcmRing, nowUs)) {
+					Log("[svc] LdacStreamEncoder::Start failed");
+				}
+				continue;
+			}
 
 			if (ev.codec == Ioctl::kCodecAptxHd) {
 				Log("[svc] aptX HD stream start: %u Hz, %u ch, %u-bit", ev.sampleRate, ev.channels,
@@ -505,6 +553,12 @@ void DeviceLoop(const std::wstring& linkName)
 					aptxStreamEncoder.Stop();
 				}
 			}
+			if (ldacStreamEncoder.Active()) {
+				if (!ldacStreamEncoder.Pump(nowUs, pcmRing, frameRing, 8)) {
+					Log("[svc] LDAC pump failed, stopping");
+					ldacStreamEncoder.Stop();
+				}
+			}
 		}
 
 		if (ev.events & Ioctl::kEventStreamStop) {
@@ -512,12 +566,14 @@ void DeviceLoop(const std::wstring& linkName)
 			streamEncoder.Stop();
 			hdStreamEncoder.Stop();
 			aptxStreamEncoder.Stop();
+			ldacStreamEncoder.Stop();
 		}
 	}
 
 	streamEncoder.Stop();
 	hdStreamEncoder.Stop();
 	aptxStreamEncoder.Stop();
+	ldacStreamEncoder.Stop();
 	CloseHandle(h);
 	Log("[svc] %s done", linkUtf8.c_str());
 }

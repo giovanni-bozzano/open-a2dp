@@ -8,7 +8,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
 	<ClCompile>
-	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\hd\include;$(OpenA2dpRoot)codecs\aptx\hd\src;$(OpenA2dpRoot)codecs\aptx\classic\include;$(OpenA2dpRoot)codecs\aptx\classic\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)codecs\aptx\hd\include;$(OpenA2dpRoot)codecs\aptx\hd\src;$(OpenA2dpRoot)codecs\aptx\classic\include;$(OpenA2dpRoot)codecs\aptx\classic\src;$(OpenA2dpRoot)codecs\ldac\inc;$(OpenA2dpRoot)codecs\ldac\src;$(OpenA2dpRoot)codecs\ldac\abr\inc;$(OpenA2dpRoot)codecs\ldac\compat;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	</ClCompile>
 	<Link>
 	  <SubSystem>Console</SubSystem>
@@ -27,6 +27,21 @@
 	<ClCompile Include="..\codecs\aptx\hd\AptxHdCodec.cpp" />
 	<ClCompile Include="..\codecs\aptx\hd\AptxHdStreamEncoder.cpp" />
 	<ClCompile Include="..\codecs\aptx\classic\AptxStreamEncoder.cpp" />
+	<ClCompile Include="..\codecs\ldac\LdacCodec.cpp" />
+	<ClCompile Include="..\codecs\ldac\LdacStreamEncoder.cpp" />
+	<!-- The vendored Sony LDAC encoder, built the same way the codec library builds it. -->
+	<ClCompile Include="..\codecs\ldac\src\ldaclib.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <AdditionalOptions>/FI"$(OpenA2dpRoot)codecs\ldac\compat\msvc.h" %(AdditionalOptions)</AdditionalOptions>
+	</ClCompile>
+	<ClCompile Include="..\codecs\ldac\src\ldacBT.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <AdditionalOptions>/FI"$(OpenA2dpRoot)codecs\ldac\compat\msvc.h" %(AdditionalOptions)</AdditionalOptions>
+	</ClCompile>
+	<ClCompile Include="..\codecs\ldac\abr\src\ldacBT_abr.c">
+	  <TreatWarningAsError>false</TreatWarningAsError>
+	  <AdditionalOptions>/FI"$(OpenA2dpRoot)codecs\ldac\compat\msvc.h" %(AdditionalOptions)</AdditionalOptions>
+	</ClCompile>
 	<!-- Vendored AOSP sources: kept verbatim, so their warnings are not ours to fix. -->
 	<ClCompile Include="..\codecs\aptx\hd\src\aptXHDbtenc.c">
 	  <TreatWarningAsError>false</TreatWarningAsError>

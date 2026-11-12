@@ -19,6 +19,7 @@
 #include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/Ioctl.h>
+#include <OpenA2dp/Ldac.h>
 #include <OpenA2dp/RingBuffer.h>
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcFixed.h>
@@ -137,6 +138,7 @@ inline const char* CodecValueName(uint32_t codec)
 	case OpenA2dp::Ioctl::kCodecAptx: return "aptX";
 	case OpenA2dp::Ioctl::kCodecAac: return "AAC";
 	case OpenA2dp::Ioctl::kCodecAptxHd: return "aptX HD";
+	case OpenA2dp::Ioctl::kCodecLdac: return "LDAC";
 	default: return "?";
 	}
 }
@@ -149,6 +151,11 @@ inline const char* CodecLabel(OpenA2dp::Avdtp::CodecType codec, const uint8_t* i
 	if (codec != OpenA2dp::Avdtp::CodecType::Vendor)
 	{
 		return CodecName(codec);
+	}
+	uint8_t modes = 0;
+	if (OpenA2dp::Ldac::ParseIe(ie, ieLength, capabilities, modes))
+	{
+		return "LDAC";
 	}
 	if (OpenA2dp::AptxHd::ParseIe(ie, ieLength, capabilities))
 	{
@@ -371,6 +378,10 @@ struct DEVICE_CONTEXT
 	volatile LONG SinkHdCapabilities;
 	// The same byte for classic aptX; its 16-bit formats follow it.
 	volatile LONG SinkAptxCapabilities;
+	// LDAC's two masks as one word: the sampling rates in the high byte, the channel modes in
+	// the low one. It only decides whether a stream may be negotiated, so the endpoint formats
+	// are unchanged by it.
+	volatile LONG SinkLdacCapabilities;
 	// Ioctl::kSinkCodec* bits for the codecs the sink advertised in the last discovery,
 	// written by the selector so SET_PREFERENCE and the CLI can refuse a codec the sink
 	// does not offer. Cleared when a new connection starts a fresh discovery.
@@ -518,6 +529,8 @@ struct DEVICE_CONTEXT
 	volatile uint32_t ActiveChannels;
 	volatile uint32_t ActiveBitrate;
 	volatile uint32_t ActiveObjectType;
+	// LDAC encode quality for the running stream, from the preference; it is not negotiated.
+	volatile uint32_t ActiveLdacQuality;
 	volatile LONG StreamFault;
 	// Counters a long stream keeps counting past what 32 bits hold: status reports them as
 	// they are, and a soak is the case that reads them. They accumulate for the endpoint's

@@ -22,6 +22,9 @@ const wchar_t kSbcSubbandsValueName[] = L"CodecPreferenceSbcSubbands";
 const wchar_t kSbcAllocationValueName[] = L"CodecPreferenceSbcAllocation";
 const wchar_t kPrerollValueName[] = L"CodecPreferencePrerollMs";
 const wchar_t kSbcFramesValueName[] = L"CodecPreferenceSbcFramesPerPacket";
+// LDAC's encode quality is a local setting, not a negotiated one, so it is stored with the
+// sink's other preferences.
+const wchar_t kLdacQualityValueName[] = L"CodecPreferenceLdacQuality";
 // The endpoint format the user selected; 0/0 (or no value) means automatic. The names differ
 // from the values earlier builds wrote from the observed stream, so a stale observation is
 // never mistaken for a selection.
@@ -108,6 +111,7 @@ bool ReadPreference(WDFKEY key, Ioctl::Preference& preference)
 	found |= ReadDword(key, kSbcAllocationValueName, preference.sbcAllocation);
 	found |= ReadDword(key, kPrerollValueName, preference.prerollMs);
 	found |= ReadDword(key, kSbcFramesValueName, preference.sbcFramesPerPacket);
+	found |= ReadDword(key, kLdacQualityValueName, preference.ldacQuality);
 	return found;
 }
 
@@ -175,10 +179,11 @@ void ConfigLoadPreference(_In_ DEVICE_CONTEXT* ctx)
 	{
 		OA2DP_INFO(ctx, "Config",
 			"codec preference %s restored from the registry (SBC bitpool %u, blocks %u, subbands %u, "
-			"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u)",
+			"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, "
+			"LDAC quality %u)",
 			PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
 			preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate, preference.prerollMs,
-			preference.sbcFramesPerPacket);
+			preference.sbcFramesPerPacket, preference.ldacQuality);
 	}
 }
 
@@ -215,6 +220,7 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 			WriteDword(ctx, sink, kSbcAllocationValueName, preference.sbcAllocation);
 			WriteDword(ctx, sink, kPrerollValueName, preference.prerollMs);
 			WriteDword(ctx, sink, kSbcFramesValueName, preference.sbcFramesPerPacket);
+			WriteDword(ctx, sink, kLdacQualityValueName, preference.ldacQuality);
 			WdfRegistryClose(sink);
 		}
 		WdfRegistryClose(devices);
@@ -223,10 +229,11 @@ void ConfigSavePreference(_In_ DEVICE_CONTEXT* ctx)
 
 	OA2DP_INFO(ctx, "Config",
 		"codec preference %s stored for this sink (SBC bitpool %u, blocks %u, subbands %u, "
-		"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u)",
+		"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, "
+		"LDAC quality %u)",
 		PreferenceName(preference), preference.sbcBitpool, preference.sbcBlocks,
 		preference.sbcSubbands, preference.sbcAllocation, preference.aacBitrate, preference.prerollMs,
-		preference.sbcFramesPerPacket);
+		preference.sbcFramesPerPacket, preference.ldacQuality);
 }
 
 void ConfigLoadEndpointFormat(_In_ DEVICE_CONTEXT* ctx)

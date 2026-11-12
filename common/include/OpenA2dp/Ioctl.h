@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 5;
+constexpr uint32_t kAbiVersion = 6;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -76,6 +76,7 @@ constexpr uint32_t kCodecSbc = 0x00;
 constexpr uint32_t kCodecAptx = 0x01;
 constexpr uint32_t kCodecAac = 0x02;
 constexpr uint32_t kCodecAptxHd = 0x03;
+constexpr uint32_t kCodecLdac = 0x04;
 
 enum class MediaState : uint32_t {
 	Idle = 0,
@@ -118,6 +119,7 @@ constexpr uint32_t kSinkCodecSbc = 1u << 0;
 constexpr uint32_t kSinkCodecAac = 1u << 1;
 constexpr uint32_t kSinkCodecAptxHd = 1u << 2;
 constexpr uint32_t kSinkCodecAptx = 1u << 3;
+constexpr uint32_t kSinkCodecLdac = 1u << 4;
 
 // Status.encoderRegistered and DEVICE_CONTEXT::EncoderRegistered hold one bit per registered
 // encoder codec. Registration is per codec because each provider supplies one codec, and a
@@ -223,6 +225,10 @@ struct WaitEventOut {
 	// Pacing lead the service must centre its records on, from the stored preference. It is
 	// the same distance the kernel paces SBC with, so the two paths behave alike.
 	uint32_t prerollMs;
+	// LDAC encode quality (0 = high, 1 = standard, 2 = mobile). It is a local setting, so the
+	// service builds its encoder with this rather than negotiating it; 0 for every other
+	// codec.
+	uint32_t ldacQuality;
 };
 
 // Length of Status.sinkName, UTF-16 including the terminator. The driver captured the name
@@ -332,6 +338,9 @@ struct Preference {
 	// it so a packet carries less audio (shorter packets, more of them). AAC and the aptX codecs
 	// send one access unit per packet and are unaffected.
 	uint32_t sbcFramesPerPacket;
+	// LDAC encode quality: 0 = high (990 kbps), 1 = standard, 2 = mobile. The mode is not in
+	// the A2DP IE, so both ends stay in step without negotiating it.
+	uint32_t ldacQuality;
 };
 
 // The PCM format the render endpoint offers Windows. Windows opens the shared-mode stream
@@ -391,18 +400,23 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	{
 		return false;
 	}
+	if (preference.ldacQuality > 2)
+	{
+		return false;
+	}
 	if ((preference.flags & kPreferenceForceCodec) == 0)
 	{
 		return true;
 	}
 	return preference.codec == kCodecSbc || preference.codec == kCodecAptx ||
-		   preference.codec == kCodecAac || preference.codec == kCodecAptxHd;
+		   preference.codec == kCodecAac || preference.codec == kCodecAptxHd ||
+		   preference.codec == kCodecLdac;
 }
 
-static_assert(sizeof(Preference) == 40, "Preference layout is part of the driver/CLI ABI");
+static_assert(sizeof(Preference) == 44, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is part of the ABI");
-static_assert(sizeof(WaitEventOut) == 36, "WaitEventOut layout is part of the ABI");
+static_assert(sizeof(WaitEventOut) == 40, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
 static_assert(sizeof(Status) == 336, "Status layout is part of the driver/CLI ABI");

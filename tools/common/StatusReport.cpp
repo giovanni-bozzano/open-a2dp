@@ -146,7 +146,12 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	}
 	else
 	{
-		AppendLine(text, "preference", "auto (aptX HD > aptX > AAC > SBC)");
+		AppendLine(text, "preference", "auto (LDAC > aptX HD > aptX > AAC > SBC)");
+	}
+	if (preference.ldacQuality != 0)
+	{
+		AppendLine(text, "LDAC quality",
+			preference.ldacQuality == 1 ? "standard" : "mobile");
 	}
 	if (preference.sbcBitpool != 0)
 	{
@@ -271,6 +276,10 @@ const char* CodecName(uint32_t codec)
 {
 	// The aptX codecs are vendor codecs, so their preference/status values are not AVDTP codec
 	// types.
+	if (codec == Ioctl::kCodecLdac)
+	{
+		return "LDAC";
+	}
 	if (codec == Ioctl::kCodecAptxHd)
 	{
 		return "aptX HD";
@@ -350,6 +359,10 @@ std::string CodecListText(uint32_t codecs)
 	if ((codecs & Ioctl::kSinkCodecAptxHd) != 0)
 	{
 		text += text.empty() ? "aptX HD" : ", aptX HD";
+	}
+	if ((codecs & Ioctl::kSinkCodecLdac) != 0)
+	{
+		text += text.empty() ? "LDAC" : ", LDAC";
 	}
 	return text;
 }

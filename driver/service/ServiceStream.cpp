@@ -16,6 +16,9 @@ void ServiceStreamStart(_In_ DEVICE_CONTEXT* ctx)
 	ctx->WaitState.pcmValidBits = ctx->PinValidBits;
 	// The service centres its records on the same lead the kernel paces SBC with.
 	ctx->WaitState.prerollMs = ctx->PacingLeadMs;
+	// LDAC's quality mode is local, so the service gets it from the preference rather than
+	// from a negotiation.
+	ctx->WaitState.ldacQuality = ctx->ActiveLdacQuality;
 	KeReleaseSpinLock(&ctx->WaitLock, irql);
 
 	LatchEvents(ctx, Ioctl::kEventStreamStart);

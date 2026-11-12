@@ -35,10 +35,11 @@ Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
                        [--watch [--interval <ms>]]
   OpenA2dpCtl list
-  OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd>] [--bitrate <bps>] [--bitpool <n>]
-                     [--blocks <4|8|12|16>] [--subbands <4|8>]
+  OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd|ldac>] [--bitrate <bps>]
+                     [--bitpool <n>] [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--preroll <ms>]
-                     [--frames <n>] [--device <mac|index>]
+                     [--frames <n>] [--ldac-quality <high|standard|mobile>]
+                     [--device <mac|index>]
   OpenA2dpCtl format [<auto|44100|48000> [<1|2>]] [--device <mac|index>]
   OpenA2dpCtl driver [<opena2dp|windows>] [--device <mac|index>]
   OpenA2dpCtl reset [--device <mac|index>]
@@ -51,13 +52,14 @@ Commands:
   codec     Set the codec preference, stored for this sink and restored
             when the device starts. If a stream is active it is renegotiated
             immediately; otherwise the preference applies at the next AVDTP
-            negotiation. "auto" prefers aptX HD, then aptX, then AAC while an
-            encoder service is registered, then SBC. --bitrate and --bitpool cap
-            the AAC bitrate and the SBC bitpool; --blocks, --subbands and
-            --allocation pin the SBC frame shape; --preroll shortens the lead the
-            stream is sent ahead of the clock and --frames caps how many SBC
-            frames one packet carries, which lowers latency while the sink
-            still buffers reliably. 0 restores the driver default
+            negotiation. "auto" prefers LDAC, then aptX HD, then aptX, then AAC
+            while an encoder service is registered, then SBC. --bitrate and
+            --bitpool cap the AAC bitrate and the SBC bitpool; --blocks,
+            --subbands and --allocation pin the SBC frame shape; --preroll shortens
+            the lead the stream is sent ahead of the clock and --frames caps how
+            many SBC frames one packet carries, which lowers latency while the sink
+            still buffers reliably; --ldac-quality picks LDAC's 990, 660 or
+            330 kbps mode. 0 restores the driver default
             (--allocation default), and the sink's advertised limits still apply.
             Without a codec name the stored selection is kept and only the
             flags given are applied.
@@ -91,6 +93,9 @@ Options:
   --bitrate <bps>   AAC bitrate cap for `codec` (0 = driver default).
   --bitpool <n>     SBC bitpool cap for `codec`, 0 or 2..250 (0 = driver
                     default). The sink's minimum and maximum still win.
+  --ldac-quality <q>
+                    LDAC mode for `codec`: high (990 kbps), standard (660) or
+                    mobile (330). It is not negotiated, so both ends just use it.
   --preroll <ms>    Pacing lead for `codec`, 0 (default, 60 ms) or 20..200.
                     Every codec is sent this far ahead of the media clock; a
                     shorter lead is less latency but less margin against the
@@ -398,11 +403,13 @@ struct PreferenceOverrides {
 	uint32_t preroll = 0;
 	bool hasFrames = false;
 	uint32_t frames = 0;
+	bool hasLdacQuality = false;
+	uint32_t ldacQuality = 0;
 
 	bool ParameterChange() const
 	{
 		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation || hasPreroll ||
-			   hasFrames;
+			   hasFrames || hasLdacQuality;
 	}
 
 };
@@ -412,10 +419,12 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 {
 	const bool isAptxHd = codecArg == "aptxhd" || codecArg == "aptx-hd";
 	const bool isAptx = codecArg == "aptx";
+	const bool isLdac = codecArg == "ldac";
 	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac" && !isAptx &&
-		!isAptxHd)
+		!isAptxHd && !isLdac)
 	{
-		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx or aptxhd\n", codecArg.c_str());
+		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx, aptxhd or ldac\n",
+			codecArg.c_str());
 		return 2;
 	}
 
@@ -471,6 +480,15 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 				CodecListText(sink.sinkCodecs).c_str());
 		return 1;
 	}
+	if (isLdac && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecLdac) == 0)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr,
+					 "the sink does not advertise LDAC (it offers %s); use `codec auto` or `codec sbc`. "
+					 "No preference was stored.\n",
+				CodecListText(sink.sinkCodecs).c_str());
+		return 1;
+	}
 
 	// Start from the stored preference so a codec change keeps the parameters that
 	// the command does not name.
@@ -491,7 +509,8 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	else if (!codecArg.empty())
 	{
 		preference.flags = Ioctl::kPreferenceForceCodec;
-		preference.codec = isAptxHd ? Ioctl::kCodecAptxHd
+		preference.codec = isLdac ? Ioctl::kCodecLdac
+			: isAptxHd ? Ioctl::kCodecAptxHd
 			: isAptx ? Ioctl::kCodecAptx
 			: codecArg == "aac"
 			? Ioctl::kCodecAac
@@ -517,6 +536,10 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		preference.sbcAllocation = overrides.allocation;
 	}
+	if (overrides.hasLdacQuality)
+	{
+		preference.ldacQuality = overrides.ldacQuality;
+	}
 	if (overrides.hasPreroll)
 	{
 		preference.prerollMs = overrides.preroll;
@@ -538,7 +561,8 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 
 	const bool force = (preference.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("Preference set to %s on %s.\n",
-			!force ? "auto (aptX HD > aptX > AAC > SBC)"
+			!force ? "auto (LDAC > aptX HD > aptX > AAC > SBC)"
+				   : preference.codec == Ioctl::kCodecLdac   ? "LDAC"
 				   : preference.codec == Ioctl::kCodecAptxHd ? "aptX HD"
 				   : preference.codec == Ioctl::kCodecAptx ? "aptX"
 				   : preference.codec == Ioctl::kCodecAac     ? "AAC"
@@ -549,6 +573,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	const bool aacRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAac)) != 0;
 	const bool aptxRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAptx)) != 0;
 	const bool hdRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAptxHd)) != 0;
+	const bool ldacRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecLdac)) != 0;
 	if (force && preference.codec == Ioctl::kCodecAac && !aacRegistered)
 	{
 		std::printf("\nnote: no AAC encoder is registered, so AAC is not offered and SBC will be used.\n");
@@ -561,13 +586,20 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		std::printf("\nnote: no aptX HD encoder is registered, so aptX HD is not offered.\n");
 	}
+	if (force && preference.codec == Ioctl::kCodecLdac && !ldacRegistered)
+	{
+		std::printf("\nnote: no LDAC encoder is registered, so LDAC is not offered.\n");
+	}
 	const bool streaming = status.mediaState == Ioctl::MediaState::Streaming;
-	const bool wantsHd = force ? preference.codec == Ioctl::kCodecAptxHd : hdRegistered;
-	const bool wantsAptx = force ? preference.codec == Ioctl::kCodecAptx : aptxRegistered && !hdRegistered;
-	const bool wantsAac =
-		force ? preference.codec == Ioctl::kCodecAac : aacRegistered && !hdRegistered && !aptxRegistered;
+	const bool wantsLdac = force ? preference.codec == Ioctl::kCodecLdac : ldacRegistered;
+	const bool wantsHd = force ? preference.codec == Ioctl::kCodecAptxHd : hdRegistered && !ldacRegistered;
+	const bool wantsAptx =
+		force ? preference.codec == Ioctl::kCodecAptx : aptxRegistered && !hdRegistered && !ldacRegistered;
+	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac
+								: aacRegistered && !hdRegistered && !aptxRegistered && !ldacRegistered;
 	const bool wantsSbc = force && preference.codec == Ioctl::kCodecSbc;
-	const bool codecChanges = (wantsHd && status.codec != Ioctl::kCodecAptxHd) ||
+	const bool codecChanges = (wantsLdac && status.codec != Ioctl::kCodecLdac) ||
+							  (wantsHd && status.codec != Ioctl::kCodecAptxHd) ||
 							  (wantsAptx && status.codec != Ioctl::kCodecAptx) ||
 							  (wantsAac && status.codec != Ioctl::kCodecAac) ||
 							  (wantsSbc && status.codec != Ioctl::kCodecSbc);
@@ -869,7 +901,7 @@ int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 	const bool forced = (applied.flags & Ioctl::kPreferenceForceCodec) != 0;
 	std::printf("%s: codec preference reset to %s, endpoint format reset to %s.\n",
 			DeviceLabel(device).c_str(),
-			!forced ? "auto (aptX HD > aptX > AAC > SBC)"
+			!forced ? "auto (LDAC > aptX HD > aptX > AAC > SBC)"
 				   : applied.codec == Ioctl::kCodecAptxHd ? "aptX HD"
 				   : applied.codec == Ioctl::kCodecAptx ? "aptX"
 				   : applied.codec == Ioctl::kCodecAac     ? "AAC"
@@ -965,6 +997,18 @@ int main(int argc, char** argv)
 			}
 			overrides.hasBitpool = true;
 			overrides.bitpool = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--ldac-quality" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			if (value != "high" && value != "standard" && value != "mobile")
+			{
+				std::fprintf(stderr, "--ldac-quality takes high, standard or mobile\n");
+				return 2;
+			}
+			overrides.hasLdacQuality = true;
+			overrides.ldacQuality =
+				value == "high" ? 0u : value == "standard" ? 1u : 2u;
 		}
 		else if (arg == "--preroll" && position + 1 < args.size())
 		{

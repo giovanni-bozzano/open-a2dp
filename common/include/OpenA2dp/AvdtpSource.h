@@ -21,6 +21,7 @@ constexpr uint8_t kLocalSeid = 1;
 constexpr uint8_t kLocalAacSeid = 2;
 constexpr uint8_t kLocalAptxHdSeid = 3;
 constexpr uint8_t kLocalAptxSeid = 4;
+constexpr uint8_t kLocalLdacSeid = 5;
 
 enum class SessionState : uint8_t {
 	Idle,
