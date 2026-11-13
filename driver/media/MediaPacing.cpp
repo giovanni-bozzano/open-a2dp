@@ -114,10 +114,6 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	++ctx->RtpSequence;
 	++ctx->PacketsSent;
 	ctx->RtpTimestamp += samples;
-	if ((ctx->PacketsSent & 0xFF) == 0)
-	{
-		OA2DP_INFO(ctx, "Media", "%I64u packets sent", ctx->PacketsSent);
-	}
 }
 
 // Service-encoded codecs (AAC, aptX): drain the frame ring, one packet per run. The service
