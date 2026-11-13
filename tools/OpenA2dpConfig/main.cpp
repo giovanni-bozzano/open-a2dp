@@ -369,16 +369,22 @@ SinkState* StateOf(HWND hwnd)
 	return reinterpret_cast<SinkState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
-// The message is one line, cut with an ellipsis when the sentence is wider than the window; the
-// text itself is kept whole in the window's state, which is what the report prints.
+// The message is a sentence that wraps to the window's width, so a longer one makes the window
+// taller rather than being cut; the layout reads it from the state, which is also what the report
+// prints.
 void SetMessage(HWND hwnd, const std::wstring& message)
 {
 	SinkState* state = StateOf(hwnd);
-	if (state != nullptr)
+	if (state == nullptr)
 	{
-		state->message = message;
+		return;
 	}
+	state->message = message;
 	SetWindowTextW(GetDlgItem(hwnd, kMessageLabel), message.c_str());
+	// The line's height is the layout's answer, so the window is resized for the new sentence -
+	// either way, because a shorter one should give the room back instead of leaving a band.
+	state->laidOutHeight = 0;
+	ApplyLayout(hwnd);
 }
 
 int TextWidth(HDC dc, const wchar_t* text)
@@ -1197,7 +1203,9 @@ void ApplyLayout(HWND hwnd)
 	const int textHeight = metrics.tmHeight > 0 ? metrics.tmHeight : 16;
 	const int gap = textHeight / 2 + 2;
 	const int margin = gap;
-	// The table body fills its pane: no inset, so a row's label starts where the pane begins.
+	// Room between the settings pane's frame and the rows it holds. The session pane has none:
+	// its panel reaches the frame so its rows run the full width of the pane.
+	const int inset = gap;
 	const int rowHeight = textHeight + 10;
 	const int arrow = GetSystemMetrics(SM_CXVSCROLL) + 6;
 
@@ -1253,7 +1261,7 @@ void ApplyLayout(HWND hwnd)
 	const int codecComboWidth = codecWidth + arrow;
 	const int selectorWidth = margin + codecLabelWidth + gap + codecComboWidth + margin;
 
-	int width = contentWidth + margin * 2 + 2;
+	int width = contentWidth + (margin + inset) * 2;
 	if (headerWidth > width)
 	{
 		width = headerWidth;
@@ -1281,8 +1289,8 @@ void ApplyLayout(HWND hwnd)
 	}
 	const int groupLeft = margin;
 	const int groupWidth = width - margin * 2;
-	const int innerLeft = groupLeft + 1;
-	const int innerWidth = groupWidth - 2;
+	const int innerLeft = groupLeft + inset;
+	const int innerWidth = groupWidth - inset * 2;
 
 	// The tab control's own height comes from its first item, so a larger system font or a
 	// longer caption cannot cut the tabs off; the body frame starts under it.
@@ -1316,12 +1324,14 @@ void ApplyLayout(HWND hwnd)
 	}
 	hintHeight = MaxOf(hintHeight, textHeight);
 	// The outcome of the last action is a line of its own above the buttons: beside them it was
-	// cut to a few words, which is no use when it is the reason a setting did not apply.
-	const int bottomHeight = textHeight + gap + applyHeight;
+	// cut to a few words, which is no use when it is the reason a setting did not apply. It wraps
+	// rather than ending in an ellipsis, so the window is as tall as the sentence is long.
+	const int messageHeight = MaxOf(TextHeight(dc, state->message.c_str(), width - margin * 2), textHeight);
+	const int bottomHeight = messageHeight + gap + applyHeight;
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
-	const int bodyHeight = rows * rowHeight + hintHeight + 2;
+	const int bodyHeight = inset + rows * rowHeight + hintHeight + gap;
 	int fixedHeight = margin + rowHeight + gap * 2 + bottomHeight + margin;
 	fixedHeight += rowHeight + gap + tabHeight + bodyHeight + gap;
 	// The border and the title bar count too, or the window as a whole would hang off the
@@ -1395,13 +1405,15 @@ void ApplyLayout(HWND hwnd)
 		  kComboListHeight);
 	if (tabs != nullptr)
 	{
-		Place(tabs, groupLeft, stripTop, groupWidth, tabHeight);
+		// The strip starts where the pane's rows start, so the open tab sits over the table it
+		// heads instead of hanging off its left edge.
+		Place(tabs, groupLeft + inset, stripTop, groupWidth - inset * 2, tabHeight);
 	}
 
 	// The top of the body is the same on every codec; the rows below it belong to the shown
 	// codec, so the other codecs' controls are hidden rather than destroyed - their stored
 	// values keep.
-	const int contentTop = bodyTop + 1;
+	const int contentTop = bodyTop + inset;
 	for (const Field& field : Fields)
 	{
 		const bool visible = field.tab == kAllTabs || field.tab == state->tab;
@@ -1425,8 +1437,8 @@ void ApplyLayout(HWND hwnd)
 
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
 	// sit under its right end.
-	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, textHeight);
-	const int buttonsTop = bottomTop + textHeight + gap;
+	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, messageHeight);
+	const int buttonsTop = bottomTop + messageHeight + gap;
 	const int applyLeft = width - margin - applyWidth;
 	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, buttonsTop, applyWidth, applyHeight);
 	const int driverLeft = applyLeft - gap - driverWidth;
@@ -1693,7 +1705,8 @@ void CreateControls(HWND hwnd)
 	// worse than expected is undone from the window it was made in.
 	CreateChild(hwnd, L"BUTTON", kRestoreText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kRestoreButton,
 				font);
-	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
+	// Wrapped, not cut: a long sentence makes the window taller instead of ending in an ellipsis.
+	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 0, 0, 10, 10, kMessageLabel, font);
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
 
 	// The sample rate and AAC bitrate lists depend on the codec and on the link, so
