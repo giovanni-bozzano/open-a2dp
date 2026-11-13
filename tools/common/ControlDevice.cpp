@@ -4,7 +4,13 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
+
+// ntdll's own conversion, the one the I/O manager uses on the status a driver completes a request
+// with. Declared here rather than pulled in with winternl.h, which the tools do not otherwise need.
+extern "C" ULONG NTAPI RtlNtStatusToDosError(LONG status);
+#pragma comment(lib, "ntdll.lib")
 
 namespace OpenA2dp::Tools {
 namespace {
@@ -81,6 +87,37 @@ std::string Win32Error(const char* what, DWORD code)
 	return std::string(what) + ": " + (message.empty() ? "error" : message) + suffix;
 }
 
+// The statuses the driver completes a control request with, which is what a failed
+// DeviceIoControl has just turned into a Win32 error. The name is found by asking that same
+// conversion which of them produces this error, so the answer is the one the driver gave and not
+// a second table of Win32 codes that could drift from it.
+const char* DriverStatusName(DWORD code)
+{
+	static const struct
+	{
+		ULONG status;
+		const char* name;
+	} statuses[] = {
+		{0xC00000BBu, "STATUS_NOT_SUPPORTED"},
+		{0xC000000Du, "STATUS_INVALID_PARAMETER"},
+		{0xC0000059u, "STATUS_REVISION_MISMATCH"},
+		{0xC0000010u, "STATUS_INVALID_DEVICE_REQUEST"},
+		{0xC000009Au, "STATUS_INSUFFICIENT_RESOURCES"},
+		{0xC0000001u, "STATUS_UNSUCCESSFUL"},
+		{0xC00000A3u, "STATUS_DEVICE_NOT_READY"},
+		{0xC0000120u, "STATUS_CANCELLED"},
+		{0xC0000023u, "STATUS_BUFFER_TOO_SMALL"},
+	};
+	for (const auto& status : statuses)
+	{
+		if (RtlNtStatusToDosError(static_cast<LONG>(status.status)) == code)
+		{
+			return status.name;
+		}
+	}
+	return nullptr;
+}
+
 std::string ControlError(const char* what, DWORD code)
 {
 	const char* advice = "";
@@ -105,7 +142,19 @@ std::string ControlError(const char* what, DWORD code)
 	default:
 		break;
 	}
-	return Win32Error(what, code) + advice;
+	std::string text = Win32Error(what, code);
+	// A request the driver refused names the status it completed it with: that is the name the
+	// driver's own log carries, which is what makes the two worth comparing.
+	if (std::strcmp(what, "DeviceIoControl") == 0)
+	{
+		if (const char* status = DriverStatusName(code))
+		{
+			text += " [";
+			text += status;
+			text += ']';
+		}
+	}
+	return text + advice;
 }
 
 std::string FormatAddress(const std::string& reference)
