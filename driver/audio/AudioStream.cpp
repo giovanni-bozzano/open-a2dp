@@ -118,9 +118,31 @@ NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 
 NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 {
+	// This stream carries audio, so its format is the one the encoder and the position math
+	// follow, and it is committed before the clock starts: the copy reads it on its first wake, and
+	// a wake that landed between the two would size this stream's audio with the previous one's
+	// frame. The offered format list is not touched: it belongs to the endpoint setting
+	// (AudioApplyEndpointFormats), not to whatever Windows opened.
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	const STREAM_CONTEXT* streamContext = GetStreamContext(stream);
+	AudioSetPinFormat(ctx, streamContext->SampleRate, streamContext->Channels, streamContext->ValidBits);
+
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	if (ctx->AudioHeard != 0)
+	{
+		// The previous run played, so what the ring still holds is audio of a session that already
+		// ended - a pause it was suspended with, or the stream before this run. Keeping it would
+		// replay audio from before this run's first sample; the audio captured from here on is the
+		// beginning of playback and is kept (CopyConsumedLocked).
+		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+		const ULONG stale = ring.ReadableBytes();
+		if (stale != 0)
+		{
+			ctx->AudioDroppedBytes += stale;
+			ring.Skip(stale);
+		}
+	}
 	if (ctx->AudioRunning)
 	{
 		// Run without a pause: continue from where the clock already reached instead of
@@ -133,15 +155,9 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioRunning = TRUE;
 	ctx->AudioHeard = 0;
 	ctx->AudioSkippedBytes = 0;
-	ctx->AudioDroppedBytes = 0;
+	ArmAudioTimerLocked(ctx, ctx->AudioBasePosition);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
-	WdfTimerStart(ctx->AudioTimer, 0);
-	// This stream carries audio, so its format is the one the encoder and the position math
-	// follow. The offered format list is not touched: it belongs to the endpoint setting
-	// (AudioApplyEndpointFormats), not to whatever Windows opened.
-	const STREAM_CONTEXT* streamContext = GetStreamContext(stream);
-	AudioSetPinFormat(ctx, streamContext->SampleRate, streamContext->Channels, streamContext->ValidBits);
 	SignalingOnAudioRun(ctx);
 	return STATUS_SUCCESS;
 }
@@ -158,7 +174,10 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 	const ULONGLONG dropped = ctx->AudioDroppedBytes;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
-	OA2DP_INFO(ctx, "Audio", "stream paused, %llu bytes dropped during the run", dropped);
+	// Cumulative, like the counters a soak reads: the loss is reported once on the pause and kept
+	// in status until the counters are reset.
+	OA2DP_INFO(ctx, "Audio", "stream paused, %llu bytes of endpoint PCM never copied since the last "
+			"reset", dropped);
 	// Nothing is playing, so the stream the sink keeps buffering is silence the listener does not
 	// need: suspend it and start again on the next run.
 	SignalingOnAudioPause(ctx);
@@ -166,8 +185,26 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 }
 } // namespace OpenA2dpDriver::Audio
 
-// Declared in Driver.h beside AudioReadPcm, because the media clock it describes is read from
-// the other side of the subsystem (media).
+// Declared in Driver.h beside AudioStreamRunning, because a stream start on the media side is
+// what decides whether the ring is kept. A stream that is about to start can keep the audio
+// already in the ring - it is the beginning of playback, captured after the endpoint's first
+// sample, not audio from before the session - as long as it was captured at the format this
+// stream plays. Anything else is stale and dropped.
+bool AudioPcmRingHoldsPlayback(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytesPerFrame)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const bool heard = ctx->AudioHeard != 0;
+	const ULONG capturedFormat = ctx->PcmRingFormat;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	if (!heard || bytesPerFrame == 0 || sampleRate == 0 || capturedFormat == 0)
+	{
+		return false;
+	}
+	const ULONG playbackFormat = (sampleRate << 16) | bytesPerFrame;
+	return capturedFormat == playbackFormat;
+}
+
 bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx)
 {
 	KIRQL irql;

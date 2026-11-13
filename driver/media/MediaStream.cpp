@@ -59,6 +59,21 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		ctx->SbcUnderrunLogTime = 0;
 	}
 	const PinFormat pin = SnapshotPinFormat(ctx);
+	// Audio the endpoint played while no stream carried it is the beginning of playback when the
+	// endpoint has been heard and the ring still holds it at this stream's own format; the copy
+	// keeps that much (bounded to the lead) for exactly this. Anything else predates the stream -
+	// another format, or a run that never played - and is dropped here, before any codec queues
+	// it.
+	ULONG flushed = 0;
+	if (!AudioPcmRingHoldsPlayback(ctx, pin.sampleRate, pin.bytesPerFrame))
+	{
+		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+		flushed = ring.ReadableBytes();
+		if (flushed != 0)
+		{
+			ring.Skip(flushed);
+		}
+	}
 	if (codec == Avdtp::CodecType::Aac)
 	{
 		StartAac(ctx, ie, ieLength);
@@ -123,22 +138,10 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	{
 		ApplyLeadFloor(ctx, SbcPacketSamples(ctx));
 	}
-	// The PCM the endpoint queued before MediaStart predates this stream, exactly as the service
-	// encoders treat their own start: drop it, so the pacer fills the lead with silence rather
-	// than sending audio captured while the sink was not listening.
-	ULONG flushed = 0;
-	{
-		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-		flushed = ring.ReadableBytes();
-		if (flushed != 0)
-		{
-			ring.Skip(flushed);
-		}
-	}
-	// While media is stopped the copy skips the endpoint's audio rather than queueing it
-	// (CopyConsumedLocked), so what the wait for this stream cost is that skipped audio plus
-	// anything flushed above. The run stamp is spent here: a later restart in the same run is a
-	// renegotiation, whose wait is not measured from the run edge.
+	// The copy keeps the endpoint's audio from the first sample this run played and skips only
+	// what came before it (CopyConsumedLocked), so what the wait for this stream cost is that
+	// skipped audio plus anything flushed above. The run stamp is spent here: a later restart in
+	// the same run is a renegotiation, whose wait is not measured from the run edge.
 	ULONGLONG skipped = 0;
 	ULONGLONG runStamp = 0;
 	{

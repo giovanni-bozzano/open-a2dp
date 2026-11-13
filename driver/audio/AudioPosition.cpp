@@ -60,50 +60,27 @@ static bool SpanHasAudio(const DEVICE_CONTEXT* ctx, ULONGLONG from, ULONGLONG to
 	return false;
 }
 
-void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
+// The format a ring's audio was captured at, as one word, so a stream start can tell whether
+// what the ring holds is still the format it is about to play.
+static ULONG PackPcmFormat(const DEVICE_CONTEXT* ctx)
 {
-	if (position < ctx->AudioCopiedPosition)
-	{
-		// The position is the copy reference and only moves forward: a clock that restarted
-		// below it would make every difference here wrap and stop the copy for good.
-		position = ctx->AudioCopiedPosition;
-	}
-	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
-	if (bufferSize == 0 || ctx->AudioBuffer == nullptr)
-	{
-		return;
-	}
-	// The AVDTP stream starts on the first audio, not on the run edge: Windows also runs the
-	// stream around an endpoint rebuild with nothing to play. Checked before the skip below,
-	// because until START completes media is stopped.
-	if (ctx->AudioHeard == 0 && ctx->AudioRunning &&
-		SpanHasAudio(ctx, ctx->AudioCopiedPosition, position, bufferSize))
-	{
-		ctx->AudioHeard = 1;
-		SignalingOnAudioHeard(ctx);
-	}
-	// With media stopped nothing consumes the ring, and the start that follows flushes it: copying
-	// only fills it until the bound trims the whole of it away, which is a trim per tick that
-	// means nothing. Move the reference instead, the same way the flush drops this audio once,
-	// and count it so MediaStart can report what the wait for the stream cost.
-	if (!ctx->MediaActive)
-	{
-		if (ctx->AudioRunning && position > ctx->AudioCopiedPosition)
-		{
-			ctx->AudioSkippedBytes += position - ctx->AudioCopiedPosition;
-		}
-		ctx->AudioCopiedPosition = position;
-		return;
-	}
-	// The interval between two copies that carried audio is how long the endpoint was held off:
-	// the lead has to cover one, or the pacer finds the ring empty between them.
-	if (position > ctx->AudioCopiedPosition)
-	{
-		OA2dpNoteGapMs(ctx->LastRenderTime, ctx->WorstRenderGapMs, KeQueryInterruptTime());
-	}
-	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-	const ULONG readableBefore = ring.ReadableBytes();
+	return (ctx->PinSampleRate << 16) | ctx->PinBytesPerFrame;
+}
 
+// Copies the span the clock consumed since the last copy into the ring. Caller holds AudioLock
+// and owns the ring view.
+static void CopySpanLocked(DEVICE_CONTEXT* ctx, RingBufferView& ring, ULONGLONG position,
+						   ULONG bufferSize)
+{
+	const ULONG format = PackPcmFormat(ctx);
+	const ULONG pending = ring.ReadableBytes();
+	if (pending != 0 && ctx->PcmRingFormat != format)
+	{
+		// Audio captured at another format cannot be played at this one: drop it before the two
+		// are mixed into the same ring, which no consumer could ever read correctly.
+		ctx->AudioDroppedBytes += pending;
+		ring.Skip(pending);
+	}
 	// Never copy more than one buffer: anything older was already overwritten.
 	ULONGLONG copied = ctx->AudioCopiedPosition;
 	if (position - copied > bufferSize)
@@ -129,6 +106,74 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		copied += chunk;
 	}
 	ctx->AudioCopiedPosition = copied;
+	// One format per ring: from here the ring holds only audio captured at this one.
+	ctx->PcmRingFormat = format;
+}
+
+void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
+{
+	if (position < ctx->AudioCopiedPosition)
+	{
+		// The position is the copy reference and only moves forward: a clock that restarted
+		// below it would make every difference here wrap and stop the copy for good.
+		position = ctx->AudioCopiedPosition;
+	}
+	const ULONG bufferSize = ctx->AudioPacketSize * ctx->AudioRtPacketCount;
+	if (bufferSize == 0 || ctx->AudioBuffer == nullptr)
+	{
+		return;
+	}
+	// The AVDTP stream starts on the first audio, not on the run edge: Windows also runs the
+	// stream around an endpoint rebuild with nothing to play. Checked before the skip below,
+	// because until START completes media is stopped.
+	if (ctx->AudioHeard == 0 && ctx->AudioRunning &&
+		SpanHasAudio(ctx, ctx->AudioCopiedPosition, position, bufferSize))
+	{
+		ctx->AudioHeard = 1;
+		SignalingOnAudioHeard(ctx);
+	}
+	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+	const uint32_t frameBytes = ctx->PinBytesPerFrame;
+	if (!ctx->MediaActive)
+	{
+		if (!ctx->AudioRunning || ctx->AudioHeard == 0)
+		{
+			// Nothing worth keeping: the endpoint has not played a sample of this run, or it is not
+			// running at all. Move the reference, and count what the wait for the stream cost.
+			if (ctx->AudioRunning && position > ctx->AudioCopiedPosition)
+			{
+				ctx->AudioSkippedBytes += position - ctx->AudioCopiedPosition;
+			}
+			ctx->AudioCopiedPosition = position;
+			return;
+		}
+		// The endpoint is playing and the stream that carries this audio is starting: the span is
+		// the beginning of what the listener asked for, so it is kept rather than thrown away.
+		// Holding the ring to the lead keeps a long suspension from accumulating a backlog, and it
+		// is done without counting a trim per tick: nothing is wrong here, the stream is simply not
+		// running yet.
+		if (frameBytes != 0 && ctx->PinSampleRate != 0)
+		{
+			CopySpanLocked(ctx, ring, position, bufferSize);
+			const uint32_t keepMs =
+				LatencyBudget::TrimTargetMs(ctx->PacingLeadMs, LatencyBudget::kPcmSlackMs);
+			const uint32_t keep = PcmBacklog::LimitBytes(ctx->PinSampleRate, frameBytes, keepMs);
+			(void)PcmBacklog::Trim(ring, keep, frameBytes);
+		}
+		else
+		{
+			ctx->AudioCopiedPosition = position;
+		}
+		return;
+	}
+	// The interval between two copies that carried audio is how long the endpoint was held off:
+	// the lead has to cover one, or the pacer finds the ring empty between them.
+	if (position > ctx->AudioCopiedPosition)
+	{
+		OA2dpNoteGapMs(ctx->LastRenderTime, ctx->WorstRenderGapMs, KeQueryInterruptTime());
+	}
+	const ULONG readableBefore = ring.ReadableBytes();
+	CopySpanLocked(ctx, ring, position, bufferSize);
 
 	// An SBC stream waits for a whole packet of PCM; waking it when the ring first holds one
 	// means the wait ends with the audio instead of on the next timer tick.
@@ -142,7 +187,6 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 	// Bound the backlog: the ring is a FIFO with no other trim, so after a stall (transport,
 	// service or DPC) it holds old audio that the encoder keeps draining at real time. Drop the
 	// oldest frames instead: one skipped moment is better than a permanent offset.
-	const ULONG frameBytes = ctx->PinBytesPerFrame;
 	if (frameBytes != 0 && ctx->PinSampleRate != 0)
 	{
 		const uint32_t limitMs =
@@ -182,9 +226,33 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 	}
 }
 
+// Arms the copy for the moment the packet being played completes. A fixed period reports a
+// completion up to one period late, which is what starves an engine buffer shorter than the
+// period: a low-latency stream runs packets of a few milliseconds and needs the boundary, not the
+// tick. Arming at the boundary makes the wake event driven - one per packet, when the packet ends
+// - instead of a poll that happens to line up. Caller holds AudioLock.
+void ArmAudioTimerLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
+{
+	if (!ctx->AudioRunning || ctx->AudioPacketSize == 0)
+	{
+		return;
+	}
+	const ULONG bytesPerSecond = ctx->PinSampleRate * ctx->PinBytesPerFrame;
+	if (bytesPerSecond == 0)
+	{
+		return;
+	}
+	const ULONG offset = static_cast<ULONG>(position % ctx->AudioPacketSize);
+	const ULONG remaining = offset == 0 ? ctx->AudioPacketSize : ctx->AudioPacketSize - offset;
+	// Rounded up, so a wake never lands before the boundary it is for, and never at zero.
+	const ULONGLONG dueMs =
+		(static_cast<ULONGLONG>(remaining) * 1000 + bytesPerSecond - 1) / bytesPerSecond;
+	WdfTimerStart(ctx->AudioTimer, WDF_REL_TIMEOUT_IN_MS(static_cast<ULONG>(dueMs == 0 ? 1 : dueMs)));
+}
+
 // Reports completed packets to ACX. The copy itself also runs when the engine releases a packet
-// (see OnSetRenderPacket): an engine buffer shorter than AudioPeriodMs would otherwise fall more
-// than a buffer behind between ticks, and the oldest audio would be dropped every tick.
+// (see OnSetRenderPacket), so the two together keep the ring level with the clock whatever
+// packet the engine picked.
 void OnAudioTimer(_In_ WDFTIMER timer)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
@@ -200,6 +268,8 @@ void OnAudioTimer(_In_ WDFTIMER timer)
 	ULONGLONG qpc;
 	const ULONGLONG position = CurrentPositionLocked(ctx, &qpc);
 	CopyConsumedLocked(ctx, position);
+	// One wake per packet: the next one is for the packet that started while this one ran.
+	ArmAudioTimerLocked(ctx, position);
 
 	const ULONGLONG completed = position / ctx->AudioPacketSize;
 	const BOOLEAN notify = completed > ctx->AudioCompletedPackets;

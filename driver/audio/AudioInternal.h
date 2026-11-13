@@ -10,7 +10,6 @@ using namespace OpenA2dp;
 // Subsystem-private declarations; not a public driver interface.
 namespace OpenA2dpDriver::Audio
 {
-constexpr ULONG AudioPeriodMs = 10;
 // The PCM ring holds the lead the pacer is streaming plus LatencyBudget::kPcmSlackMs; the pacer
 // pads silence when it has less, so the ring's fill is audio the sink has not heard yet.
 // How long the jack reports unplugged while Windows is made to rebuild the endpoint after a
@@ -74,6 +73,9 @@ EVT_WDF_WORKITEM OnJackFlapWorkItem;
 EVT_WDF_OBJECT_CONTEXT_DESTROY OnStreamDestroy;
 
 ULONGLONG QpcNow(ULONGLONG* frequency);
+// Arms the copy for the moment the packet being played completes, which is the wake that makes
+// the engine's packet available again. Caller holds AudioLock.
+void ArmAudioTimerLocked(_In_ DEVICE_CONTEXT* ctx, ULONGLONG position);
 ULONGLONG CurrentPositionLocked(DEVICE_CONTEXT* ctx, ULONGLONG* qpc);
 void OnAudioTimer(_In_ WDFTIMER timer);
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,

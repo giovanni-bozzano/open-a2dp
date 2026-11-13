@@ -72,8 +72,13 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
 	attrs.ParentObject = ctx->Device;
+	// One shot, armed for the moment the packet being played completes (ArmAudioTimerLocked): a
+	// fixed period would report each completion up to one period late, which starves an engine
+	// buffer shorter than that period. High resolution, because a packet is a few milliseconds
+	// long and a coalesced wake is a late one.
 	WDF_TIMER_CONFIG timerConfig;
-	WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, OnAudioTimer, AudioPeriodMs);
+	WDF_TIMER_CONFIG_INIT(&timerConfig, OnAudioTimer);
+	timerConfig.UseHighResolutionTimer = TRUE;
 	NTSTATUS status = WdfTimerCreate(&timerConfig, &attrs, &ctx->AudioTimer);
 	if (!NT_SUCCESS(status))
 	{

@@ -123,9 +123,9 @@ NTSTATUS OnGetHwLatency(_In_ ACXSTREAM stream, _Out_ ULONG* fifoSize, _Out_ ULON
 }
 
 // The engine released a packet, so its data is queued and part of it is due now. Copying here
-// keeps the PCM ring current between timer ticks, which matters when the engine picks a buffer
-// shorter than AudioPeriodMs: the copy is still bounded by the media clock, so it never reads a
-// packet the engine has not written yet.
+// keeps the PCM ring current without waiting for the packet boundary the timer is armed for, and
+// it is what makes a low-latency engine buffer harmless: the copy is still bounded by the media
+// clock, so it never reads a packet the engine has not written yet.
 NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM stream, _In_ ULONG, _In_ ULONG, _In_ ULONG)
 {
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
