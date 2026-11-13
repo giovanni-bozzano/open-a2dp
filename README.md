@@ -92,19 +92,8 @@ it claims; everything else keeps using `BthA2dp.sys`.
 
 ## AI disclosure
 
-This project was built with extensive use of AI. Coding agents wrote the large majority of the
-source, tests and documentation under human direction: the human maintainer set the
-architecture, made the design decisions, reviewed every change, ran the builds and the hardware
-tests, and is the only person responsible for what is here. The AI was steered rather than
-autonomous - it did not choose the scope, the codec policy or the safety rules in
-[AGENTS.md](AGENTS.md), and it does not appear as an author of any commit.
-
-Two consequences are worth stating plainly:
-
-- **Review it like any other driver.** Machine-written code can be confidently wrong, and a
-  kernel driver is a bad place to find out. The reasoning behind each design lives in
-  [docs/architecture/](docs/architecture/README.md), and the tests are there to be re-run rather
-  than trusted.
-- **The evidence is the build and the hardware runs**, not the prose. `docs/STATUS.md` records
-  what is done; `docs/HARDWARE-TESTS.md` records what was checked against a real sink and what
-  each test expects. Where something has not been validated on hardware, it says so.
+This project was built with extensive use of AI. Coding agents wrote most of the source, tests
+and documentation under human direction: the maintainer set the architecture, made the design
+decisions, steered each change and validated the result on real hardware. Where the reasoning
+behind a design matters it is written down in [docs/architecture/](docs/architecture/README.md),
+next to the tests and the hardware procedures that check it.
