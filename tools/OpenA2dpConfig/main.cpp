@@ -1522,26 +1522,28 @@ void PaintCodecTabs(HWND tab)
 				item.left = client.left;
 			}
 			const bool open = index == selected;
-			// The open tab carries the window's own background and runs down to the shared line, so
-			// it reads as the head of the table under it; a closed tab is a box of its own, lifted
-			// off that line on the section colour.
+			// The strip's bottom row is the shared line, so every face runs down to it: the open
+			// tab carries the window's own background and joins the table under it, a closed tab
+			// sits on the section colour with that one line beneath it.
 			RECT face = item;
+			face.bottom = client.bottom;
 			if (open)
 			{
-				face.bottom = client.bottom;
 				openTab = face;
 			}
 			SetDCBrushColor(dc, open ? colors.background : colors.section);
 			FillRect(dc, &face, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 
-			const int bottom = open ? client.bottom - 1 : item.bottom - 1;
+			// A tab draws its left and top edges only: the neighbour's left edge is the separator
+			// between them, so a right edge as well would make every boundary two pixels wide.
+			// The last tab has nothing after it and draws its right edge.
+			const int bottom = client.bottom - 1;
 			MoveToEx(dc, item.left, bottom, nullptr);
 			LineTo(dc, item.left, item.top);
 			LineTo(dc, item.right - 1, item.top);
-			LineTo(dc, item.right - 1, bottom);
-			if (!open)
+			if (index + 1 == count)
 			{
-				LineTo(dc, item.left, bottom);
+				LineTo(dc, item.right - 1, bottom);
 			}
 
 			wchar_t text[64] = {};
