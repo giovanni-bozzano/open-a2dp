@@ -25,6 +25,10 @@ constexpr int kColumnGap = 8;    // between the divider and the text on either s
 constexpr int kSplitterGrab = 3; // pixels either side of the divider that start a drag
 // Rows per wheel notch, like a list that scrolls by items.
 constexpr int kWheelRows = 3;
+// How long the pointer rests on a row before its explanation is shown: the pane is crossed on
+// the way to the divider, and every row has one.
+constexpr UINT_PTR kTipTimerId = 1;
+constexpr UINT kTipDelayMs = 600;
 
 struct ViewState
 {
@@ -38,10 +42,10 @@ struct ViewState
 	bool labelWidthChosen = false;
 	bool dragging = false;
 	bool dividerHot = false;
-	// The row under the pointer, and the explanation the tooltip is showing for it: rows are
-	// painted rather than controls, so one tooltip covers the pane and picks its text per row.
+	// The row under the pointer, and whether the tooltip is up for it: rows are painted rather
+	// than controls, so one tooltip covers the pane and this view switches it on and off.
 	int hotRow = -1;
-	std::wstring tipText;
+	bool tipShown = false;
 	HWND tooltip = nullptr;
 	HFONT normal = nullptr;
 	HFONT bold = nullptr;
@@ -397,9 +401,20 @@ void DragLabelWidth(HWND window, ViewState& state, int x)
 
 
 
-// One tooltip for the whole pane. The tool covers the view and asks the view for its text
-// (LPSTR_TEXTCALLBACKW) whenever it is about to show, so a refresh that changes values needs no
-// bookkeeping here: the answer always comes from the row the pointer is on now.
+// One tooltip for the whole pane. Rows are painted rather than controls, so the view switches
+// it on for the row under the pointer and off when the pointer leaves: a tooltip that watched
+// the window by itself showed up over the pane while it was busy elsewhere and stayed there
+// after the pointer left it.
+TTTOOLINFOW RowTool(HWND window)
+{
+	TTTOOLINFOW tool = {};
+	tool.cbSize = sizeof(tool);
+	tool.uFlags = TTF_TRACK;
+	tool.hwnd = window;
+	tool.uId = 1;
+	return tool;
+}
+
 void EnsureRowTooltip(HWND window, ViewState& state)
 {
 	if (state.tooltip != nullptr)
@@ -413,18 +428,42 @@ void EnsureRowTooltip(HWND window, ViewState& state)
 	{
 		return;
 	}
-	SetWindowPos(state.tooltip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-	// Slower than the fields: the pointer crosses this pane on its way to the divider, and a
-	// row explanation is worth resting on.
-	SendMessageW(state.tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 700);
 	SendMessageW(state.tooltip, TTM_SETMAXTIPWIDTH, 0, 420);
-	TTTOOLINFOW tool = {};
-	tool.cbSize = sizeof(tool);
-	tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-	tool.hwnd = window;
-	tool.uId = reinterpret_cast<UINT_PTR>(window);
-	tool.lpszText = LPSTR_TEXTCALLBACKW;
+	TTTOOLINFOW tool = RowTool(window);
+	tool.lpszText = const_cast<LPWSTR>(L"");
 	SendMessageW(state.tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+}
+
+void HideRowTip(HWND window, ViewState& state)
+{
+	KillTimer(window, kTipTimerId);
+	if (state.tooltip == nullptr || !state.tipShown)
+	{
+		return;
+	}
+	TTTOOLINFOW tool = RowTool(window);
+	SendMessageW(state.tooltip, TTM_TRACKACTIVATE, FALSE, reinterpret_cast<LPARAM>(&tool));
+	state.tipShown = false;
+}
+
+void ShowRowTip(HWND window, ViewState& state, int index)
+{
+	if (state.tooltip == nullptr || index < 0 || index >= static_cast<int>(state.rows.size()) ||
+		state.rows[static_cast<size_t>(index)].tip.empty())
+	{
+		HideRowTip(window, state);
+		return;
+	}
+	TTTOOLINFOW tool = RowTool(window);
+	tool.lpszText = const_cast<LPWSTR>(state.rows[static_cast<size_t>(index)].tip.c_str());
+	SendMessageW(state.tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+	// Under the row, not under the pointer: the tip stays put while the pointer moves across
+	// the row it explains.
+	POINT anchor = {kTextInset + kRowIndent, index * state.rowHeight - state.scrollTop + state.rowHeight};
+	ClientToScreen(window, &anchor);
+	SendMessageW(state.tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(anchor.x, anchor.y));
+	SendMessageW(state.tooltip, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&tool));
+	state.tipShown = true;
 }
 
 void SetDividerHot(HWND window, ViewState& state, bool hot)
@@ -452,6 +491,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_SIZE:
 		if (state != nullptr)
 		{
+			HideRowTip(window, *state);
 			ClampLabelWidth(window, *state);
 			UpdateScrollBar(window, *state);
 			ScrollTo(window, *state, state->scrollTop);
@@ -483,6 +523,11 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			if (hotRow != state->hotRow)
 			{
 				state->hotRow = hotRow;
+				HideRowTip(window, *state);
+				if (hotRow >= 0 && !state->rows[static_cast<size_t>(hotRow)].tip.empty())
+				{
+					SetTimer(window, kTipTimerId, kTipDelayMs, nullptr);
+				}
 				InvalidateRect(window, nullptr, FALSE);
 			}
 			// The highlight ends when the pointer leaves, which the window has to ask for.
@@ -498,21 +543,15 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 		{
 			SetDividerHot(window, *state, false);
 			state->hotRow = -1;
+			HideRowTip(window, *state);
 			InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
-	case WM_NOTIFY:
-		if (state != nullptr && reinterpret_cast<const NMHDR*>(lParam)->code == TTN_GETDISPINFOW)
+	case WM_TIMER:
+		if (state != nullptr && wParam == kTipTimerId)
 		{
-			LPNMTTDISPINFOW info = reinterpret_cast<LPNMTTDISPINFOW>(lParam);
-			state->tipText.clear();
-			if (state->hotRow >= 0 && state->hotRow < static_cast<int>(state->rows.size()))
-			{
-				state->tipText = state->rows[static_cast<size_t>(state->hotRow)].tip;
-			}
-			// The tooltip reads this until it hides, so the text is the view's own copy; an empty
-			// explanation (a section band, a raw field) shows nothing.
-			info->lpszText = state->tipText.data();
+			KillTimer(window, kTipTimerId);
+			ShowRowTip(window, *state, state->hotRow);
 			return 0;
 		}
 		break;
@@ -526,6 +565,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 		}
 		if (state != nullptr)
 		{
+			HideRowTip(window, *state);
 			// A click selects the row under it; Ctrl adds it to what is already selected. The
 			// view takes the focus so the copy shortcut reaches it.
 			const int index = RowAt(*state, GET_Y_LPARAM(lParam));
@@ -586,6 +626,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_MOUSEWHEEL:
 		if (state != nullptr)
 		{
+			HideRowTip(window, *state);
 			const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			const int rows = delta * kWheelRows / WHEEL_DELTA;
 			ScrollTo(window, *state, state->scrollTop - rows * state->rowHeight);
@@ -594,6 +635,7 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_VSCROLL:
 		if (state != nullptr)
 		{
+			HideRowTip(window, *state);
 			SCROLLINFO info = {};
 			info.cbSize = sizeof(info);
 			info.fMask = SIF_ALL;
@@ -743,6 +785,7 @@ void UpdateStatusView(HWND parent, int id, const std::vector<StatusRow>& rows, c
 			return;
 		}
 	}
+	HideRowTip(window, *state);
 	state->rows = rows;
 	state->emptyText = rows.empty() ? emptyText : std::wstring();
 	if (rows.empty())
