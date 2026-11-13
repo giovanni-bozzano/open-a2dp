@@ -796,8 +796,9 @@ NTSTATUS AudioApplyEndpointFormats(_In_ DEVICE_CONTEXT* ctx);
 // sink cannot play would leave the endpoint without a stream, so it is refused.
 bool AudioSinkSupportsEndpointFormat(_In_ DEVICE_CONTEXT* ctx, ULONG codec, ULONG sampleRate,
 									  USHORT channels);
-// The codec whose stored format the endpoint offers: the forced one, or Ioctl::kCodecCount when
-// the choice is automatic, which leaves every format the runnable codecs can play listed.
+// The codec whose stored format the endpoint offers: the forced one, or with an automatic
+// choice the codec the stream runs. Ioctl::kCodecCount when the preference names no codec,
+// which leaves every format the runnable codecs can play listed.
 ULONG AudioPinnedCodec(_In_ DEVICE_CONTEXT* ctx);
 
 // Reads up to frames of stereo PCM rendered by Windows; pads the rest with

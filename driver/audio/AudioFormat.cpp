@@ -420,17 +420,27 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 	}
 	return supported;
 }
-// The codec whose stored format the endpoint offers: the forced one, or kCodecCount when the
-// choice is automatic. The preference is read under its own lock, before any caller takes the
-// audio lock, which is the order the two are always taken in.
+// The codec whose stored format the endpoint offers: the forced one, or - with an automatic
+// choice - the codec the stream is configured with, or the one it runs. That is the entry the
+// settings window writes while it follows the stream, so a rate chosen there reaches the
+// stream instead of being stored for a codec nothing will use. kCodecCount when nothing is
+// configured yet, which leaves every format listed. The preference is read under its own lock,
+// before any caller takes the audio lock, which is the order the two are always taken in.
 ULONG PinnedCodec(_In_ DEVICE_CONTEXT* ctx)
 {
 	const Ioctl::Preference preference = StoredPreference(ctx);
-	if ((preference.flags & Ioctl::kPreferenceForceCodec) == 0 || preference.codec >= Ioctl::kCodecCount)
+	if ((preference.flags & Ioctl::kPreferenceForceCodec) != 0)
 	{
-		return Ioctl::kCodecCount;
+		return preference.codec < Ioctl::kCodecCount ? preference.codec : Ioctl::kCodecCount;
 	}
-	return preference.codec;
+	// kCodecSbc is 0, so the snapshot cannot tell SBC from "nothing negotiated"; the running
+	// stream answers that case, and before its first start the pin is SBC's anyway.
+	const LONG negotiated = InterlockedCompareExchange(&ctx->NegotiatedCodecSnapshot, 0, 0);
+	if (negotiated > 0 && static_cast<ULONG>(negotiated) < Ioctl::kCodecCount)
+	{
+		return static_cast<ULONG>(negotiated);
+	}
+	return ctx->ActiveCodec < Ioctl::kCodecCount ? ctx->ActiveCodec : Ioctl::kCodecCount;
 }
 
 // Whether one codec can play a rate and channel count from what the sink advertised: SBC and
