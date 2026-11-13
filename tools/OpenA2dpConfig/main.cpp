@@ -304,9 +304,6 @@ struct SinkState
 	std::vector<HWND> hints; // one hint line per codec, created with the other controls
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
-	// Whether the message line is registered with the shared tooltip; it is only there while
-	// there is a message, so an empty line shows no box.
-	bool messageTip = false;
 	// The client size the layout settled on. Both only grow, so a measurement that changes with
 	// the shown codec or with a sink the driver renames cannot resize the window under the
 	// user's hand.
@@ -401,14 +398,13 @@ bool MessageFits(HWND hwnd, const std::wstring& message)
 	return width <= static_cast<int>(rect.right - rect.left);
 }
 
-// The message is one line, cut with an ellipsis when the sentence does not fit, so the whole
-// sentence goes to the tooltip and both are kept in step here. Whether the box is worth showing
-// is decided when it is about to appear (WM_NOTIFY), because only the layout knows how much room
-// the line ended up with.
-void UpdateMessageTooltip(HWND hwnd, const std::wstring& message)
+// The message line's tool is registered once, with a text callback that reads the window's own
+// message: adding and removing a tool per message is what made the box miss a message that was
+// long enough to be cut. Whether it is worth showing is decided when it is about to appear
+// (WM_NOTIFY), because only the layout knows how much room the line ended up with.
+void AddMessageTooltip(HWND hwnd, HWND label)
 {
-	SinkState* state = StateOf(hwnd);
-	const HWND label = GetDlgItem(hwnd, kMessageLabel);
+	const SinkState* state = StateOf(hwnd);
 	if (state == nullptr || state->tooltip == nullptr || label == nullptr)
 	{
 		return;
@@ -418,23 +414,8 @@ void UpdateMessageTooltip(HWND hwnd, const std::wstring& message)
 	tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
 	tool.hwnd = hwnd;
 	tool.uId = reinterpret_cast<UINT_PTR>(label);
-	tool.lpszText = const_cast<LPWSTR>(message.c_str());
-	if (message.empty())
-	{
-		if (state->messageTip)
-		{
-			SendMessageW(state->tooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-			state->messageTip = false;
-		}
-		return;
-	}
-	if (!state->messageTip)
-	{
-		SendMessageW(state->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-		state->messageTip = true;
-		return;
-	}
-	SendMessageW(state->tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+	tool.lpszText = LPSTR_TEXTCALLBACKW;
+	SendMessageW(state->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
 }
 
 void SetMessage(HWND hwnd, const std::wstring& message)
@@ -445,7 +426,6 @@ void SetMessage(HWND hwnd, const std::wstring& message)
 		state->message = message;
 	}
 	SetWindowTextW(GetDlgItem(hwnd, kMessageLabel), message.c_str());
-	UpdateMessageTooltip(hwnd, message);
 }
 
 int TextWidth(HDC dc, const wchar_t* text)
@@ -1493,8 +1473,6 @@ void ApplyLayout(HWND hwnd)
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
 	// sit under its right end.
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, textHeight);
-	// The line was just resized, so whether the sentence is cut is only known now.
-	UpdateMessageTooltip(hwnd, state->message);
 	const int buttonsTop = bottomTop + textHeight + gap;
 	const int applyLeft = width - margin - applyWidth;
 	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, buttonsTop, applyWidth, applyHeight);
@@ -1762,7 +1740,8 @@ void CreateControls(HWND hwnd)
 	// worse than expected is undone from the window it was made in.
 	CreateChild(hwnd, L"BUTTON", kRestoreText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kRestoreButton,
 				font);
-	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
+	const HWND messageLabel = CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
+	AddMessageTooltip(hwnd, messageLabel);
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
 
 	// The sample rate and AAC bitrate lists depend on the codec and on the link, so
@@ -2844,11 +2823,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		{
 			break;
 		}
-		const SinkState* state = StateOf(hwnd);
+		SinkState* state = StateOf(hwnd);
 		// The message line caps its sentence with an ellipsis, and only a cut sentence needs a box
 		// under the pointer: a tool that asks not to be shown is the only way to stay in step with
 		// what the line actually drew. The one tooltip is shared, so the tool behind the request
 		// has to be the message line before its answer means anything.
+		if (state != nullptr && state->tooltip != nullptr && header->hwndFrom == state->tooltip &&
+			header->code == TTN_GETDISPINFOW)
+		{
+			// The callback reads the window's own message, which outlives the request: a pointer to a
+			// temporary string would leave the tooltip reading freed memory when it shows.
+			reinterpret_cast<LPNMTTDISPINFOW>(lParam)->lpszText = state->message.data();
+			return 0;
+		}
 		if (state != nullptr && state->tooltip != nullptr && header->hwndFrom == state->tooltip &&
 			header->code == TTN_SHOW)
 		{
