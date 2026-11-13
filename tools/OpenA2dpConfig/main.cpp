@@ -85,6 +85,7 @@ enum ControlId : int {
 	kApplyButton,
 	kDriverButton,
 	kRestoreButton,
+	kResetCountersButton,
 	kMessageLabel,
 };
 
@@ -97,6 +98,8 @@ constexpr wchar_t kCopyText[] = L"Copy";
 constexpr wchar_t kDetailsText[] = L"Details";
 constexpr wchar_t kApplyText[] = L"Apply";
 constexpr wchar_t kRestoreText[] = L"Restore defaults";
+// Beside the codec choice, because what it starts over is what a codec experiment produced.
+constexpr wchar_t kResetCountersText[] = L"Reset counters";
 // The switch names the driver the sink is not on, so the caption reads as the action.
 constexpr wchar_t kUseWindowsText[] = L"Use Windows driver";
 constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
@@ -1282,8 +1285,10 @@ void ApplyLayout(HWND hwnd)
 		codecWidth = MaxOf(codecWidth, TextWidth(dc, kTabInfo[tab].caption));
 		stripWidth += TextWidth(dc, kTabInfo[tab].caption) + gap * 3;
 	}
+	const int resetWidth = TextWidth(dc, kResetCountersText) + gap * 2;
 	const int codecComboMinWidth = codecWidth + arrow;
-	const int selectorWidth = margin + codecLabelWidth + gap + codecComboMinWidth + margin;
+	const int selectorWidth =
+			margin + codecLabelWidth + gap + codecComboMinWidth + gap + resetWidth + margin;
 
 	int width = contentWidth + (margin + inset) * 2;
 	if (headerWidth > width)
@@ -1315,9 +1320,11 @@ void ApplyLayout(HWND hwnd)
 	const int groupWidth = width - margin * 2;
 	const int innerLeft = groupLeft + inset;
 	const int innerWidth = groupWidth - inset * 2;
-	// The codec choice starts where the sink row's label does and runs to the panes' right edge,
-	// so its drop-down is as wide as the tables it picks the codec for.
-	const int codecComboWidth = width - margin - (margin + codecLabelWidth + gap);
+	// The codec choice is as wide as its widest entry instead of running to the panes' right
+	// edge: a drop-down that spans the window reads as a field to fill, and the room beside it
+	// is what the reset button needs.
+	const int codecComboWidth = codecComboMinWidth;
+	const int resetLeft = margin + codecLabelWidth + gap + codecComboWidth + gap;
 
 	// The tab control's own height comes from its first item, so a larger system font or a
 	// longer caption cannot cut the tabs off; the body frame starts under it.
@@ -1435,6 +1442,7 @@ void ApplyLayout(HWND hwnd)
 		  textHeight);
 	Place(GetDlgItem(hwnd, kCodecCombo), margin + codecLabelWidth + gap, codecTop, codecComboWidth,
 		  kComboListHeight);
+	Place(GetDlgItem(hwnd, kResetCountersButton), resetLeft, codecTop, resetWidth, applyHeight);
 	if (tabs != nullptr)
 	{
 		// The strip spans the pane it heads, from the pane's own left edge: its first tab is flush
@@ -1691,6 +1699,11 @@ void CreateControls(HWND hwnd)
 	{
 		AddTooltip(state->tooltip, hwnd, codecCombo, TipFor(kCodecCombo));
 	}
+	// It clears the counters the report shows and nothing else, so it sits beside the choice
+	// rather than with the buttons that change the stream.
+	CreateChild(hwnd, L"BUTTON", kResetCountersText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10,
+				kResetCountersButton, font);
+	EnableWindow(GetDlgItem(hwnd, kResetCountersButton), FALSE);
 
 	// The settings pane's tab strip: one tab per codec, all of them always there, so any
 	// codec's settings can be read without choosing that codec for the sink. The control owns
@@ -1901,6 +1914,7 @@ void OpenSelected(HWND hwnd)
 	}
 	CloseControl(*state);
 	EnableWindow(GetDlgItem(hwnd, kApplyButton), FALSE);
+	EnableWindow(GetDlgItem(hwnd, kResetCountersButton), FALSE);
 	if (state->selected >= state->devices.size())
 	{
 		state->driver = SinkDriver::Unknown;
@@ -1952,6 +1966,7 @@ void OpenSelected(HWND hwnd)
 
 	state->open = true;
 	EnableWindow(GetDlgItem(hwnd, kApplyButton), TRUE);
+	EnableWindow(GetDlgItem(hwnd, kResetCountersButton), TRUE);
 	// A newly opened sink starts on the codec it runs; a later read-back leaves the open tab
 	// where it is, because the user may be tuning a codec the sink does not use.
 	state->tab = TabForState(*state);
@@ -2016,6 +2031,7 @@ void RefreshStatus(HWND hwnd)
 	{
 		CloseControl(*state);
 		EnableWindow(GetDlgItem(hwnd, kApplyButton), FALSE);
+		EnableWindow(GetDlgItem(hwnd, kResetCountersButton), FALSE);
 		state->message = Tools::Widen(error);
 		SetMessage(hwnd, state->message);
 		RefreshStatusView(hwnd);
@@ -2431,6 +2447,30 @@ void ApplySettings(HWND hwnd)
 // Puts every setting back to the driver default: the automatic codec, every codec automatic and
 // every parameter zero. The driver rewrites the sink's settings file from what it receives, so
 // the file is what a fresh install would have written.
+// Clears the counters the report shows, so the next measurement starts from zero without
+// restarting the stream. Nothing else is touched, which is why it needs no confirmation.
+void ResetCounters(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr || !state->open)
+	{
+		SetMessage(hwnd, L"No device is selected.");
+		return;
+	}
+	std::string error;
+	if (!Tools::ResetCounters(state->control, error))
+	{
+		state->message = Tools::Widen(error);
+		SetMessage(hwnd, state->message);
+		return;
+	}
+	// Read back, so the numbers the window shows are the driver's after the reset rather than
+	// the ones it reported just before it.
+	RefreshStatus(hwnd);
+	SetMessage(hwnd, L"Counters reset: packets, drops, underruns, send failures and trims start "
+					  L"from zero, and the stream was not touched.");
+}
+
 void RestoreDefaults(HWND hwnd)
 {
 	SinkState* state = StateOf(hwnd);
@@ -2507,7 +2547,7 @@ void ApplyDarkControls(HWND hwnd)
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}
 	for (const int id : {kRefreshButton, kCopyButton, kApplyButton, kDriverButton, kRestoreButton,
-						 kDetailsCheck})
+						 kResetCountersButton, kDetailsCheck})
 	{
 		// Owner-drawn, because a themed or classic button paints its own face from the light
 		// system colours; the window then keeps the check box's state itself.
@@ -2789,6 +2829,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		if (id == kRestoreButton && notification == BN_CLICKED)
 		{
 			RestoreDefaults(hwnd);
+			return 0;
+		}
+		if (id == kResetCountersButton && notification == BN_CLICKED)
+		{
+			ResetCounters(hwnd);
 			return 0;
 		}
 		if (id == kDriverButton && notification == BN_CLICKED)
