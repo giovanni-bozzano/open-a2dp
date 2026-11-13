@@ -2282,7 +2282,27 @@ void ApplySettings(HWND hwnd)
 	case StoreOutcome::Applied:
 		break;
 	}
+	// A setting that belongs to a codec the sink does not run is stored and nothing more: the
+	// codec choice did not move, so the stream keeps playing and the message must not promise a
+	// renegotiation it will not get. Only a codec the choice names is worth taking the stream down
+	// for.
 	const bool streaming = state->status.mediaState == Ioctl::MediaState::Streaming;
+	const bool forcedDiffers =
+			(choice != 0) != !state->automatic ||
+			(choice != 0 && CodecOfTab(static_cast<int>(choice) - 1) != EndpointCodec(state->status));
+	const bool streamCodecEdited = CodecOfTab(state->tab) == EndpointCodec(state->status);
+	if (forcedDiffers)
+	{
+		SetMessage(hwnd, streaming ? L"Stored. The playing stream is reconfigured for the new codec."
+								   : L"Stored. They apply when a stream next starts.");
+		return;
+	}
+	if (streaming && !streamCodecEdited)
+	{
+		SetMessage(hwnd, L"Stored for " + std::wstring(kTabInfo[state->tab].caption) +
+							L". The playing stream is left alone.");
+		return;
+	}
 	SetMessage(hwnd, streaming ? L"Stored. The playing stream is renegotiated to apply them."
 							   : L"Stored. They apply when a stream next starts.");
 }
