@@ -36,5 +36,9 @@
 	<ClInclude Include="..\common\SinkPlayback.h" />
 	<ClInclude Include="..\common\Text.h" />
   </ItemGroup>
+  <ItemGroup>
+	<!-- The icon OpenA2dpConfig wears too: one file, so the two tools look like one package. -->
+	<ResourceCompile Include="..\common\AppIcon.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

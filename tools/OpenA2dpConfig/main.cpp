@@ -2983,6 +2983,13 @@ int Run(HINSTANCE instance, int showCommand)
 	windowClass.lpfnWndProc = WindowProc;
 	windowClass.hInstance = instance;
 	windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+	// The icon the executable carries (tools/common/AppIcon.rc), so the title bar, the taskbar
+	// and the file in Explorer all show the same mark.
+	windowClass.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0,
+														 LR_DEFAULTSIZE | LR_SHARED));
+	windowClass.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+																 GetSystemMetrics(SM_CXSMICON),
+																 GetSystemMetrics(SM_CYSMICON), LR_SHARED));
 	windowClass.hbrBackground = BackgroundBrush();
 	windowClass.lpszClassName = className;
 	if (RegisterClassExW(&windowClass) == 0)

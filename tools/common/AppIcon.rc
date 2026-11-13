@@ -1,0 +1,3 @@
+// The icon both tools wear: the executable's, the window's and the taskbar's. The first icon
+// resource of an executable is the one Explorer shows, so this is also what the file looks like.
+1 ICON "app.ico"
