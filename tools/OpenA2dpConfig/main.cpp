@@ -1396,8 +1396,13 @@ void ApplyLayout(HWND hwnd)
 	// no empty band is left under it; the one extra pixel is the frame's own border.
 	const int sessionHeight = panelHeight + 2;
 	const int codecTop = sessionTop + sessionHeight + gap;
-	const int stripTop = codecTop + rowHeight + gap;
-	const int bodyTop = stripTop + tabHeight;
+	const int bodyTop = codecTop + rowHeight + gap + tabHeight;
+	// The control keeps a margin of its own above its tabs, which would make the space under the
+	// codec choice read wider than the one above it. The strip is placed as high as that margin -
+	// the tabs themselves start one gap under the row - and keeps its bottom on the body's frame.
+	const int tabTopMargin = MaxOf(tabItem.top, 0);
+	const int stripTop = bodyTop - tabHeight - tabTopMargin;
+	const int stripHeight = tabHeight + tabTopMargin;
 	const int bottomTop = bodyTop + bodyHeight + gap;
 	// The height only grows for the same reason as the width.
 	const int height = MaxOf(bottomTop + bottomHeight + margin, state->laidOutHeight);
@@ -1448,7 +1453,7 @@ void ApplyLayout(HWND hwnd)
 		// The strip spans the pane it heads, from the pane's own left edge: its first tab is flush
 		// with the frame, and the opened tab's fill runs into the table under it. The rows keep
 		// their inset, which leaves the tab text over the labels below.
-		Place(tabs, groupLeft, stripTop, groupWidth, tabHeight);
+		Place(tabs, groupLeft, stripTop, groupWidth, stripHeight);
 	}
 
 	// The top of the body is the same on every codec; the rows below it belong to the shown
