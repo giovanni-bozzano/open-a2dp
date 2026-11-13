@@ -518,22 +518,23 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			Complete(request, STATUS_INVALID_PARAMETER);
 			return;
 		}
-		// A format a codec cannot play would leave the endpoint with nothing to open while that
-		// codec runs, so it is refused instead of stored. Before the first discovery nothing is
-		// known yet.
+		// A format the codec in use cannot play is refused instead of stored, because that entry
+		// is the one the endpoint is pinned to and a stream would have nothing to open at. The
+		// other entries only say what the sink should use if their codec is ever negotiated, and
+		// the listing already ignores one the sink cannot serve, so they are stored as asked: a
+		// setting for a codec the sink is not running cannot fail because of what it holds.
+		// Before the first discovery nothing is known yet.
 		const bool sinkKnown = InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0) != 0;
-		if (sinkKnown)
+		const ULONG inUseCodec = sinkKnown ? AudioPinnedCodec(ctx) : Ioctl::kCodecCount;
+		if (inUseCodec < Ioctl::kCodecCount)
 		{
-			for (uint32_t codec = 0; codec < Ioctl::kCodecCount; ++codec)
+			const ULONG rate = in->sampleRate[inUseCodec];
+			if (rate != 0 && !AudioSinkSupportsEndpointFormat(
+									  ctx, inUseCodec, rate, static_cast<USHORT>(in->channels[inUseCodec])))
 			{
-				const ULONG rate = in->sampleRate[codec];
-				if (rate == 0 || AudioSinkSupportsEndpointFormat(
-										 ctx, codec, rate, static_cast<USHORT>(in->channels[codec])))
-				{
-					continue;
-				}
-				OA2DP_WARN(ctx, "Service", "the sink cannot play %u Hz %u ch with %s, so that format is refused",
-						   rate, in->channels[codec], CodecValueName(codec));
+				OA2DP_WARN(ctx, "Service", "the sink cannot play %u Hz %u ch with %s, the codec in use, so "
+						   "that format is refused",
+						   rate, in->channels[inUseCodec], CodecValueName(inUseCodec));
 				Complete(request, STATUS_NOT_SUPPORTED);
 				return;
 			}

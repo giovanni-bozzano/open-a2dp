@@ -92,9 +92,11 @@ that codec's section through `SET_ENDPOINT_FORMAT`; the driver rewrites the sink
 whenever either changes, so the file and the running driver never disagree. Deleting the
 sink's file returns it to the default, and `OpenA2dpCtl reset` or the settings window's Restore
 defaults writes both defaults back - which removes the file instead of storing the defaults,
-so a sink nobody changed has no file at all. The driver reads the file in `OnDeviceAdd`, before the endpoint exists. A value
-the sink does not advertise is refused instead of stored, so reading a preference back always
-shows what the driver will use. The registry is not used and nothing is migrated from it.
+so a sink nobody changed has no file at all. The driver reads the file in `OnDeviceAdd`, before the endpoint exists. A format
+the sink does not advertise is refused only for the codec the endpoint is pinned to, where it
+would leave a stream with nothing to open; another codec's entry is stored as asked and the
+listing ignores it until that codec is negotiated, so tuning a codec the sink is not running
+cannot fail. The registry is not used and nothing is migrated from it.
 
 | Setting | Section and key | CLI | Values | Default |
 |---|---|---|---|---|
