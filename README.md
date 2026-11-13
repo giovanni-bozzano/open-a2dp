@@ -1,94 +1,108 @@
 # OpenA2dp
 
-An open-source A2DP **source** driver for Windows 11: it replaces the inbox `BthA2dp.sys` on a
-per-device basis, so a Bluetooth headset or speaker plays from this PC with the codec, bitrate
-and pacing you choose instead of what the inbox driver happens to negotiate.
+OpenA2dp makes Bluetooth headphones and speakers sound better on Windows 11.
 
-SBC is encoded in the kernel. AAC-LC, classic aptX, aptX HD and LDAC are encoded by a user-mode
-service over shared rings, with aptX HD and LDAC taking native 24-bit PCM. Every setting is
-stored per sink, and two small tools read the same IOCTL surface the audio path does.
+Windows decides the audio codec for a Bluetooth headset and does not tell you which one it picked
+or what you could have had instead. OpenA2dp takes a headset over - one device at a time - and
+gives that choice back: LDAC, aptX HD, aptX, AAC or SBC, a sample rate you can hold, a bitrate you
+can cap, a delay you can shorten, and a window that shows what the stream is doing while you
+listen.
 
-## Why it exists
+Only the devices you switch are affected. Everything else keeps using the driver Windows ships,
+and handing a headset back is one click.
 
-The inbox A2DP source works, but it is closed: it picks its own codec, exposes no way to pin the
-endpoint format, keeps its own idea of latency, and cannot be extended toward another codec. This
-project is the same job done where it can be read, measured and changed - a KMDF profile driver
-above `bthport` that owns L2CAP, AVDTP and the ACX render endpoint, with a service for the codecs
-that are too heavy for the kernel. It is a replacement, not a wrapper: `BthA2dp.sys` stays
-installed and keeps serving every other sink, and the switch is a per-device decision.
+## What you get
 
-## What it does
+- **The codec you want, on the headset you want it on.** By default the PC and the headset settle
+  on the best codec both support (LDAC, then aptX HD, then aptX, then AAC, then SBC). You can also
+  pin one codec for one headset, which is what you do when a device claims LDAC but stumbles at
+  its highest bitrate.
+- **Sound settings that stay where you put them.** Sample rate and channel count per codec, the
+  SBC frame shape and bitpool, the AAC bitrate, LDAC's quality mode and how far ahead of the
+  clock the stream is sent are all remembered per headset, and survive reboots.
+- **A window that tells you what is happening.** `OpenA2dpConfig.exe` lists your sinks, shows the
+  live session (state, codec, buffers, counters) and has a settings pane for every codec - not
+  just the one playing - so you can prepare a setting for a device before you use it. Its
+  **Copy** button puts the whole report on the clipboard for a bug report.
+- **A command line with the same reach.** `OpenA2dpCtl.exe` prints that same report as text and
+  sets the same values, which is what you want over a remote session or in a script.
+- **Your other headsets are untouched.** The Windows driver stays installed and serving them.
 
-- **Codecs.** SBC (kernel, fixed-point encoder), AAC-LC (Windows' own encoder through Media
-  Foundation), classic aptX, aptX HD and LDAC. The automatic choice runs the best both ends
-  support - LDAC, then aptX HD, then aptX, then AAC, then SBC - and a codec can be forced per
-  sink.
-- **An audio endpoint that behaves.** An ACX render endpoint named `<sink> [OpenA2DP]`, typed as
-  headphones or speakers from the sink's Class of Device, offering 16-bit and 24-in-32 formats.
-  Changing the sample rate rebuilds the listing and renegotiates the running stream instead of
-  waiting for the next one.
-- **Per-sink settings.** Codec, sample rate and channel count per codec, SBC frame shape and
-  bitpool, AAC bitrate, LDAC quality, pacing lead, all stored per sink in one file. A setting for
-  a codec the stream is not running is stored and applied at the next negotiation, never at the
-  cost of a stream that is playing.
-- **Two front ends.** `OpenA2dpConfig.exe` is a dark-mode settings window with a live session
-  pane; `OpenA2dpCtl.exe` prints the same status as text and sets the same values.
-- **Tests you can run without hardware.** A self-contained codec test runner with an independent
-  SBC reference decoder, and a scripted hardware procedure for everything that needs a real sink.
+## Good to know
 
-## Status
+- Anything you set for a codec that is not currently playing is stored and applied the next time
+  that codec is used. A stream that is playing is only restarted when a change cannot wait, so
+  tuning a setting never costs you the song you were listening to.
+- If a headset does not advertise a codec, OpenA2dp cannot force it. The settings window only
+  offers what the device reports.
+- The counters (packets, drops, underruns, failed sends, trimmed audio) add up over the life of
+  the device, so a fault that stopped is still visible. **Reset counters** - in the window, or
+  `OpenA2dpCtl reset-counters` - starts a fresh measurement without interrupting playback.
 
-The live milestone table, next tasks and blockers are maintained only in
-[docs/STATUS.md](docs/STATUS.md). In short: driver, negotiation, endpoint, encoder service, all
-five codecs, the configuration tools and install/uninstall are done; what remains is a single
-setup file. Behaviour is validated against a real sink with the procedures in
-[docs/HARDWARE-TESTS.md](docs/HARDWARE-TESTS.md), which state what each test expects.
+## Requirements and limits
+
+- Windows 11, x64. It is a replacement A2DP source driver, installed per headset, and it is not
+  Microsoft-signed: the machine has to accept test-signed drivers.
+- aptX Low Latency, aptX Adaptive and aptX Lossless are not implemented. AAC playback uses
+  Windows' own encoder.
+- Expect the usual Bluetooth range and interference behaviour; OpenA2dp changes the codec and the
+  timing, not the radio.
 
 ## Try it
 
-Requires Windows 11 x64, Visual Studio 2026 (v145 toolset) and the WDK NuGet packages pinned in
-`Directory.Packages.props`. Use the 64-bit MSBuild.
+Building needs Visual Studio 2026 (v145 toolset) and the WDK packages pinned in
+`Directory.Packages.props`.
 
 ```
 & MSBuild.exe OpenA2dp.slnx /p:Configuration=Debug /p:Platform=x64
-out\x64\Debug\CodecTests.exe            # all tests
-out\x64\Debug\CodecTests.exe Sbc_       # tests whose name starts with a filter
+out\x64\Debug\CodecTests.exe            # the codec tests, no hardware needed
 ```
 
-`scripts\deploy.ps1` installs the test-signed package, the tools and the encoder service on this
-machine without a reboot (elevated prompt); `scripts\deploy.ps1 -Vm` runs the same installer in
-the test VM, so the two targets cannot drift apart, and `-Uninstall` takes it all back out.
-User-mode binaries (`CodecTests.exe`, `OpenA2dpCtl.exe`, `OpenA2dpConfig.exe`,
-`OpenA2dpSvc.exe`) link the CRT statically, so they also run in the test VM without the Visual
-C++ debug runtime.
+`scripts\deploy.ps1` installs the driver, the tools and the encoder service on this machine from
+an elevated prompt (`-Vm` does the same in the test VM, `-Uninstall` takes it all back out).
 
-## Repository layout
+Then open `OpenA2dpConfig.exe`, pick your headset, choose a codec, adjust what you care about and
+press **Apply**. If the headset is still on Windows' driver, the window offers to switch it over.
 
-| Path | What it is |
+## Day to day
+
+The settings window is the short version: a sink list, a live session pane, and one tab per codec
+with its own settings under it.
+
+The command line is the same thing as text:
+
+| Command | What it does |
 |---|---|
-| `driver/` | The KMDF driver: entry/PnP, L2CAP, AVDTP, media path, ACX endpoint, service boundary. Its [map](driver/README.md) lists every subsystem file. |
-| `service/` | `OpenA2dpSvc.exe`, the encoder service: AAC-LC, classic aptX, aptX HD and LDAC. |
-| `codecs/` | The `IA2dpCodec` seam, the SBC encoder and AAC negotiation, and the vendored AOSP aptX, aptX HD and LDAC encoders. |
-| `common/include/OpenA2dp/` | Kernel-safe AVDTP/RTP/ring-buffer/codec headers and the driver-service-tools ABI (`Ioctl.h`). |
-| `tools/OpenA2dpConfig/` | The settings window: sink list, live session pane, codec strip and the fields below it. |
-| `tools/OpenA2dpCtl/` | The diagnostic CLI: devices, AVDTP/media state, codec, and the same settings from a console. |
-| `tools/common/` | The status report both tools print, so the window, its **Copy** button and `OpenA2dpCtl status` never disagree. |
-| `tests/CodecTests/` | The codec test runner, with an independent SBC reference decoder. |
-| `tests/HardwareTests/` | The hardware procedure scripted per test, with its "Expect" lines asserted. |
-| `docs/` | [Status](docs/STATUS.md), [hardware tests](docs/HARDWARE-TESTS.md) and the [architecture references](docs/architecture/README.md). |
+| `OpenA2dpCtl status` | The full report for this sink, refreshed with `--watch`. |
+| `OpenA2dpCtl list` | The OpenA2dp devices that are present. |
+| `OpenA2dpCtl codec ldac --preroll 40` | Pin a codec, or tune its settings, for this sink. |
+| `OpenA2dpCtl format ldac 96000 2` | Choose the sample rate and channel count a codec's streams use. |
+| `OpenA2dpCtl driver windows` | Hand the sink back to the Windows driver. |
+| `OpenA2dpCtl reset` | Forget this sink's stored settings. |
+| `OpenA2dpCtl reset-counters` | Start a fresh measurement window, without interrupting anything. |
+| `OpenA2dpCtl help` | Every command and option. |
 
-## Licensing and limits
+## How it is built, briefly
+
+A kernel driver takes over the A2DP connection for the sinks you switch (codec negotiation,
+timing, the audio endpoint Windows plays to), and a small service encodes the codecs that are too
+heavy to run in the kernel: AAC, aptX, aptX HD and LDAC. SBC is encoded in the driver itself. The
+two tools talk to the driver over a small control interface, which is also where the status report
+comes from, so the window, its **Copy** button and `OpenA2dpCtl status` never disagree.
+
+For the details, the [driver map](driver/README.md) and the
+[architecture references](docs/architecture/README.md) cover each subsystem; the
+[hardware test procedures](docs/HARDWARE-TESTS.md) say what each behaviour should look like on a
+real sink, the [codec tests](tests/CodecTests/) run without hardware, and
+[docs/STATUS.md](docs/STATUS.md) is the live milestone list.
+
+## Licensing
 
 Apache-2.0, see [LICENSE](LICENSE); its patent grant covers contributors only. The package ships
 this repository's SBC encoder, Qualcomm's Apache-2.0 aptX and aptX HD encoders and Sony's
 Apache-2.0 LDAC encoder, all from AOSP, and drives Windows' own encoder for AAC, so no AAC
-encoder is distributed. aptX LL, aptX Adaptive and aptX Lossless are not implemented. What that
-obliges a distributor to ship is in
+encoder is distributed. What that obliges a distributor to ship is in
 [docs/architecture/Codec-Licensing.md](docs/architecture/Codec-Licensing.md).
-
-The driver is Windows 11 x64 only, is not WHQL-signed, and is meant to be installed per sink on a
-machine where a test-signed driver is acceptable. It replaces the inbox A2DP source for the sinks
-it claims; everything else keeps using `BthA2dp.sys`.
 
 ## AI disclosure
 
