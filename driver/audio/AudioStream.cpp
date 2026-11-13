@@ -95,8 +95,6 @@ NTSTATUS OnStreamPrepareHardware(_In_ ACXSTREAM stream)
 NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 {
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
-	WdfTimerStop(ctx->AudioTimer, TRUE);
-
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const BOOLEAN wasRunning = ctx->AudioRunning;
@@ -106,6 +104,11 @@ NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 	ctx->AudioCompletedPackets = 0;
 	ctx->AudioStream = nullptr;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	// A tick that already read the stream reports packet completion to ACX after it drops the
+	// lock, so this is what stopping the old timer with a wait used to guarantee: the run has to
+	// finish before ACX frees the stream. Any tick that starts after the release sees
+	// AudioRunning clear and calls ACX for nothing. Bounded: one copy of what the clock consumed.
+	WdfWorkItemFlush(ctx->AudioTickWorkItem);
 	if (wasRunning != FALSE)
 	{
 		// Released without a pause - a playback that stopped, or the format change that rebuilds
@@ -155,7 +158,6 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioRunning = TRUE;
 	ctx->AudioHeard = 0;
 	ctx->AudioSkippedBytes = 0;
-	ArmAudioTimerLocked(ctx, ctx->AudioBasePosition);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	SignalingOnAudioRun(ctx);
@@ -165,8 +167,6 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 {
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
-	WdfTimerStop(ctx->AudioTimer, TRUE);
-
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	ctx->AudioBasePosition = CurrentPositionLocked(ctx, nullptr);

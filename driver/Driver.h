@@ -432,9 +432,12 @@ struct DEVICE_CONTEXT
 	UCHAR MediaBuffer[MediaMaxMtu];
 
 	// ACX render stream (audio/). AudioLock (spin lock) guards the RT buffer
-	// and position state; the PCM ring is SPSC (audio timer -> media work item).
+	// and position state; the PCM ring is SPSC (copy events -> media work item).
 	KSPIN_LOCK AudioLock;
-	WDFTIMER AudioTimer;
+	// The copy and the render-side completion notifications run here: ACX callbacks only enqueue
+	// it, because ACX must not be called back from inside its own callback. Coalesced, so a burst
+	// of position queries costs one run.
+	WDFWORKITEM AudioTickWorkItem;
 	ACXSTREAM AudioStream;
 	// PCM format of the stream that runs (44.1 or 48 kHz, mono or stereo, 16 or 24 valid bits).
 	// The encoder input, the position math and the negotiated configuration follow it; it is
@@ -820,6 +823,16 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 // nothing is due, so the silence a stream sends then is a pause and not a gap.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx);
+
+// Copies what the render clock consumed and tells ACX which packets are done. Called from the
+// audio work item, which the engine's own callbacks and the media path wake - the copy has no
+// clock of its own and nothing polls.
+void AudioTick(_In_ DEVICE_CONTEXT* ctx);
+
+// Asks for an AudioTick at PASSIVE_LEVEL, from any callback that sees the render clock move
+// (packet release, position queries, media wakes). Safe at DISPATCH_LEVEL; a pending request
+// absorbs the next one.
+void AudioScheduleTick(_In_ DEVICE_CONTEXT* ctx);
 
 // True when the audio already in the PCM ring was captured at this format and the endpoint has
 // played since its run: a stream starting now sends it as the beginning of playback instead of

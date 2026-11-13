@@ -67,17 +67,13 @@ EVT_ACX_STREAM_GET_HW_LATENCY OnGetHwLatency;
 EVT_ACX_STREAM_SET_RENDER_PACKET OnSetRenderPacket;
 EVT_ACX_STREAM_GET_CURRENT_PACKET OnGetCurrentPacket;
 EVT_ACX_STREAM_GET_PRESENTATION_POSITION OnGetPresentationPosition;
-EVT_WDF_TIMER OnAudioTimer;
 EVT_WDF_TIMER OnJackFlapTimer;
 EVT_WDF_WORKITEM OnJackFlapWorkItem;
+EVT_WDF_WORKITEM OnAudioTickWorkItem;
 EVT_WDF_OBJECT_CONTEXT_DESTROY OnStreamDestroy;
 
 ULONGLONG QpcNow(ULONGLONG* frequency);
-// Arms the copy for the moment the packet being played completes, which is the wake that makes
-// the engine's packet available again. Caller holds AudioLock.
-void ArmAudioTimerLocked(_In_ DEVICE_CONTEXT* ctx, ULONGLONG position);
 ULONGLONG CurrentPositionLocked(DEVICE_CONTEXT* ctx, ULONGLONG* qpc);
-void OnAudioTimer(_In_ WDFTIMER timer);
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,
 	_In_ ACXDATAFORMAT, _In_ const GUID*, _In_ ACXOBJECTBAG);
 void OnStreamDestroy(_In_ WDFOBJECT object);

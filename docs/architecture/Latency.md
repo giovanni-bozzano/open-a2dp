@@ -9,7 +9,7 @@ Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales 
 | Stage | Set by | Typical |
 |---|---|---|
 | Windows engine buffer | ACX RT packets; size and count chosen by the engine, bounded by `AudioMaxBufferBytes` (`AudioInternal.h`) | 2 × 10 ms = 20 ms |
-| Driver copy granularity | `OnAudioTimer` is one shot, armed by `ArmAudioTimerLocked` for the moment the packet being played completes; plus one copy per released packet in `OnSetRenderPacket` (`AudioPosition.cpp`) | one packet, whatever the engine picked |
+| Driver copy granularity | `AudioTickWorkItem` (`AudioPosition.cpp`), woken by the engine releasing a packet, by its position queries and by every media wake: the copy follows events, not a period | one event, whatever the engine picked |
 | PCM ring backlog | the lead plus `LatencyBudget::kPcmSlackMs`, `Ioctl::kPcmRingBytes` = 256 KB (sized by time at 96 kHz stereo 24-in-32, where it holds about 340 ms) | under 10 ms |
 | Encoder pacing lead | `Ioctl::kPrerollMs = 60` as the default, overridable per sink through `Preference.prerollMs` (20–200 ms) | 60 ms, or as configured |
 | Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`), or fewer with `Preference.sbcFramesPerPacket`; AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
@@ -24,7 +24,7 @@ single largest fixed part of it.
 1. **The rings trim instead of shifting the stream late.** Both were plain FIFOs: a stall
    dropped the *new* audio and kept the old, and the encoder went on draining the backlog at
    real time, so a 500 ms transport stall meant 500 ms (up to 371 ms of PCM, 1.6 s of frames)
-   of permanent offset. `OnAudioTimer` now drops the oldest frames past
+   of permanent offset. The render copy now drops the oldest frames past
    `LatencyBudget::RingLimitMs` of backlog, and `FrameRecord::Trim` drops encoded records past
    that same limit; the RTP timestamp moves past the dropped span, so the sink hears one
    gap rather than old audio. Both are counted and reported (`trimmed`: PCM bytes and encoded
