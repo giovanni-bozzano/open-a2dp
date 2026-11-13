@@ -369,55 +369,8 @@ SinkState* StateOf(HWND hwnd)
 	return reinterpret_cast<SinkState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
-int TextWidth(HDC dc, const wchar_t* text);
-
-// Whether the message line shows its whole sentence. It is one line, cut with an ellipsis when
-// the sentence is wider than it, so only a cut sentence needs a box under the pointer.
-bool MessageFits(HWND hwnd, const std::wstring& message)
-{
-	const HWND label = GetDlgItem(hwnd, kMessageLabel);
-	RECT rect = {};
-	if (label == nullptr || message.empty() || GetClientRect(label, &rect) == FALSE)
-	{
-		return true;
-	}
-	const HDC dc = GetDC(label);
-	if (dc == nullptr)
-	{
-		return true;
-	}
-	// The label is measured with its own font, which is the one it draws with.
-	const HFONT font = reinterpret_cast<HFONT>(SendMessageW(label, WM_GETFONT, 0, 0));
-	const HGDIOBJ previousFont = font != nullptr ? SelectObject(dc, font) : nullptr;
-	const int width = TextWidth(dc, message.c_str());
-	if (previousFont != nullptr)
-	{
-		SelectObject(dc, previousFont);
-	}
-	ReleaseDC(label, dc);
-	return width <= static_cast<int>(rect.right - rect.left);
-}
-
-// The message line's tool is registered once, with a text callback that reads the window's own
-// message: adding and removing a tool per message is what made the box miss a message that was
-// long enough to be cut. Whether it is worth showing is decided when it is about to appear
-// (WM_NOTIFY), because only the layout knows how much room the line ended up with.
-void AddMessageTooltip(HWND hwnd, HWND label)
-{
-	const SinkState* state = StateOf(hwnd);
-	if (state == nullptr || state->tooltip == nullptr || label == nullptr)
-	{
-		return;
-	}
-	TTTOOLINFOW tool = {};
-	tool.cbSize = sizeof(tool);
-	tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-	tool.hwnd = hwnd;
-	tool.uId = reinterpret_cast<UINT_PTR>(label);
-	tool.lpszText = LPSTR_TEXTCALLBACKW;
-	SendMessageW(state->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-}
-
+// The message is one line, cut with an ellipsis when the sentence is wider than the window; the
+// text itself is kept whole in the window's state, which is what the report prints.
 void SetMessage(HWND hwnd, const std::wstring& message)
 {
 	SinkState* state = StateOf(hwnd);
@@ -1740,8 +1693,7 @@ void CreateControls(HWND hwnd)
 	// worse than expected is undone from the window it was made in.
 	CreateChild(hwnd, L"BUTTON", kRestoreText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kRestoreButton,
 				font);
-	const HWND messageLabel = CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
-	AddMessageTooltip(hwnd, messageLabel);
+	CreateChild(hwnd, L"STATIC", L"", SS_ENDELLIPSIS, 0, 0, 10, 10, kMessageLabel, font);
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
 
 	// The sample rate and AAC bitrate lists depend on the codec and on the link, so
@@ -2822,32 +2774,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		if (header == nullptr)
 		{
 			break;
-		}
-		SinkState* state = StateOf(hwnd);
-		// The message line caps its sentence with an ellipsis, and only a cut sentence needs a box
-		// under the pointer: a tool that asks not to be shown is the only way to stay in step with
-		// what the line actually drew. The one tooltip is shared, so the tool behind the request
-		// has to be the message line before its answer means anything.
-		if (state != nullptr && state->tooltip != nullptr && header->hwndFrom == state->tooltip &&
-			header->code == TTN_GETDISPINFOW)
-		{
-			// The callback reads the window's own message, which outlives the request: a pointer to a
-			// temporary string would leave the tooltip reading freed memory when it shows.
-			reinterpret_cast<LPNMTTDISPINFOW>(lParam)->lpszText = state->message.data();
-			return 0;
-		}
-		if (state != nullptr && state->tooltip != nullptr && header->hwndFrom == state->tooltip &&
-			header->code == TTN_SHOW)
-		{
-			TTTOOLINFOW current = {};
-			current.cbSize = sizeof(current);
-			const HWND label = GetDlgItem(hwnd, kMessageLabel);
-			if (SendMessageW(state->tooltip, TTM_GETCURRENTTOOLW, 0, reinterpret_cast<LPARAM>(&current)) != FALSE &&
-				current.hwnd == hwnd && label != nullptr && current.uId == reinterpret_cast<UINT_PTR>(label) &&
-				MessageFits(hwnd, state->message))
-			{
-				return TRUE;
-			}
 		}
 		// The pane's tabs only say which settings are being looked at, so a click moves the
 		// table and nothing else.
