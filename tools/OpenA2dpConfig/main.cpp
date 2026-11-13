@@ -1285,10 +1285,12 @@ void ApplyLayout(HWND hwnd)
 		codecWidth = MaxOf(codecWidth, TextWidth(dc, kTabInfo[tab].caption));
 		stripWidth += TextWidth(dc, kTabInfo[tab].caption) + gap * 3;
 	}
-	const int resetWidth = TextWidth(dc, kResetCountersText) + gap * 2;
 	const int codecComboMinWidth = codecWidth + arrow;
+	// The codec row fills the pane: its label, the drop-down, and a reset button as wide as one of
+	// the buttons under it. That button is a third of the row, so the window has to be wide enough
+	// for the drop-down's widest entry beside it.
 	const int selectorWidth =
-			margin + codecLabelWidth + gap + codecComboMinWidth + gap + resetWidth + margin;
+			margin * 2 + gap * 2 + (3 * (codecComboMinWidth + codecLabelWidth) + 1) / 2;
 
 	int width = contentWidth + (margin + inset) * 2;
 	if (headerWidth > width)
@@ -1320,11 +1322,12 @@ void ApplyLayout(HWND hwnd)
 	const int groupWidth = width - margin * 2;
 	const int innerLeft = groupLeft + inset;
 	const int innerWidth = groupWidth - inset * 2;
-	// The codec choice is as wide as its widest entry instead of running to the panes' right
-	// edge: a drop-down that spans the window reads as a field to fill, and the room beside it
-	// is what the reset button needs.
-	const int codecComboWidth = codecComboMinWidth;
-	const int resetLeft = margin + codecLabelWidth + gap + codecComboWidth + gap;
+	// The codec row fills the pane end to end: the drop-down takes what its label and the reset
+	// button leave, and the button is exactly the width of one button in the row at the bottom.
+	const int rowButtonWidth = (width - margin * 2 - gap * 2) / 3;
+	const int resetWidth = rowButtonWidth;
+	const int resetLeft = width - margin - resetWidth;
+	const int codecComboWidth = resetLeft - gap - (margin + codecLabelWidth + gap);
 
 	// The tab control's own height comes from its first item, so a larger system font or a
 	// longer caption cannot cut the tabs off; the body frame starts under it.
@@ -1447,7 +1450,8 @@ void ApplyLayout(HWND hwnd)
 		  textHeight);
 	Place(GetDlgItem(hwnd, kCodecCombo), margin + codecLabelWidth + gap, codecTop, codecComboWidth,
 		  kComboListHeight);
-	Place(GetDlgItem(hwnd, kResetCountersButton), resetLeft, codecTop, resetWidth, applyHeight);
+	// As tall as the drop-down beside it, so the two read as one row.
+	Place(GetDlgItem(hwnd, kResetCountersButton), resetLeft, codecTop, resetWidth, controlHeight);
 	if (tabs != nullptr)
 	{
 		// The strip spans the pane it heads, from the pane's own left edge: its first tab is flush
@@ -1486,7 +1490,7 @@ void ApplyLayout(HWND hwnd)
 	// share the width below it, one third each, so the row ends where the panes above do.
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, messageHeight);
 	const int buttonsTop = bottomTop + messageHeight + gap;
-	const int buttonWidth = (width - margin * 2 - gap * 2) / 3;
+	const int buttonWidth = rowButtonWidth;
 	const int driverLeft = margin + buttonWidth + gap;
 	const int applyLeft = driverLeft + buttonWidth + gap;
 	Place(GetDlgItem(hwnd, kRestoreButton), margin, buttonsTop, buttonWidth, applyHeight);
