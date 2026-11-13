@@ -15,7 +15,8 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"OpenA2dpStatusView";
 constexpr int kRowHeight = 24;
-constexpr int kLabelColumnWidth = 120;
+// The label column has no width of its own: it takes the widest label's, so the values start as
+// far left as the text allows. Only the room the value column keeps limits it below.
 constexpr int kMinLabelColumnWidth = 96;
 // What the value column keeps, so dragging the divider cannot squeeze it away.
 constexpr int kMinValueColumnWidth = 140;
@@ -36,7 +37,7 @@ struct ViewState
 	std::wstring emptyText;
 	int scrollTop = 0; // pixels; the view scrolls smoothly, so the last row is fully reachable
 	int rowHeight = kRowHeight;
-	int labelWidth = kLabelColumnWidth;
+	int labelWidth = kMinLabelColumnWidth;
 	// The user dragged the divider, so the column stops following the widest label.
 	bool labelWidthChosen = false;
 	bool dragging = false;
@@ -114,10 +115,10 @@ bool OnDivider(const ViewState& state, int x)
 	return x >= divider - kSplitterGrab && x <= divider + kSplitterGrab;
 }
 
-// One row: section headers span the whole width as a band, a value row has two columns. Value
-// rows share the window background, so the only thing that changes between groups is the band
-// that names them.
-void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
+// One row: section headers span the whole width as a band, a value row has two columns. Bands
+// and values alike end on a hairline, so the pane reads as one table while the bands still name
+// the groups in it.
+void PaintRow(HDC dc, const ViewState& state, int index, int y, int width, int height)
 {
 	const StatusRow& row = state.rows[static_cast<size_t>(index)];
 	const RECT strip = {0, y, width, y + state.rowHeight};
@@ -131,14 +132,12 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 	{
 		Fill(dc, strip, ThemeColors().selection);
 	}
-	if (row.section)
+	// The bottom row's rule would land on the pane's own border and thicken it, so that one row
+	// is left to the frame.
+	if (y + state.rowHeight < height)
 	{
-		// The band is bounded by a hairline on both sides, which is what separates one group
-		// from the previous one; the last band keeps its rule on the bottom edge only.
-		const RECT top = {0, y, width, y + 1};
-		Fill(dc, top, ThemeColors().border);
-		const RECT bottom = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
-		Fill(dc, bottom, ThemeColors().border);
+		const RECT rule = {0, y + state.rowHeight - 1, width, y + state.rowHeight};
+		Fill(dc, rule, ThemeColors().border);
 	}
 	SelectObject(dc, row.section ? state.bold : state.normal);
 
@@ -310,7 +309,7 @@ void Paint(HWND window, ViewState& state)
 			for (int index = first; index < static_cast<int>(state.rows.size()) && y < height;
 				 ++index, y += state.rowHeight)
 			{
-				PaintRow(memory, state, index, y, width);
+				PaintRow(memory, state, index, y, width, height);
 			}
 			PaintDivider(memory, state, width, height);
 		}
@@ -379,7 +378,7 @@ void UpdateColumns(HWND window, ViewState& state)
 {
 	if (!state.labelWidthChosen)
 	{
-		int widest = kLabelColumnWidth;
+		int widest = 0;
 		const HDC dc = GetDC(window);
 		if (dc != nullptr)
 		{

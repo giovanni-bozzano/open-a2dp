@@ -1239,14 +1239,16 @@ void ApplyLayout(HWND hwnd)
 	const int headerWidth = margin + sinkLabelWidth + gap + sinkComboWidth + gap + refreshWidth + gap +
 							copyWidth + gap + detailsWidth + margin;
 
-	// The bottom row holds the driver switch and Apply, and the message beside them keeps a
-	// button's width, so the switch cannot squeeze the outcome of the last action out of view.
+	// The bottom row holds the driver switch and Apply, and the message above them keeps the whole
+	// width, so the switch cannot squeeze the outcome of the last action out of view. The three
+	// buttons share the row, so the widest of them sets the least the window can be.
 	const int applyWidth = TextWidth(dc, kApplyText) + gap * 4;
 	const int applyHeight = rowHeight + 4;
 	const int driverWidth = MaxOf(MaxOf(TextWidth(dc, kUseWindowsText), TextWidth(dc, kUseOpenA2dpText)),
 								  TextWidth(dc, kFinishSwitchText)) + gap * 4;
 	const int restoreWidth = TextWidth(dc, kRestoreText) + gap * 4;
-	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + gap + restoreWidth + margin;
+	const int buttonMinWidth = MaxOf(applyWidth, MaxOf(driverWidth, restoreWidth));
+	const int bottomWidth = margin * 2 + gap * 2 + buttonMinWidth * 3;
 
 	// The codec choice is a drop-down above the pane, as wide as its widest entry, and the pane's
 	// own tabs have to fit side by side.
@@ -1258,8 +1260,8 @@ void ApplyLayout(HWND hwnd)
 		codecWidth = MaxOf(codecWidth, TextWidth(dc, kTabInfo[tab].caption));
 		stripWidth += TextWidth(dc, kTabInfo[tab].caption) + gap * 3;
 	}
-	const int codecComboWidth = codecWidth + arrow;
-	const int selectorWidth = margin + codecLabelWidth + gap + codecComboWidth + margin;
+	const int codecComboMinWidth = codecWidth + arrow;
+	const int selectorWidth = margin + codecLabelWidth + gap + codecComboMinWidth + margin;
 
 	int width = contentWidth + (margin + inset) * 2;
 	if (headerWidth > width)
@@ -1291,6 +1293,9 @@ void ApplyLayout(HWND hwnd)
 	const int groupWidth = width - margin * 2;
 	const int innerLeft = groupLeft + inset;
 	const int innerWidth = groupWidth - inset * 2;
+	// The codec choice starts where the sink row's label does and runs to the panes' right edge,
+	// so its drop-down is as wide as the tables it picks the codec for.
+	const int codecComboWidth = width - margin - (margin + codecLabelWidth + gap);
 
 	// The tab control's own height comes from its first item, so a larger system font or a
 	// longer caption cannot cut the tabs off; the body frame starts under it.
@@ -1323,6 +1328,9 @@ void ApplyLayout(HWND hwnd)
 		hintHeight = MaxOf(hintHeight, TextHeight(dc, kTabInfo[tab].hint, innerWidth));
 	}
 	hintHeight = MaxOf(hintHeight, textHeight);
+	// The hint occupies a row of its own under the table, its first line where a selector's
+	// label sits, so the space above it matches the space above every row.
+	const int hintOffset = (rowHeight - textHeight) / 2;
 	// The outcome of the last action is a line of its own above the buttons: beside them it was
 	// cut to a few words, which is no use when it is the reason a setting did not apply. It wraps
 	// rather than ending in an ellipsis, so the window is as tall as the sentence is long.
@@ -1331,8 +1339,8 @@ void ApplyLayout(HWND hwnd)
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
-	const int bodyHeight = inset + rows * rowHeight + hintHeight + gap;
-	int fixedHeight = margin + rowHeight + gap * 2 + bottomHeight + margin;
+	const int bodyHeight = inset + rows * rowHeight + hintOffset + hintHeight + gap;
+	int fixedHeight = margin + rowHeight + gap + bottomHeight + margin;
 	fixedHeight += rowHeight + gap + tabHeight + bodyHeight + gap;
 	// The border and the title bar count too, or the window as a whole would hang off the
 	// screen even though its client area fits.
@@ -1352,7 +1360,9 @@ void ApplyLayout(HWND hwnd)
 	const int panelHeight = panelRows * statusRowHeight;
 
 	const int headerTop = margin;
-	const int sessionTop = headerTop + rowHeight + gap * 2;
+	// The session frame keeps the same gap under the header row as every row below it, so the
+	// pane reads as the next line of the form rather than a block of its own.
+	const int sessionTop = headerTop + rowHeight + gap;
 	// The panel reaches the frame's bottom line, so the last row ends where the pane does and
 	// no empty band is left under it; the one extra pixel is the frame's own border.
 	const int sessionHeight = panelHeight + 2;
@@ -1398,10 +1408,10 @@ void ApplyLayout(HWND hwnd)
 
 	// The codec choice, above the pane whose tabs are only what is being looked at; the pane
 	// below it is the window's, which keeps its own frame and the palette's colours, and the tab
-	// strip sits on that frame's top edge.
-	Place(state->codecLabel, innerLeft, codecTop + (rowHeight - textHeight) / 2, codecLabelWidth,
+	// strip sits on that frame's top edge. Its label lines up with the sink row's.
+	Place(state->codecLabel, margin, codecTop + (rowHeight - textHeight) / 2, codecLabelWidth,
 		  textHeight);
-	Place(GetDlgItem(hwnd, kCodecCombo), innerLeft + codecLabelWidth + gap, codecTop, codecComboWidth,
+	Place(GetDlgItem(hwnd, kCodecCombo), margin + codecLabelWidth + gap, codecTop, codecComboWidth,
 		  kComboListHeight);
 	if (tabs != nullptr)
 	{
@@ -1432,20 +1442,23 @@ void ApplyLayout(HWND hwnd)
 	}
 	for (int tab = 0; tab < kTabCount && tab < static_cast<int>(state->hints.size()); ++tab)
 	{
-		Place(state->hints[tab], innerLeft, contentTop + rows * rowHeight, innerWidth, hintHeight);
+		Place(state->hints[tab], innerLeft, contentTop + rows * rowHeight + hintOffset, innerWidth,
+			  hintHeight);
 		ShowWindow(state->hints[tab], tab == state->tab ? SW_SHOW : SW_HIDE);
 	}
 
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
-	// sit under its right end.
+	// share the width below it, one third each, so the row ends where the panes above do.
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, messageHeight);
 	const int buttonsTop = bottomTop + messageHeight + gap;
-	const int applyLeft = width - margin - applyWidth;
-	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, buttonsTop, applyWidth, applyHeight);
-	const int driverLeft = applyLeft - gap - driverWidth;
-	Place(GetDlgItem(hwnd, kDriverButton), driverLeft, buttonsTop, driverWidth, applyHeight);
-	const int restoreLeft = driverLeft - gap - restoreWidth;
-	Place(GetDlgItem(hwnd, kRestoreButton), restoreLeft, buttonsTop, restoreWidth, applyHeight);
+	const int buttonWidth = (width - margin * 2 - gap * 2) / 3;
+	const int driverLeft = margin + buttonWidth + gap;
+	const int applyLeft = driverLeft + buttonWidth + gap;
+	Place(GetDlgItem(hwnd, kRestoreButton), margin, buttonsTop, buttonWidth, applyHeight);
+	Place(GetDlgItem(hwnd, kDriverButton), driverLeft, buttonsTop, buttonWidth, applyHeight);
+	// The last one takes the pixels the division leaves, so the row reaches the right edge.
+	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, buttonsTop, width - margin - applyLeft,
+		  applyHeight);
 
 	if (dc != nullptr)
 	{
