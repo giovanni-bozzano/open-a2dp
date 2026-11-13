@@ -298,6 +298,10 @@ static bool ReconfigureClosedStream(DEVICE_CONTEXT* ctx)
 		ctx->PinSampleRate, static_cast<unsigned>(ctx->PinChannels));
 	ctx->CodecSwitchWanted = TRUE;
 	Transmit(ctx, length);
+	// The media channel stays open across this CLOSE, so nothing else says the stream came
+	// back: the endpoint edge is what starts it again when audio plays, and leaves it
+	// suspended when it does not.
+	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	return true;
 }
 
