@@ -553,13 +553,35 @@ struct RowTip
 
 constexpr RowTip kRowTips[] = {
 	{"AVDTP",
-	 L"State of the A2DP signalling link - discovery, configuration, open, streaming.\n\n"
-	 L"A sink that never reaches Streaming plays nothing, and Refused or Closed means "
-	 L"the link is the problem, not the audio format - no codec setting will help."},
+	 L"State of the A2DP signalling link with the sink. Every value it can show, in the order "
+	 L"they occur:\n\n"
+	 L"IDLE - no session; nothing has been negotiated, so nothing can play.\n"
+	 L"DISCOVERING - asking the sink which audio endpoints it offers.\n"
+	 L"GETTINGCAPABILITIES - reading the codecs and formats of one of them.\n"
+	 L"CONFIGURING - asking the sink to accept the codec and settings chosen for it.\n"
+	 L"CONFIGURED - the sink chose the stream and it was accepted; the sink opens the media "
+	 L"channel next.\n"
+	 L"OPENING - opening the media channel the audio travels on.\n"
+	 L"OPEN - the channel is open and the stream can start.\n"
+	 L"STARTING - asking the sink to start; waiting for its answer.\n"
+	 L"STREAMING - the sink accepted and is playing what this PC sends.\n"
+	 L"SUSPENDING - asking the sink to stop, keeping the session so a resume needs no "
+	 L"negotiation.\n"
+	 L"CLOSING - closing the session because playback ended.\n"
+	 L"ABORTING - tearing the session down without a clean close, after an error or a timeout.\n"
+	 L"FAILED - the link broke or the sink refused; the next connect starts over.\n\n"
+	 L"A sink that never reaches STREAMING plays nothing, and FAILED means the link is the "
+	 L"problem, not the audio format - no codec setting will help."},
 	{"media",
-	 L"Where the media path stands - idle, waiting for the encoder service, streaming, "
-	 L"suspended or failed.\n\n"
-	 L"Suspended while a player runs is silence you can see here but would not find "
+	 L"Where the audio path on this PC stands. Every value it can show:\n\n"
+	 L"IDLE - no audio is being sent: no stream has started, or the last one ended.\n"
+	 L"WAITINGFORENCODER - the codec is configured and the driver waits for the encoder "
+	 L"service's first frame.\n"
+	 L"STREAMING - audio is flowing to the sink.\n"
+	 L"SUSPENDED - the stream is configured but not sending, because Windows paused the "
+	 L"endpoint; playing again resumes it without negotiating anew.\n"
+	 L"FAILED - the stream hit a fault and stopped; the next playback starts a new one.\n\n"
+	 L"SUSPENDED while a player runs is silence you can see here but would not find "
 	 L"explained anywhere else."},
 	{"endpoint",
 	 L"Whether Windows' render endpoint is running or paused.\n\n"

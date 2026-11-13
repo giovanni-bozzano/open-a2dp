@@ -480,7 +480,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendLine(text, "media", MediaStateName(static_cast<uint32_t>(status.mediaState)));
 	// Windows runs a stream of its own around an endpoint rebuild, and only that run can start
 	// the A2DP stream, so whether the endpoint is running is half of the session state.
-	AppendLine(text, "endpoint", status.endpointRunning != 0 ? "running" : "paused");
+	AppendLine(text, "endpoint", status.endpointRunning != 0 ? "Running" : "Paused");
 	// Windows opens no stream at all while it shows the endpoint unplugged, so a flap that did
 	// not end is silence with nothing in the session to show for it.
 	if (status.jackUnplugged != 0)

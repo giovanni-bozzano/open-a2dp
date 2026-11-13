@@ -251,10 +251,10 @@ TEST(StatusReport_TellsWhetherWindowsRunsAnEndpoint)
 	// Open while Windows is already clocking a stream is only visible on this line.
 	Ioctl::Status status = StreamingStatus();
 	status.endpointRunning = 1;
-	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        running"));
+	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        Running"));
 
 	status.endpointRunning = 0;
-	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        paused"));
+	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        Paused"));
 }
 
 TEST(StatusReport_ShowsRefusedStreamsInEveryMode)
