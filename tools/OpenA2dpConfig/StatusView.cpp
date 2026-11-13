@@ -20,7 +20,6 @@ constexpr int kMinLabelColumnWidth = 96;
 // What the value column keeps, so dragging the divider cannot squeeze it away.
 constexpr int kMinValueColumnWidth = 140;
 constexpr int kTextInset = 10;
-constexpr int kRowIndent = 10;   // a value row sits under its section header
 constexpr int kColumnGap = 8;    // between the divider and the text on either side
 constexpr int kSplitterGrab = 3; // pixels either side of the divider that start a drag
 // Rows per wheel notch, like a list that scrolls by items.
@@ -144,7 +143,9 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 	SelectObject(dc, row.section ? state.bold : state.normal);
 
 	const int divider = DividerX(state);
-	const int left = kTextInset + (row.section ? 0 : kRowIndent);
+	// A value row lines up with the section bands above it: one inset is the whole of the
+	// left edge, so the first character of every line starts at the same place.
+	const int left = kTextInset;
 	RECT label = {left, y, divider - kColumnGap, y + state.rowHeight};
 	RECT value = {divider + kColumnGap, y, width - kTextInset, y + state.rowHeight};
 	const UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
@@ -163,7 +164,7 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 // error that closed the device, say - is readable to its last word.
 void PaintEmpty(HDC dc, const ViewState& state, int width, int height)
 {
-	RECT text = {kTextInset + kRowIndent, kTextInset, width - kTextInset, height - kTextInset};
+	RECT text = {kTextInset, kTextInset, width - kTextInset, height - kTextInset};
 	if (text.right <= text.left || text.bottom <= text.top)
 	{
 		return;
@@ -398,7 +399,7 @@ void UpdateColumns(HWND window, ViewState& state)
 			}
 			ReleaseDC(window, dc);
 		}
-		state.labelWidth = widest + kRowIndent + kColumnGap;
+		state.labelWidth = widest + kColumnGap;
 	}
 	ClampLabelWidth(window, state);
 }
@@ -488,7 +489,7 @@ void ShowRowTip(HWND window, ViewState& state, int index)
 	SendMessageW(state.tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
 	// Under the row, not under the pointer: the tip stays put while the pointer moves across
 	// the row it explains.
-	POINT anchor = {kTextInset + kRowIndent, index * state.rowHeight - state.scrollTop + state.rowHeight};
+	POINT anchor = {kTextInset, index * state.rowHeight - state.scrollTop + state.rowHeight};
 	ClientToScreen(window, &anchor);
 	SendMessageW(state.tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(anchor.x, anchor.y));
 	SendMessageW(state.tooltip, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&tool));
