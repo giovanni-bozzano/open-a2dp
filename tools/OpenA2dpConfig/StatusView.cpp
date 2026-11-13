@@ -158,6 +158,26 @@ void PaintRow(HDC dc, const ViewState& state, int index, int y, int width)
 	}
 }
 
+// The empty pane says why it is empty in a sentence, and a sentence is not a column value: it
+// wraps at the pane's own edge instead of being cut with an ellipsis, so a long reason - the
+// error that closed the device, say - is readable to its last word.
+void PaintEmpty(HDC dc, const ViewState& state, int width, int height)
+{
+	RECT text = {kTextInset + kRowIndent, kTextInset, width - kTextInset, height - kTextInset};
+	if (text.right <= text.left || text.bottom <= text.top)
+	{
+		return;
+	}
+	const HGDIOBJ previousFont = state.normal != nullptr ? SelectObject(dc, state.normal) : nullptr;
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, ThemeColors().muted);
+	DrawTextW(dc, state.emptyText.c_str(), -1, &text, DT_WORDBREAK | DT_NOPREFIX | DT_LEFT);
+	if (previousFont != nullptr)
+	{
+		SelectObject(dc, previousFont);
+	}
+}
+
 // The column edge itself: a line the whole height of the panel, so the two columns stay
 // legible as columns and the divider is findable without a header row.
 void PaintDivider(HDC dc, const ViewState& state, int width, int height)
@@ -275,15 +295,24 @@ void Paint(HWND window, ViewState& state)
 	if (memory != nullptr)
 	{
 		FillRect(memory, &client, BackgroundBrush());
-		// The offset is continuous, so the last row can be scrolled fully into view.
-		const int first = state.scrollTop / state.rowHeight;
-		int y = first * state.rowHeight - state.scrollTop;
-		for (int index = first; index < static_cast<int>(state.rows.size()) && y < height;
-			 ++index, y += state.rowHeight)
+		if (!state.emptyText.empty())
 		{
-			PaintRow(memory, state, index, y, width);
+			// Nothing to list: the placeholder row only carries the sentence, which is drawn
+			// wrapped rather than as a row.
+			PaintEmpty(memory, state, width, height);
 		}
-		PaintDivider(memory, state, width, height);
+		else
+		{
+			// The offset is continuous, so the last row can be scrolled fully into view.
+			const int first = state.scrollTop / state.rowHeight;
+			int y = first * state.rowHeight - state.scrollTop;
+			for (int index = first; index < static_cast<int>(state.rows.size()) && y < height;
+				 ++index, y += state.rowHeight)
+			{
+				PaintRow(memory, state, index, y, width);
+			}
+			PaintDivider(memory, state, width, height);
+		}
 	}
 	if (bitmap != nullptr)
 	{
