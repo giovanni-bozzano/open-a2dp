@@ -1514,6 +1514,13 @@ void PaintCodecTabs(HWND tab)
 			{
 				continue;
 			}
+			// The control keeps a margin between its own edge and the first tab, which left the strip
+			// a few pixels short of the pane's left border; the first tab is drawn from the strip's
+			// edge so its border and the pane's are one line.
+			if (index == 0)
+			{
+				item.left = client.left;
+			}
 			const bool open = index == selected;
 			// The open tab carries the window's own background and runs down to the shared line, so
 			// it reads as the head of the table under it; a closed tab is a box of its own, lifted
