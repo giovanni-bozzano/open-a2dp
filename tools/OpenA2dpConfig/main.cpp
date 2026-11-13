@@ -1405,9 +1405,10 @@ void ApplyLayout(HWND hwnd)
 		  kComboListHeight);
 	if (tabs != nullptr)
 	{
-		// The strip starts where the pane's rows start, so the open tab sits over the table it
-		// heads instead of hanging off its left edge.
-		Place(tabs, groupLeft + inset, stripTop, groupWidth - inset * 2, tabHeight);
+		// The strip spans the pane it heads, from the pane's own left edge: its first tab is flush
+		// with the frame, and the opened tab's fill runs into the table under it. The rows keep
+		// their inset, which leaves the tab text over the labels below.
+		Place(tabs, groupLeft, stripTop, groupWidth, tabHeight);
 	}
 
 	// The top of the body is the same on every codec; the rows below it belong to the shown
