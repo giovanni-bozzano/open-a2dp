@@ -245,8 +245,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			const bool suspended = configured && !AudioStreamRunning(ctx);
 			out->mediaState = suspended ? Ioctl::MediaState::Suspended : Ioctl::MediaState::Idle;
 		}
-		else if (mode == MediaModeService && ctx->PacketsSent == 0)
+		else if (mode == MediaModeService && ctx->MediaSamplesSent == 0)
 		{
+			// Samples, not packets: a reset of the counters must not make a stream that is sending
+			// look like it is still waiting for its first record.
 			out->mediaState = Ioctl::MediaState::WaitingForEncoder;
 		}
 		else
@@ -589,6 +591,27 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				AudioRestartRenderStream(ctx);
 			}
 		}
+		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
+		return;
+	}
+
+	case Ioctl::kIoctlResetCounters:
+	{
+		// The counters status reports are the evidence that a fault stopped, so they accumulate
+		// until asked to start over; only the counters are cleared, never the stream, its
+		// configuration or the worst-case figures that describe the stream that runs.
+		InterlockedExchange64(&ctx->FramesDropped, 0);
+		InterlockedExchange64(&ctx->FramesTrimmed, 0);
+		InterlockedExchange64(&ctx->Underruns, 0);
+		InterlockedExchange64(&ctx->SendFailures, 0);
+		InterlockedExchange(&ctx->RefusedStreams, 0);
+		InterlockedExchange(&ctx->JackFlaps, 0);
+		// Both are written by their own producer with plain increments (the audio timer and the
+		// media work item), so a reset for them is a store: the worst case is losing the one
+		// increment that is in flight, which is what a reset means anyway.
+		ctx->AudioTrimmedBytes = 0;
+		ctx->PacketsSent = 0;
+		OA2DP_INFO(ctx, "Service", "counters reset");
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;
 	}

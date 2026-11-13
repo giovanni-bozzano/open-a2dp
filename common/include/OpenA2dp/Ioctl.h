@@ -148,6 +148,9 @@ constexpr ULONG kIoctlSetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHO
 constexpr ULONG kIoctlGetPreference = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlGetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_BUFFERED, FILE_ANY_ACCESS);
 constexpr ULONG kIoctlSetEndpointFormat = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_ANY_ACCESS);
+// Clears the counters Status reports that otherwise accumulate for the endpoint's whole life,
+// so a measurement window can start without restarting the device. No input, no output.
+constexpr ULONG kIoctlResetCounters = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x809, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 // How long a caller waits for one of these requests before cancelling it. The service and the
 // tools each wrap DeviceIoControl differently, but they wait on the same driver, so the bound
@@ -309,10 +312,11 @@ struct Status {
 	// report shows it without a second IOCTL.
 	uint32_t endpointRate;
 	uint32_t endpointChannels;
-	// Counters, 64-bit because they are never reset: they cover the endpoint's whole life, so a
-	// soak reports audio discarded and packets sent from driver start. The wire RTP sequence
-	// beside them is the 16-bit one and wraps in minutes. They are grouped past the byte,
-	// format and setting fields so each keeps 8-byte alignment without padding the record.
+	// Counters, 64-bit because they accumulate across streams: they cover the endpoint's whole
+	// life until kIoctlResetCounters clears them, so a soak reports audio discarded and packets
+	// sent since the device started or since the last reset. The wire RTP sequence beside them
+	// is the 16-bit one and wraps in minutes. They are grouped past the byte, format and setting
+	// fields so each keeps 8-byte alignment without padding the record.
 	uint64_t pcmTrimmedBytes;
 	uint64_t framesTrimmed;
 	uint64_t packetsSent;

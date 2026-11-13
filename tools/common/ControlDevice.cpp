@@ -308,6 +308,12 @@ bool WritePreference(HANDLE handle, const Ioctl::Preference& preference, std::st
 					 nullptr, 0, bytes, error);
 }
 
+bool ResetCounters(HANDLE handle, std::string& error)
+{
+	DWORD bytes = 0;
+	return IoctlSync(handle, Ioctl::kIoctlResetCounters, nullptr, 0, nullptr, 0, bytes, error);
+}
+
 bool ReadEndpointFormat(HANDLE handle, Ioctl::EndpointFormat& format, std::string& error)
 {
 	return ReadIoctl(handle, Ioctl::kIoctlGetEndpointFormat, format, error) &&

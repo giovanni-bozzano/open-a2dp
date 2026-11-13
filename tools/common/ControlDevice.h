@@ -52,6 +52,9 @@ bool ReadVersion(HANDLE handle, Ioctl::VersionInfo& version, std::string& error)
 bool ReadStatus(HANDLE handle, Ioctl::Status& status, std::string& error);
 bool ReadPreference(HANDLE handle, Ioctl::Preference& preference, std::string& error);
 bool WritePreference(HANDLE handle, const Ioctl::Preference& preference, std::string& error);
+// Starts a new measurement window: the counters status reports, which otherwise cover the
+// endpoint's whole life, are cleared. The stream and its settings are untouched.
+bool ResetCounters(HANDLE handle, std::string& error);
 bool ReadEndpointFormat(HANDLE handle, Ioctl::EndpointFormat& format, std::string& error);
 bool WriteEndpointFormat(HANDLE handle, const Ioctl::EndpointFormat& format, std::string& error);
 

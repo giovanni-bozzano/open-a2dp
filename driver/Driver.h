@@ -508,8 +508,9 @@ struct DEVICE_CONTEXT
 	ULONGLONG AudioDroppedBytes;
 	// Audio the producer discarded from the head of the PCM ring to keep the stream near live;
 	// counted apart from the drops above, which mean new audio could not be written at all. Like
-	// the media counters it is never cleared: status reports everything since the endpoint
-	// appeared, so a fault that stopped is still visible as a count that stops growing.
+	// the media counters it accumulates across streams - status reports everything since the
+	// endpoint appeared or the last RESET_COUNTERS, so a fault that stopped is still visible as a
+	// count that stops growing.
 	ULONGLONG AudioTrimmedBytes;
 	OpenA2dp::RingHeader* PcmRingHeader;
 	UCHAR* PcmRingData;
@@ -556,13 +557,13 @@ struct DEVICE_CONTEXT
 	volatile uint32_t ActiveLdacQuality;
 	volatile LONG StreamFault;
 	// Counters a long stream keeps counting past what 32 bits hold: status reports them as
-	// they are, and a soak is the case that reads them. They accumulate for the endpoint's
-	// whole life - nothing clears them, not even a new stream - so a count that has stopped
-	// growing is the only evidence that the fault stopped.
+	// they are, and a soak is the case that reads them. They accumulate across streams - only
+	// RESET_COUNTERS clears them, not a new stream - so a count that has stopped growing is the
+	// evidence that the fault stopped.
 	volatile LONG64 FramesDropped;
 	// Buffered records the driver discarded to keep the stream near live after a stall, and the
-	// interrupt time of the last such event so the log stays bounded. Like `Underruns`, this is
-	// never cleared.
+	// interrupt time of the last such event so the log stays bounded. Like `Underruns`, it is
+	// cleared only by RESET_COUNTERS.
 	volatile LONG64 FramesTrimmed;
 	ULONGLONG FrameTrimLogTime;
 	volatile LONG64 Underruns;

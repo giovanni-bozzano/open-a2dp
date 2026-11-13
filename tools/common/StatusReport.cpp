@@ -429,7 +429,8 @@ void AppendLatency(std::string& text, const Ioctl::Status& status)
 					  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs));
 	// Audio the driver could not deliver in time: silence where the stream ran dry is an
 	// underrun, and audio discarded to stay near live after a stall is a trim. Both are
-	// cumulative and never reset, so a new stream cannot hide an earlier fault.
+	// cumulative across streams until the counters are reset, so a new stream cannot hide an
+	// earlier fault on its own.
 	AppendLine(text, "underruns", Format("%llu packets short of PCM", status.underruns));
 	AppendLine(text, "trimmed",
 			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,
