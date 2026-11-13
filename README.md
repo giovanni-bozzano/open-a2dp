@@ -92,8 +92,9 @@ it claims; everything else keeps using `BthA2dp.sys`.
 
 ## AI disclosure
 
-This project was built with extensive use of AI. Coding agents wrote most of the source, tests
-and documentation under human direction: the maintainer set the architecture, made the design
-decisions, steered each change and validated the result on real hardware. Where the reasoning
-behind a design matters it is written down in [docs/architecture/](docs/architecture/README.md),
-next to the tests and the hardware procedures that check it.
+This project was built with extensive use of AI, **_steered at every step by a human_**. Coding
+agents wrote most of the source, tests and documentation; the maintainer set the architecture,
+made the design decisions, directed each change and validated the result on real hardware. Where
+the reasoning behind a design matters it is written down in
+[docs/architecture/](docs/architecture/README.md), next to the tests and the hardware procedures
+that check it.
