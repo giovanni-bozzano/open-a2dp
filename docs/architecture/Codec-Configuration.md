@@ -16,9 +16,10 @@ the only control is which formats the endpoint offers.
 That is the endpoint format setting (`GET`/`SET_ENDPOINT_FORMAT`): one entry per codec, so
 each codec has its own rate and channel count. Automatic offers every format that codec can
 play, a pinned rate and channel count is offered alone while that codec is the one in use, and
-an automatic codec choice keeps every format the runnable codecs can play listed. The
-driver asserts no format on its own; Windows opens the listed one and its format reaches the
-encoder when the stream runs.
+an automatic codec choice follows the entry of the codec the stream is configured or running
+with - every format stays listed only while nothing is configured yet. The driver asserts no
+format on its own; Windows opens the listed one and its format reaches the encoder when the
+stream runs.
 
 The list holds one entry per rate the codecs can play - 16000, 32000, 44100, 48000, 88200 and
 96000 Hz - in both channel counts, unless a format is pinned; 44100 stereo leads, and the
@@ -111,17 +112,17 @@ shows what the driver will use. The registry is not used and nothing is migrated
 The registry value names earlier builds used are gone with the registry store: the file above
 is the only place a setting lives.
 
-The settings window is the Windows tab control with one tab per codec - SBC, AAC, aptX,
-aptX HD and LDAC - and it opens on the tab of the codec in use, so a parameter is set beside
-the codec it shapes. Each body holds only that codec's settings and only the values that codec
-can play: the sample rate row is that codec's own rate (SBC's narrowed to what the sink
-advertised) and is stored as that codec's entry, the AAC bitrate list stops at what one media
-packet can carry, and the aptX tabs have no setting beyond the rate. The automatic switch
-above the table decides whether the codec is the tab's or the best both ends support. Every
-field's box explains itself when the pointer rests on it; those texts live with the controls
-in `tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together. The
-strip's colours are the window's rather than the tab control's, which has no dark part on
-Windows, and Restore defaults sends the same two defaults `OpenA2dpCtl reset` writes.
+The settings window picks the codec with a selector above the settings pane: automatic, or one
+of SBC, AAC, aptX, aptX HD and LDAC. An automatic choice lets the driver pick, and the pane
+follows the codec in use; picking a codec forces it and shows its settings, so a parameter is
+set beside the codec it shapes. The pane holds only that codec's settings and only the values
+that codec can play: the sample rate row is that codec's own rate (SBC's narrowed to what the
+sink advertised) and is stored as that codec's entry, the AAC bitrate list stops at what one
+media packet can carry, and the aptX codecs have no setting beyond the rate. Every field's box
+explains itself when the pointer rests on it; those texts live with the controls in
+`tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together. The
+pane's frame and colours are the window's rather than a themed control's, which has no dark
+part on Windows, and Restore defaults sends the same two defaults `OpenA2dpCtl reset` writes.
 
 ## How a change applies
 
@@ -129,7 +130,8 @@ Windows, and Restore defaults sends the same two defaults `OpenA2dpCtl reset` wr
 |---|---|
 | Codec | The active stream CLOSEs and rediscovers; the sink keeps its connection |
 | A parameter that keeps the codec (bitpool, blocks, subbands, allocation, AAC bitrate, frames) | SUSPEND to `Open`, RECONFIGURE with the configuration rebuilt from the selected SEP, START; a refused RECONFIGURE, a refused suspend or an unknown sink configuration falls back to CLOSE and rediscover |
-| PCM format | The offered list is rebuilt in place and the jack is reported unplugged for `AudioJackFlapMs` (80 ms); Windows rebuilds the endpoint, the stream comes back at the new format and the session renegotiates without rediscovering |
+| A parameter of a codec the stream does not run | Stored only; the running stream is not suspended or reconfigured, because nothing it sends changes |
+| PCM format | The offered list is rebuilt in place and the jack is reported unplugged for `AudioJackFlapMs` (80 ms); Windows rebuilds the endpoint, the stream comes back at the new format and the session renegotiates without rediscovering. A stored rate for a codec that is not in use leaves the list as it is, so the stream is left alone |
 | Pacing lead | Resolved at the next `MediaStart`; the kernel pacer (SBC) and the service's record pacing both use it, and `OnGetPresentationPosition` subtracts the same distance |
 
 The format change needs the flap because neither a new list nor
