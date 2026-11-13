@@ -329,7 +329,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->sinkRates = SbcConfig::AdvertisedRates(sinkFormats);
 		out->sinkChannels = SbcConfig::AdvertisedChannels(sinkFormats);
 		out->sinkCodecs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->SinkCodecs, 0, 0));
-		// The format the forced codec pins, or 0/0 when the codec choice is automatic.
+		// The format the codec in use pins: the forced one, or with an automatic choice the codec
+		// the stream runs. 0/0 when that codec has no stored format.
 		const ULONG pinnedCodec = AudioPinnedCodec(ctx);
 		KIRQL pinIrql;
 		KeAcquireSpinLock(&ctx->AudioLock, &pinIrql);
@@ -407,26 +408,38 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		bool changed = false;
 		bool selectionChanged = false;
 		bool parametersChanged = false;
+		bool parametersAffectStream = false;
 		{
 			KIRQL irql;
 			KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
 			selectionChanged =
 				ctx->Preference.flags != in->flags || ctx->Preference.codec != in->codec;
-			parametersChanged = ctx->Preference.sbcBitpool != in->sbcBitpool ||
-								ctx->Preference.sbcBlocks != in->sbcBlocks ||
-								ctx->Preference.sbcSubbands != in->sbcSubbands ||
-								ctx->Preference.sbcAllocation != in->sbcAllocation ||
-								ctx->Preference.aacBitrate != in->aacBitrate ||
-								ctx->Preference.prerollMs != in->prerollMs ||
-				ctx->Preference.sbcFramesPerPacket != in->sbcFramesPerPacket ||
-				ctx->Preference.ldacQuality != in->ldacQuality;
+			const bool sbcChanged = ctx->Preference.sbcBitpool != in->sbcBitpool ||
+									ctx->Preference.sbcBlocks != in->sbcBlocks ||
+									ctx->Preference.sbcSubbands != in->sbcSubbands ||
+									ctx->Preference.sbcAllocation != in->sbcAllocation ||
+									ctx->Preference.sbcFramesPerPacket != in->sbcFramesPerPacket;
+			const bool aacChanged = ctx->Preference.aacBitrate != in->aacBitrate;
+			const bool ldacChanged = ctx->Preference.ldacQuality != in->ldacQuality;
+			// The pacing lead shapes every codec, so it always belongs to the stream.
+			const bool leadChanged = ctx->Preference.prerollMs != in->prerollMs;
+			parametersChanged = sbcChanged || aacChanged || ldacChanged || leadChanged;
+			// A setting that belongs to a codec the stream is not running changes nothing it
+			// sends: storing it is enough, and suspending a playing stream to apply it would
+			// be a restart the listener pays for and cannot hear. The codec in use is the one
+			// the running stream encodes, which is also the one the settings window shows
+			// while the choice is automatic.
+			parametersAffectStream = leadChanged ||
+								 (sbcChanged && ctx->ActiveCodec == Ioctl::kCodecSbc) ||
+								 (aacChanged && ctx->ActiveCodec == Ioctl::kCodecAac) ||
+								 (ldacChanged && ctx->ActiveCodec == Ioctl::kCodecLdac);
 			changed = selectionChanged || parametersChanged;
 			ctx->Preference = *in;
 			KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 		}
 		if (changed)
 		{
-			if (parametersChanged)
+			if (parametersAffectStream)
 			{
 				// A parameter-only change keeps the codec, so the work item needs this
 				// marker to tell that the running stream is stale.
@@ -452,7 +465,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 							   formatStatus);
 				}
 			}
-			if (selectionChanged || parametersChanged)
+			if (selectionChanged || parametersAffectStream)
 			{
 				SignalingOnPreferenceChanged(ctx);
 			}
@@ -552,6 +565,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 				}
 			}
 			ConfigSaveSettings(ctx);
+			// What the endpoint offered before the write: a stored format for a codec that is not
+			// in use leaves the listing exactly as it was.
+			const ULONG listedBefore = ctx->FormatsListed;
+			const ULONG firstBefore = ctx->FirstListedIndex;
 			// A changed list makes Windows drop its render stream at the old format; it does not
 			// always build a new one, and while none runs the pin format moves without a stream
 			// report. The work item compares the pin with the negotiated configuration either way
@@ -563,8 +580,13 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			}
 			// Windows keeps the format it cached for the endpoint, so only a rebuilt endpoint
 			// offers the new one: without this, a player that starts afterwards asks for the old
-			// format and is refused the stream, and nothing is heard.
-			AudioRestartRenderStream(ctx);
+			// format and is refused the stream, and nothing is heard. A write that moved no
+			// listed format does not touch the stream: the setting belongs to a codec that is
+			// not running, and the audio being heard must not drop for it.
+			if (ctx->FormatsListed != listedBefore || ctx->FirstListedIndex != firstBefore)
+			{
+				AudioRestartRenderStream(ctx);
+			}
 		}
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;
