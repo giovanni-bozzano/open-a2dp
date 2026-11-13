@@ -25,6 +25,8 @@
 #include <uxtheme.h>
 #include <windowsx.h>
 
+#include <algorithm>
+
 // The standard controls need the version 6 common controls, or they draw with the classic
 // theme. The status panel paints itself and does not depend on it.
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -69,7 +71,6 @@ enum ControlId : int {
 	kCopyButton,
 	kDetailsCheck,
 	kStatusList,
-	kCodecCombo,
 	kFormatCombo,
 	kBitrateCombo,
 	kBitpoolCombo,
@@ -83,6 +84,10 @@ enum ControlId : int {
 	kDriverButton,
 	kRestoreButton,
 	kMessageLabel,
+	// One id per codec choice, the automatic one first. They sit past every field so the
+	// arithmetic in CodecChoiceEntry cannot meet another control.
+	kCodecChoiceBase = 200,
+	kCodecChoiceCount = 6, // the automatic choice and one per codec
 };
 
 // The captions are constants because the layout measures them: the window is sized to the
@@ -105,7 +110,15 @@ constexpr wchar_t kAacTabText[] = L"AAC";
 constexpr wchar_t kAptxTabText[] = L"aptX";
 constexpr wchar_t kAptxHdTabText[] = L"aptX HD";
 constexpr wchar_t kLdacTabText[] = L"LDAC";
-constexpr wchar_t kAutomaticText[] = L"Automatic (the best both ends support)";
+constexpr wchar_t kAutomaticText[] = L"Automatic";
+// One explanation for the whole strip: its buttons are a list of choices, not six controls
+// with their own meaning.
+constexpr wchar_t kCodecChoiceTip[] =
+		L"Which codec the sink may use, and whose settings the pane below shows.\n\n"
+		L"Automatic lets the driver take the best both ends support - LDAC, then aptX HD, "
+		L"then aptX, then AAC, then SBC - so that is what to leave it on unless a headset "
+		L"misbehaves; the pane then shows the codec that is in use. Picking one forces it, "
+		L"and one the sink does not advertise is refused.";
 // The widest sample-rate entry any tab can hold, so the columns do not move when the list is
 // rebuilt for another codec.
 constexpr wchar_t kWidestFormatText[] = L"96000 Hz, stereo";
@@ -151,9 +164,10 @@ constexpr int kComboListHeight = 320;
 constexpr int kMinPanelRows = 6;
 constexpr int kMaxPanelRows = 16;
 
-// One table per codec, and the selector above it chooses which one is shown. A parameter then
-// sits under the codec it shapes instead of in one list where SBC's bitpool and AAC's bitrate
-// look equally relevant to whatever codec is in use.
+// One table per codec, and the strip above it chooses which one is shown. Every choice stays
+// visible, so the codecs the sink could use are read off the window instead of a list that has
+// to be opened; and a parameter then sits under the codec it shapes instead of in one list
+// where SBC's bitpool and AAC's bitrate look equally relevant to whatever codec is in use.
 enum class CodecTab {
 	Sbc,
 	Aac,
@@ -182,6 +196,33 @@ constexpr TabInfo kTabInfo[] = {
 };
 static_assert(ARRAYSIZE(kTabInfo) == static_cast<size_t>(kTabCount),
 			  "a caption and a hint for every codec tab");
+static_assert(kCodecChoiceCount == kTabCount + 1, "an automatic choice and one per codec");
+
+// The codec strip's entry for a control id: 0 is the automatic choice, 1 to kTabCount the
+// codecs in table order, and -1 for a control that is not part of the strip.
+int CodecChoiceEntry(int id)
+{
+	const int entry = id - static_cast<int>(kCodecChoiceBase);
+	return entry >= 0 && entry < kCodecChoiceCount ? entry : -1;
+}
+
+const wchar_t* CodecChoiceCaption(int entry)
+{
+	return entry == 0 ? kAutomaticText : kTabInfo[entry - 1].caption;
+}
+
+// The codec the driver pins the endpoint format for, which is the one whose settings Apply
+// writes: the last negotiation's, else the one the stream runs. This mirrors the driver's own
+// rule, so the table never shows settings that a rate change would store for another codec -
+// which is what made switching the rate move nothing.
+uint32_t EndpointCodec(const Ioctl::Status& status)
+{
+	if (status.negotiatedCodec > 0 && status.negotiatedCodec < Ioctl::kCodecCount)
+	{
+		return status.negotiatedCodec;
+	}
+	return status.codec < Ioctl::kCodecCount ? status.codec : 0;
+}
 
 // A label and the control it describes, in one of the two columns of the table body.
 struct Field
@@ -823,12 +864,6 @@ constexpr FieldTip kFieldTips[] = {
 	 L"The sink this window controls.\n\n"
 	 L"Every field below is stored for this sink alone, so two headsets keep their own "
 	 L"codec and their own latency - a setting made here never silently reshapes the other."},
-	{kCodecCombo,
-	 L"Which codec the sink may use, and whose settings the pane below shows.\n\n"
-	 L"Automatic lets the driver take the best both ends support - LDAC, then aptX HD, "
-	 L"then aptX, then AAC, then SBC - so that is what to leave it on unless a headset "
-	 L"misbehaves; the pane then shows the codec that is in use. Picking one forces it, "
-	 L"and one the sink does not advertise is refused."},
 	{kBitrateCombo,
 	 L"The bitrate the AAC encoder aims for, capped by what the media packet can carry.\n\n"
 	 L"Higher is better sound and uses more of the link; the default is the highest the "
@@ -1080,13 +1115,8 @@ int TabForState(const SinkState& state)
 			return forced;
 		}
 	}
-	const int running = TabOfCodec(state.status.codec);
-	if (running >= 0)
-	{
-		return running;
-	}
-	const int negotiated = TabOfCodec(state.status.negotiatedCodec);
-	return negotiated >= 0 ? negotiated : static_cast<int>(CodecTab::Sbc);
+	const int running = TabOfCodec(EndpointCodec(state.status));
+	return running >= 0 ? running : static_cast<int>(CodecTab::Sbc);
 }
 
 // The sample rates one codec can play, in the order the endpoint prefers them, and the channel
@@ -1131,6 +1161,9 @@ int TabFormats(int tab, const Ioctl::Status& status, uint32_t* rates, uint32_t& 
 	{
 		channelMask = status.sinkChannels;
 	}
+	// Worst to best, so the list reads as a ladder rather than following the endpoint's own
+	// preference order, which leads with 44.1 kHz because Windows plays the first entry.
+	std::sort(rates, rates + count);
 	return count;
 }
 
@@ -1203,9 +1236,26 @@ void SelectPreferenceValues(HWND hwnd)
 									  state->endpointFormat.channels[tab]));
 }
 
-// Shows one codec's table. Choosing a codec in the selector pins the pane there, so a
-// negotiation cannot swap it out from under a setting being changed; while the selector says
-// Automatic the pane follows the codec the stream runs.
+// The strip entry the stored choice marks: 0 for the automatic choice, otherwise the codec's
+// table plus one, because SBC's own value would be 0 too.
+int MarkedChoice(const SinkState& state)
+{
+	return state.automatic ? 0 : state.tab + 1;
+}
+
+// The strip is painted by the window, so a change of the marked entry has to repaint it: a
+// parent's invalidation does not reach a child control.
+void RefreshCodecChoices(HWND hwnd)
+{
+	for (int entry = 0; entry < kCodecChoiceCount; ++entry)
+	{
+		InvalidateRect(GetDlgItem(hwnd, kCodecChoiceBase + entry), nullptr, TRUE);
+	}
+}
+
+// Shows one codec's table. Choosing a codec in the strip pins the pane there, so a
+// negotiation cannot swap it out from under a setting being changed; while the strip marks the
+// automatic choice the pane follows the codec the stream runs.
 void ShowCodecTable(HWND hwnd, int tab, bool pinned)
 {
 	SinkState* state = StateOf(hwnd);
@@ -1215,18 +1265,12 @@ void ShowCodecTable(HWND hwnd, int tab, bool pinned)
 	}
 	state->tab = tab;
 	state->tabPinned = pinned;
+	RefreshCodecChoices(hwnd);
 	RebuildTabLists(hwnd);
 	SelectPreferenceValues(hwnd);
 	ApplyLayout(hwnd);
 	// The body's rows are replaced, so the whole client area is repainted.
 	InvalidateRect(hwnd, nullptr, TRUE);
-}
-
-// The selector's entry for a stored choice: 0 is automatic, otherwise the codec's tab plus
-// one, because SBC's own value would be 0 too.
-uint32_t CodecEntryValue(bool automatic, int tab)
-{
-	return automatic ? 0u : static_cast<uint32_t>(tab) + 1u;
 }
 
 // Sizes and places every control from the strings it holds. The window has no scroll bar of
@@ -1292,15 +1336,16 @@ void ApplyLayout(HWND hwnd)
 	const int restoreWidth = TextWidth(dc, kRestoreText) + gap * 4;
 	const int bottomWidth = margin + applyWidth + gap + driverWidth + gap + applyWidth + gap + restoreWidth + margin;
 
-	// The codec selector sits above the table pane, as wide as its widest entry.
-	int codecWidth = TextWidth(dc, kAutomaticText);
-	for (int tab = 0; tab < kTabCount; ++tab)
+	// The codec strip sits above the table pane and shows every choice at once, so it is as
+	// wide as all of them side by side.
+	int stripWidth = 0;
+	for (int entry = 0; entry < kCodecChoiceCount; ++entry)
 	{
-		codecWidth = MaxOf(codecWidth, TextWidth(dc, kTabInfo[tab].caption));
+		stripWidth += TextWidth(dc, CodecChoiceCaption(entry)) + gap * 3;
 	}
 	const int codecLabelWidth = TextWidth(dc, kCodecText);
-	const int codecComboWidth = codecWidth + arrow;
-	const int selectorWidth = margin + codecLabelWidth + gap + codecComboWidth + margin;
+	const int stripHeight = rowHeight + 4;
+	const int selectorWidth = margin + inset + codecLabelWidth + gap + stripWidth + inset + margin;
 
 	int width = contentWidth + (margin + inset) * 2;
 	if (headerWidth > width)
@@ -1355,7 +1400,7 @@ void ApplyLayout(HWND hwnd)
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
 	const int bodyHeight = captionHeight + inset + rows * rowHeight + hintHeight + gap;
 	int fixedHeight = margin + rowHeight + gap * 2 + captionHeight + gap + bottomHeight + margin;
-	fixedHeight += rowHeight + gap + bodyHeight + gap;
+	fixedHeight += stripHeight + gap + bodyHeight + gap;
 	// The border and the title bar count too, or the window as a whole would hang off the
 	// screen even though its client area fits.
 	RECT frame = {0, 0, 100, 100};
@@ -1379,7 +1424,7 @@ void ApplyLayout(HWND hwnd)
 	// no empty band is left under it; the one extra pixel is the frame's own border.
 	const int sessionHeight = captionHeight + panelHeight + 1;
 	const int codecTop = sessionTop + sessionHeight + gap;
-	const int bodyTop = codecTop + rowHeight + gap;
+	const int bodyTop = codecTop + stripHeight + gap;
 	const int bottomTop = bodyTop + bodyHeight + gap;
 	// The height only grows for the same reason as the width.
 	const int height = MaxOf(bottomTop + bottomHeight + margin, state->laidOutHeight);
@@ -1416,11 +1461,17 @@ void ApplyLayout(HWND hwnd)
 	// the pane they belong to instead of stopping at the table body's inset.
 	Place(state->sessionPanel, groupLeft + 1, sessionTop + captionHeight, groupWidth - 2, panelHeight);
 
-	// The codec selector, above the pane whose settings it chooses; the pane below it is the
+	// The codec strip, above the pane whose settings it chooses; the pane below it is the
 	// window's, which keeps its own frame and the palette's colours.
-	Place(state->codecLabel, margin, codecTop + (rowHeight - textHeight) / 2, codecLabelWidth, textHeight);
-	Place(GetDlgItem(hwnd, kCodecCombo), margin + codecLabelWidth + gap, codecTop, codecComboWidth,
-		  kComboListHeight);
+	Place(state->codecLabel, innerLeft, codecTop + (stripHeight - textHeight) / 2, codecLabelWidth,
+		  textHeight);
+	int choiceLeft = innerLeft + codecLabelWidth + gap;
+	for (int entry = 0; entry < kCodecChoiceCount; ++entry)
+	{
+		const int choiceWidth = TextWidth(dc, CodecChoiceCaption(entry)) + gap * 3;
+		Place(GetDlgItem(hwnd, kCodecChoiceBase + entry), choiceLeft, codecTop, choiceWidth, stripHeight);
+		choiceLeft += choiceWidth;
+	}
 
 	// The top of the body is the same on every codec; the rows below it belong to the shown
 	// codec, so the other codecs' controls are hidden rather than destroyed - their stored
@@ -1526,25 +1577,24 @@ void CreateControls(HWND hwnd)
 	CreateChild(hwnd, L"BUTTON", kDetailsText, BS_AUTOCHECKBOX | WS_TABSTOP, 0, 0, 10, 10, kDetailsCheck,
 				font);
 
-	// The codec selector: one entry for the automatic choice and one per codec, and the pane
-	// below it shows the settings of the codec it names. It is a plain combo beside the pane
-	// rather than a strip on its edge, so it reads as a choice and not as part of the table.
+	// The codec strip: one button per choice, the automatic one first, and the pane below it
+	// holds the settings of the codec whose button is marked. Every choice stays visible, so the
+	// codecs a sink could use are read off the window instead of out of a list that has to be
+	// opened, and the strip reads as the choice and the pane as what it chooses.
 	if (state != nullptr)
 	{
 		state->codecLabel = CreateChild(hwnd, L"STATIC", kCodecText, SS_LEFT, 0, 0, 10, 10, 0, font);
 	}
-	const HWND codecCombo = CreateChild(hwnd, L"COMBOBOX", L"",
-									 CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 0, 10, kComboListHeight,
-									 kCodecCombo, font);
-	AddComboItem(hwnd, kCodecCombo, kAutomaticText, 0);
-	for (int tab = 0; tab < kTabCount; ++tab)
+	for (int entry = 0; entry < kCodecChoiceCount; ++entry)
 	{
-		AddComboItem(hwnd, kCodecCombo, kTabInfo[tab].caption, CodecEntryValue(false, tab));
-	}
-	SendMessageW(codecCombo, CB_SETCURSEL, 0, 0);
-	if (state != nullptr)
-	{
-		AddTooltip(state->tooltip, hwnd, codecCombo, TipFor(kCodecCombo));
+		// Owner-drawn in both themes: the marked choice is the window's own state, not a
+		// button state, so the button cannot draw it.
+		const HWND choice = CreateChild(hwnd, L"BUTTON", CodecChoiceCaption(entry),
+										BS_OWNERDRAW | WS_TABSTOP, 0, 0, 10, 10, kCodecChoiceBase + entry, font);
+		if (state != nullptr)
+		{
+			AddTooltip(state->tooltip, hwnd, choice, kCodecChoiceTip);
+		}
 	}
 	CreateStatusView(hwnd, kStatusList, 0, 0, 10, 10, font);
 	if (state != nullptr)
@@ -1654,7 +1704,7 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	state->automatic = (state->preference.flags & Ioctl::kPreferenceForceCodec) == 0;
 	state->tab = TabForState(*state);
 	state->tabPinned = false;
-	SelectComboValue(hwnd, kCodecCombo, CodecEntryValue(state->automatic, state->tab));
+	RefreshCodecChoices(hwnd);
 	RebuildTabLists(hwnd);
 	SelectPreferenceValues(hwnd);
 	ApplyLayout(hwnd);
@@ -1846,7 +1896,7 @@ void RefreshStatus(HWND hwnd)
 	// user picked stays where it is.
 	if (state->automatic && !state->tabPinned)
 	{
-		const int tab = TabOfCodec(status.codec != 0 ? status.codec : status.negotiatedCodec);
+		const int tab = TabOfCodec(EndpointCodec(status));
 		if (tab >= 0 && tab != state->tab)
 		{
 			ShowCodecTable(hwnd, tab, false);
@@ -2309,7 +2359,7 @@ void ApplyDarkControls(HWND hwnd)
 		return;
 	}
 	EnumChildWindows(hwnd, UnthemeTextControl, 0);
-	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo,
+	for (const int id : {kSinkCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo,
 						 kSubbandsCombo, kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo,
 						 kLdacQualityCombo})
 	{
@@ -2335,6 +2385,11 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 	const bool checkbox = item.CtlID == kDetailsCheck;
 	const bool pressed = (item.itemState & ODS_SELECTED) != 0;
 	const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+	// A strip button is marked by the window's stored choice, which is not a button state: the
+	// kept choice is the face's own colour.
+	const int choice = CodecChoiceEntry(item.CtlID);
+	const SinkState* owner = StateOf(GetParent(item.hwndItem));
+	const bool marked = choice >= 0 && owner != nullptr && choice == MarkedChoice(*owner);
 
 	// The layout measured the control with the window's font, and a WM_DRAWITEM DC carries the
 	// system font, so the button's own font is selected for both measuring and drawing.
@@ -2347,7 +2402,8 @@ void PaintButton(const DRAWITEMSTRUCT& item)
 	wchar_t text[128] = {};
 	GetWindowTextW(item.hwndItem, text, ARRAYSIZE(text));
 	RECT box = item.rcItem;
-	const HBRUSH face = CreateSolidBrush(pressed ? colors.section : colors.background);
+	const HBRUSH face =
+			CreateSolidBrush(pressed ? colors.section : (marked ? colors.selection : colors.background));
 	FillRect(dc, &box, face);
 	DeleteObject(face);
 
@@ -2573,16 +2629,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 			}
 			return 0;
 		}
-		if (id == kCodecCombo && notification == CBN_SELCHANGE)
+		const int choice = CodecChoiceEntry(id);
+		if (choice >= 0 && notification == BN_CLICKED)
 		{
 			SinkState* state = StateOf(hwnd);
-			const uint32_t value = ComboValue(hwnd, kCodecCombo);
 			if (state != nullptr)
 			{
-				// The selection is what Apply stores: automatic, or the codec it names. The pane
-				// shows that codec's table either way.
-				state->automatic = value == 0;
-				ShowCodecTable(hwnd, value == 0 ? state->tab : static_cast<int>(value) - 1, value != 0);
+				// The choice is what Apply stores: automatic, or the codec the button names. The
+				// pane shows that codec's table either way, and the automatic choice follows the
+				// codec in use again.
+				state->automatic = choice == 0;
+				const int running = TabOfCodec(EndpointCodec(state->status));
+				ShowCodecTable(hwnd, choice == 0 ? (running >= 0 ? running : static_cast<int>(CodecTab::Sbc))
+												 : choice - 1,
+								choice != 0);
 			}
 			return 0;
 		}

@@ -112,13 +112,16 @@ shows what the driver will use. The registry is not used and nothing is migrated
 The registry value names earlier builds used are gone with the registry store: the file above
 is the only place a setting lives.
 
-The settings window picks the codec with a selector above the settings pane: automatic, or one
-of SBC, AAC, aptX, aptX HD and LDAC. An automatic choice lets the driver pick, and the pane
-follows the codec in use; picking a codec forces it and shows its settings, so a parameter is
-set beside the codec it shapes. The pane holds only that codec's settings and only the values
-that codec can play: the sample rate row is that codec's own rate (SBC's narrowed to what the
-sink advertised) and is stored as that codec's entry, the AAC bitrate list stops at what one
-media packet can carry, and the aptX codecs have no setting beyond the rate. Every field's box
+The settings window picks the codec with a strip above the settings pane: automatic, then SBC,
+AAC, aptX, aptX HD and LDAC, all of them visible at once and the kept one marked. An automatic
+choice lets the driver pick, and the pane follows the codec the driver pins the endpoint format
+for - the last negotiation's, else the one the stream runs - so the rate changed there is the
+rate that moves; picking a codec forces it and shows its settings, so a parameter is set beside
+the codec it shapes. The pane holds only that codec's settings and only the values that codec
+can play: the sample rate row is that codec's own rate (SBC's narrowed to what the sink
+advertised), listed from the lowest rate to the highest, and is stored as that codec's entry,
+the AAC bitrate list stops at what one media packet can carry, and the aptX codecs have no
+setting beyond the rate. Every field's box
 explains itself when the pointer rests on it; those texts live with the controls in
 `tools/OpenA2dpConfig/main.cpp`, so a field and its explanation are reviewed together. The
 pane's frame and colours are the window's rather than a themed control's, which has no dark
