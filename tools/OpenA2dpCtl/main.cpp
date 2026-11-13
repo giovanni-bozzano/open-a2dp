@@ -43,6 +43,7 @@ Usage:
   OpenA2dpCtl format [<codec> [<auto|16000|32000|44100|48000|88200|96000> [<1|2>]]] [--device <mac|index>]
   OpenA2dpCtl driver [<opena2dp|windows>] [--device <mac|index>]
   OpenA2dpCtl reset [--device <mac|index>]
+  OpenA2dpCtl reset-counters [--device <mac|index>]
   OpenA2dpCtl version [--device <mac|index>]
   OpenA2dpCtl help
 
@@ -86,6 +87,12 @@ Commands:
   reset     Clear this sink's stored codec preference and endpoint format, so
             the automatic codec order and every sink-supported PCM format
             apply again.
+  reset-counters
+            Clear the counters status reports - packets, drops, underruns, send
+            failures, trimmed audio, refused streams and jack flaps - so a
+            measurement window starts from zero. They otherwise accumulate
+            across streams; the stream, its settings and the per-stream peaks
+            are untouched, so this can be done while the sink is playing.
   version   Show the driver ABI and version.
 
 Options:
@@ -916,6 +923,43 @@ int CommandDriver(const std::vector<Device>& devices, const std::string& spec, c
 	}
 	return 0;
 }
+// Starts a new measurement window: the counters status reports are cleared and nothing else is
+// touched, so the sink keeps playing and the report printed afterwards is the one that follows
+// the reset.
+int CommandResetCounters(const std::vector<Device>& devices, const std::string& spec)
+{
+	size_t index = 0;
+	std::string error;
+	if (!FindDevice(devices, spec, index, error))
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 2;
+	}
+	const Device& device = devices[index];
+	const HANDLE handle = OpenControl(device, error);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	Ioctl::Status status = {};
+	Ioctl::Preference preference = {};
+	const bool reset = ResetCounters(handle, error);
+	const bool read = reset && ReadStatus(handle, status, error) && ReadPreference(handle, preference, error);
+	if (!reset || !read)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "%s\n", error.c_str());
+		return 1;
+	}
+
+	std::printf("%s: counters reset; the stream was not touched.\n\n", DeviceLabel(device).c_str());
+	PrintStatus(device, handle, status, preference, false);
+	CloseHandle(handle);
+	return 0;
+}
+
 int CommandReset(const std::vector<Device>& devices, const std::string& spec)
 {
 	size_t index = 0;
@@ -1190,7 +1234,8 @@ int main(int argc, char** argv)
 		return 0;
 	}
 	if (command != "list" && command != "status" && command != "codec" && command != "version" &&
-		command != "format" && command != "driver" && command != "reset")
+		command != "format" && command != "driver" && command != "reset" &&
+		command != "reset-counters")
 	{
 		std::fprintf(stderr, "unknown command '%s'\n\n%s", command.c_str(), kUsage);
 		return 2;
@@ -1237,6 +1282,10 @@ int main(int argc, char** argv)
 	if (command == "reset")
 	{
 		return CommandReset(devices, deviceSpec);
+	}
+	if (command == "reset-counters")
+	{
+		return CommandResetCounters(devices, deviceSpec);
 	}
 	return CommandStatus(devices, deviceSpec, watch, interval, verbose);
 }
