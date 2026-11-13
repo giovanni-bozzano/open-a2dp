@@ -495,7 +495,8 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	AppendSinkFormats(text, status);
 	AppendEndpointFormat(text, status);
 	AppendPreference(text, preference);
-	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "registered" : "not registered");
+	// Capitalised like the other states the report prints as a value ("Running", "Paused").
+	AppendLine(text, "encoder", status.encoderRegistered != 0 ? "Registered" : "Not registered");
 	AppendBuffers(text, status, preference);
 	if (input.version != nullptr)
 	{

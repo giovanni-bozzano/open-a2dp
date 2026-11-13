@@ -94,7 +94,7 @@ TEST(StatusReport_FormatsTheSession)
 	CHECK(Contains(report, "44100 Hz, 48000 Hz, stereo (SBC, AAC)"));
 	CHECK(Contains(report, "force AAC"));
 	CHECK(Contains(report, "endpoint format automatic (every sink format)"));
-	CHECK(Contains(report, "registered"));
+	CHECK(Contains(report, "Registered"));
 	CHECK(Contains(report, "packets 12"));
 	CHECK(Contains(report, "ABI " + std::to_string(Ioctl::kAbiVersion) + ", version 1.2.3"));
 	CHECK(Contains(report, "not reported yet") == false);

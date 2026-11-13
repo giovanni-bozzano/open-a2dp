@@ -529,7 +529,7 @@ RowTone ToneForLabel(const std::string& label, const std::string& value)
 			return RowTone::Warning;
 		}
 	}
-	return label == "encoder" && value == "not registered" ? RowTone::Warning : RowTone::Normal;
+	return label == "encoder" && value == "Not registered" ? RowTone::Warning : RowTone::Normal;
 }
 
 std::wstring RowLabel(const std::string& label)
