@@ -352,8 +352,38 @@ SinkState* StateOf(HWND hwnd)
 	return reinterpret_cast<SinkState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
+int TextWidth(HDC dc, const wchar_t* text);
+
+// Whether the message line shows its whole sentence. It is one line, cut with an ellipsis when
+// the sentence is wider than it, so only a cut sentence needs a box under the pointer.
+bool MessageFits(HWND hwnd, const std::wstring& message)
+{
+	const HWND label = GetDlgItem(hwnd, kMessageLabel);
+	RECT rect = {};
+	if (label == nullptr || message.empty() || GetClientRect(label, &rect) == FALSE)
+	{
+		return true;
+	}
+	const HDC dc = GetDC(label);
+	if (dc == nullptr)
+	{
+		return true;
+	}
+	// The label is measured with its own font, which is the one it draws with.
+	const HFONT font = reinterpret_cast<HFONT>(SendMessageW(label, WM_GETFONT, 0, 0));
+	const HGDIOBJ previousFont = font != nullptr ? SelectObject(dc, font) : nullptr;
+	const int width = TextWidth(dc, message.c_str());
+	if (previousFont != nullptr)
+	{
+		SelectObject(dc, previousFont);
+	}
+	ReleaseDC(label, dc);
+	return width <= static_cast<int>(rect.right - rect.left);
+}
+
 // The message is one line, cut with an ellipsis when the sentence does not fit, so the whole
-// sentence goes to the tooltip and both are kept in step here.
+// sentence goes to the tooltip - and only then: a sentence that is already read in full needs
+// no box over it. Both are kept in step here.
 void UpdateMessageTooltip(HWND hwnd, const std::wstring& message)
 {
 	SinkState* state = StateOf(hwnd);
@@ -368,7 +398,7 @@ void UpdateMessageTooltip(HWND hwnd, const std::wstring& message)
 	tool.hwnd = hwnd;
 	tool.uId = reinterpret_cast<UINT_PTR>(label);
 	tool.lpszText = const_cast<LPWSTR>(message.c_str());
-	if (message.empty())
+	if (message.empty() || MessageFits(hwnd, message))
 	{
 		if (state->messageTip)
 		{
@@ -1420,6 +1450,8 @@ void ApplyLayout(HWND hwnd)
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
 	// sit under its right end.
 	Place(GetDlgItem(hwnd, kMessageLabel), margin, bottomTop, width - margin * 2, textHeight);
+	// The line was just resized, so whether the sentence is cut is only known now.
+	UpdateMessageTooltip(hwnd, state->message);
 	const int buttonsTop = bottomTop + textHeight + gap;
 	const int applyLeft = width - margin - applyWidth;
 	Place(GetDlgItem(hwnd, kApplyButton), applyLeft, buttonsTop, applyWidth, applyHeight);
