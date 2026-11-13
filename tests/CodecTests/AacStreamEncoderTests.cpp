@@ -119,7 +119,7 @@ TEST(AacStream_TargetIncludesPreroll)
 	TestRing pcm(64 * 1024);
 	auto encoder = MakeEncoder();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 1000));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 1000));
 
 	// 60 ms of 44.1 kHz = 2646 samples.
 	CHECK_EQ(stream.TargetSamples(1000), uint64_t{2646});
@@ -135,22 +135,25 @@ TEST(AacStream_PacingLeadComesFromParams)
 	AacStreamEncoder stream;
 	AacStreamParams params;
 	params.prerollMs = Ioctl::kMinPrerollMs; // 20 ms of 44.1 kHz = 882 samples
-	REQUIRE(stream.Start(std::move(encoder), params, pcm.view, 1000));
+	REQUIRE(stream.Start(std::move(encoder), params, 1000));
 
 	CHECK_EQ(stream.TargetSamples(1000), uint64_t{882});
 	CHECK_EQ(stream.TargetSamples(1001000), uint64_t{882 + 44100});
 }
 
-TEST(AacStream_StartDiscardsBufferedPcm)
+TEST(AacStream_StartKeepsBufferedPcm)
 {
 	TestRing pcm(64 * 1024);
 	WritePcm(pcm, 1, 512);
-	REQUIRE(pcm.view.ReadableBytes() > 0);
+	const uint32_t buffered = pcm.view.ReadableBytes();
+	REQUIRE(buffered > 0);
 
+	// Which buffered PCM is still playback is the driver's call (it drops only what predates the
+	// stream), so starting leaves the ring alone and the first records carry this audio.
 	auto encoder = MakeEncoder();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
-	CHECK_EQ(pcm.view.ReadableBytes(), uint32_t{0});
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
+	CHECK_EQ(pcm.view.ReadableBytes(), buffered);
 }
 
 TEST(AacStream_StartRejectsUnusableEncoder)
@@ -158,19 +161,19 @@ TEST(AacStream_StartRejectsUnusableEncoder)
 	TestRing pcm(64 * 1024);
 	AacStreamEncoder stream;
 
-	CHECK(!stream.Start(nullptr, AacStreamParams{}, pcm.view, 0));
+	CHECK(!stream.Start(nullptr, AacStreamParams{}, 0));
 
 	auto wrongRate = MakeEncoder();
 	wrongRate->sampleRate = 48000;
-	CHECK(!stream.Start(std::move(wrongRate), AacStreamParams{}, pcm.view, 0));
+	CHECK(!stream.Start(std::move(wrongRate), AacStreamParams{}, 0));
 
 	auto wrongChannels = MakeEncoder();
 	wrongChannels->channels = 1;
-	CHECK(!stream.Start(std::move(wrongChannels), AacStreamParams{}, pcm.view, 0));
+	CHECK(!stream.Start(std::move(wrongChannels), AacStreamParams{}, 0));
 
 	auto noCapacity = MakeEncoder();
 	noCapacity->maxFrameBytes = 0;
-	CHECK(!stream.Start(std::move(noCapacity), AacStreamParams{}, pcm.view, 0));
+	CHECK(!stream.Start(std::move(noCapacity), AacStreamParams{}, 0));
 	CHECK(!stream.Active());
 }
 
@@ -187,7 +190,7 @@ TEST(AacStream_StartAcceptsWorstCaseCapacity)
 	FakeEncoder* fake = encoder.get();
 
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 4096);
 	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
 
@@ -229,7 +232,7 @@ TEST(AacStream_RealEncoderStartsAndProducesRecords)
 	params.objectType = config.objectType;
 
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), params, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), params, 0));
 	WritePcm(pcm, 0, 8192);
 	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
 
@@ -250,7 +253,7 @@ TEST(AacStream_OversizeActualFrameIsFatal)
 	encoder->latmOverhead = 0;
 
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 4096);
 	CHECK(!stream.Pump(100000, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().records, uint64_t{0});
@@ -265,7 +268,7 @@ TEST(AacStream_PumpEncodesPreroll)
 	auto encoder = MakeEncoder();
 	FakeEncoder* fake = encoder.get();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 5000));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 5000));
 	WritePcm(pcm, 0, 2048);
 
 	REQUIRE(stream.Pump(5000, pcm.view, frames.view, 8));
@@ -297,7 +300,7 @@ TEST(AacStream_DoesNotOutrunTheClock)
 
 	auto encoder = MakeEncoder();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 4096);
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().records, uint64_t{3});
@@ -318,7 +321,7 @@ TEST(AacStream_PartialTickStillEncodesAWholeBlock)
 	auto encoder = MakeEncoder();
 	FakeEncoder* fake = encoder.get();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 8192);
 
 	// Consume the preroll first, then let one 10 ms tick make 441 samples due. A record
@@ -342,7 +345,7 @@ TEST(AacStream_HonoursRecordLimit)
 
 	auto encoder = MakeEncoder();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 8192);
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 2));
 	CHECK_EQ(stream.Stats().records, uint64_t{2});
@@ -358,7 +361,7 @@ TEST(AacStream_PadsShortInputWithSilence)
 	auto encoder = MakeEncoder();
 	FakeEncoder* fake = encoder.get();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 1234, Ioctl::kAacSamplesPerFrame);
 
 	// 100 ms needs 4410 + 2646 = 7056 samples: 7 blocks from 1 block of PCM.
@@ -386,7 +389,7 @@ TEST(AacStream_PrimingProducesNoRecords)
 	encoder->primingFrames = 2;
 	FakeEncoder* fake = encoder.get();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 4096);
 
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
@@ -405,7 +408,7 @@ TEST(AacStream_FullFrameRingDropsAndFlagsDiscontinuity)
 
 	auto encoder = MakeEncoder();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 8192);
 	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().records, uint64_t{2});
@@ -429,7 +432,7 @@ TEST(AacStream_EncodeFailureIsFatal)
 	auto encoder = MakeEncoder();
 	encoder->failOnCall = 0;
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	CHECK(!stream.Pump(0, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{1});
 	CHECK_EQ(stream.Stats().records, uint64_t{0});
@@ -443,7 +446,7 @@ TEST(AacStream_PayloadFailureIsFatal)
 	auto encoder = MakeEncoder();
 	encoder->failPayload = true;
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	CHECK(!stream.Pump(0, pcm.view, frames.view, 8));
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{1});
 }
@@ -455,7 +458,7 @@ TEST(AacStream_StopStopsEncoding)
 
 	auto encoder = MakeEncoder();
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 0, 4096);
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
 	const uint64_t records = stream.Stats().records;
@@ -476,7 +479,7 @@ TEST(AacStream_Converts24In32RingToEncoderInput)
 	AacStreamParams params;
 	params.bitsPerSample = 24;
 	AacStreamEncoder stream;
-	REQUIRE(stream.Start(std::move(encoder), params, pcm.view, 0));
+	REQUIRE(stream.Start(std::move(encoder), params, 0));
 
 	// Two blocks of 24-in-32 stereo: the top 16 bits are the AAC input, the low byte is
 	// always zero in Windows' left-justified layout.

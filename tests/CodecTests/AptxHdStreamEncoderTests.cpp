@@ -91,17 +91,17 @@ TEST(AptxHdStream_StartRejectsUnusableEncoder)
 	TestRing pcm(64 * 1024);
 	AptxHdStreamEncoder stream;
 
-	CHECK(!stream.Start(nullptr, AptxHdStreamParams{}, pcm.view, 0));
+	CHECK(!stream.Start(nullptr, AptxHdStreamParams{}, 0));
 
 	// 44.1 kHz encoder with a 48 kHz stream would consume the wrong pace.
 	AptxHdStreamParams params;
 	params.sampleRate = 48000;
-	CHECK(!stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, pcm.view, 0));
+	CHECK(!stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, 0));
 	CHECK(!stream.Active());
 
 	// The record layout is four samples to six bytes; another shape would overrun a buffer.
-	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(2, AptxHd::kFrameBytes), params, pcm.view, 0));
-	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(AptxHd::kSamplesPerFrame, 2), params, pcm.view, 0));
+	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(2, AptxHd::kFrameBytes), params, 0));
+	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(AptxHd::kSamplesPerFrame, 2), params, 0));
 }
 
 TEST(AptxHdStream_PacesTenMillisecondRecords)
@@ -112,7 +112,7 @@ TEST(AptxHdStream_PacesTenMillisecondRecords)
 	AptxHdStreamParams params;
 	params.sampleRate = 48000;
 	AptxHdStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate48000), params, pcm.view, 1000));
+	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate48000), params, 1000));
 	CHECK_EQ(stream.TargetSamples(1000), uint64_t{2880}); // 60 ms preroll
 
 	WriteWidePcm(pcm, 1, 480);
@@ -144,7 +144,7 @@ TEST(AptxHdStream_ShortRingBecomesSilence)
 	AptxHdStreamParams params;
 	params.sampleRate = 44100;
 	AptxHdStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, 0));
 
 	WriteWidePcm(pcm, 1, 440);
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
@@ -164,7 +164,7 @@ TEST(AptxHdStream_44kClockDoesNotDrift)
 	AptxHdStreamParams params;
 	params.sampleRate = 44100;
 	AptxHdStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, 0));
 
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 200));
 	CHECK_EQ(stream.Stats().records, uint64_t{106});
@@ -187,7 +187,7 @@ TEST(AptxHdStream_RecordSamplesLockToFourSpans)
 	AptxHdStreamParams params;
 	params.sampleRate = 44100;
 	AptxHdStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, 0));
 
 	// The 60 ms preroll is 2646 samples, six spans; four records are enough for one period.
 	WriteWidePcm(pcm, 1, 2646);

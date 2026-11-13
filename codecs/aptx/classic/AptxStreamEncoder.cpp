@@ -22,7 +22,7 @@ uint64_t PrerollSamples(const AptxStreamParams& params) noexcept
 AptxStreamEncoder::~AptxStreamEncoder() = default;
 
 bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxStreamParams& params,
-							  RingBufferView& pcm, uint64_t startTimeUs) noexcept
+							  uint64_t startTimeUs) noexcept
 {
 	Stop();
 	if (encoder == nullptr)
@@ -85,12 +85,10 @@ bool AptxStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxS
 	spanSamples_ = spanSamples;
 	maxFrames_ = maxFrames;
 	carrySamples_ = 0;
+	pendingSilence_ = 0;
 	convert24_ = convert24;
-	// The PCM the endpoint queued before MediaStart predates this stream.
-	const uint32_t stale = pcm.ReadableBytes();
-	if (stale != 0) {
-		pcm.Skip(stale);
-	}
+	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
+	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -102,6 +100,7 @@ void AptxStreamEncoder::Stop() noexcept
 	encoder_.reset();
 	producedSamples_ = 0;
 	carrySamples_ = 0;
+	pendingSilence_ = 0;
 	discontinuity_ = false;
 }
 
@@ -143,6 +142,8 @@ bool AptxStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 
 	const uint32_t readSamples = available / ringSampleBytes_;
 	stats_.pcmBytes += available;
+	// Saved for the record these samples end up in, which may be the next call's.
+	pendingSilence_ += spanSamples_ - readSamples;
 	stats_.silenceSamples += spanSamples_ - readSamples;
 
 	const uint32_t totalSamples = carrySamples_ + spanSamples_;
@@ -191,9 +192,12 @@ bool AptxStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 	}
 
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
-	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), encodedSamples, flags)) {
+	const uint32_t recordSilence = pendingSilence_;
+	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), encodedSamples,
+						   recordSilence, flags)) {
 		++stats_.records;
 		stats_.samples += encodedSamples;
+		pendingSilence_ = 0;
 		discontinuity_ = false;
 	} else {
 		// The frame ring is full: the driver fell behind, so the next record is a

@@ -290,6 +290,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->framesDropped = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->FramesDropped, 0, 0));
 		out->underruns = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->Underruns, 0, 0));
 		out->sendFailures = static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->SendFailures, 0, 0));
+		// The two losses no other counter describes: audio the endpoint produced that never reached
+		// the ring, and PCM the encoder service zero-filled because the ring was short.
+		out->pcmDroppedBytes = ctx->AudioDroppedBytes;
+		out->serviceSilenceSamples =
+			static_cast<uint64_t>(InterlockedCompareExchange64(&ctx->ServiceSilenceSamples, 0, 0));
 		out->lastError = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->LastMediaError, 0, 0));
 		// What the bitrate is allowed to be: one access unit per media packet, so the
 		// ceiling follows the negotiated MTU and the endpoint's sample rate.
@@ -606,11 +611,13 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		InterlockedExchange64(&ctx->SendFailures, 0);
 		InterlockedExchange(&ctx->RefusedStreams, 0);
 		InterlockedExchange(&ctx->JackFlaps, 0);
-		// Both are written by their own producer with plain increments (the audio timer and the
-		// media work item), so a reset for them is a store: the worst case is losing the one
-		// increment that is in flight, which is what a reset means anyway.
+		// These are written by their own producer with plain increments (the audio timer under
+		// AudioLock), so a reset for them is a store: the worst case is losing the one increment
+		// that is in flight, which is what a reset means anyway.
 		ctx->AudioTrimmedBytes = 0;
 		ctx->PacketsSent = 0;
+		ctx->AudioDroppedBytes = 0;
+		InterlockedExchange64(&ctx->ServiceSilenceSamples, 0);
 		OA2DP_INFO(ctx, "Service", "counters reset");
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;

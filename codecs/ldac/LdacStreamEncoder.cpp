@@ -21,7 +21,7 @@ uint64_t PrerollSamples(const LdacStreamParams& params) noexcept
 LdacStreamEncoder::~LdacStreamEncoder() = default;
 
 bool LdacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const LdacStreamParams& params,
-							  RingBufferView& pcm, uint64_t startTimeUs) noexcept
+							  uint64_t startTimeUs) noexcept
 {
 	Stop();
 	if (encoder == nullptr) {
@@ -64,15 +64,13 @@ bool LdacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const LdacS
 	startTimeUs_ = startTimeUs;
 	producedSamples_ = 0;
 	pendingSamples_ = 0;
+	pendingSilence_ = 0;
 	sampleBytes_ = sampleBytes;
 	ringSampleBytes_ = ringSampleBytes;
 	samplesPerFrame_ = samplesPerFrame;
 	convert24_ = convert24;
-	// The PCM the endpoint queued before MediaStart predates this stream.
-	const uint32_t stale = pcm.ReadableBytes();
-	if (stale != 0) {
-		pcm.Skip(stale);
-	}
+	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
+	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -84,6 +82,7 @@ void LdacStreamEncoder::Stop() noexcept
 	encoder_.reset();
 	producedSamples_ = 0;
 	pendingSamples_ = 0;
+	pendingSilence_ = 0;
 	discontinuity_ = false;
 }
 
@@ -121,6 +120,8 @@ bool LdacStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 		available = 0;
 	}
 	stats_.pcmBytes += available;
+	// Saved for the record this unit ends up in, which may be a later call's output.
+	pendingSilence_ += samplesPerFrame_ - available / ringSampleBytes_;
 	stats_.silenceSamples += samplesPerFrame_ - available / ringSampleBytes_;
 
 	// A wide ring holds 24-in-32 words; the encoder takes 16-bit samples, narrowed the way the
@@ -159,12 +160,14 @@ bool LdacStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 	}
 
 	const uint32_t recordSamples = pendingSamples_;
+	const uint32_t recordSilence = pendingSilence_;
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
 	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), recordSamples,
-						   flags)) {
+						   recordSilence, flags)) {
 		++stats_.records;
 		stats_.samples += recordSamples;
 		pendingSamples_ = 0;
+		pendingSilence_ = 0;
 		stats_.payloadBytes += payload;
 		discontinuity_ = false;
 	} else {

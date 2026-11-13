@@ -496,6 +496,11 @@ struct DEVICE_CONTEXT
 	// Audio the endpoint rendered while media was stopped, which the copy skips instead of
 	// queueing; MediaStart reports and resets it.
 	ULONGLONG AudioSkippedBytes;
+	// The PCM format (rate << 16 | bytes per frame) the audio in the PCM ring was captured at.
+	// A stream that starts while the ring holds audio has to know whether that audio is still
+	// the format it is about to play; if it is, the ring holds the beginning of playback, not
+	// stale samples.
+	volatile ULONG PcmRingFormat;
 	// Set once a run renders a non-silent sample. Windows runs the stream around an endpoint
 	// rebuild with nothing to play, so START waits for this rather than the run edge.
 	volatile LONG AudioHeard;
@@ -568,6 +573,9 @@ struct DEVICE_CONTEXT
 	ULONGLONG FrameTrimLogTime;
 	volatile LONG64 Underruns;
 	volatile LONG64 SendFailures;
+	// PCM the encoder service had to zero-fill because the ring was short: the other half of the
+	// loss `Underruns` describes, counted here because the service cannot report it itself.
+	volatile LONG64 ServiceSilenceSamples;
 	volatile LONG LastMediaError;
 	// How far ahead of the media clock this stream is sent, from the stored preference at
 	// MediaStart. The kernel pacer and the service both use it, and the presentation position
@@ -812,6 +820,11 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 // nothing is due, so the silence a stream sends then is a pause and not a gap.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx);
+
+// True when the audio already in the PCM ring was captured at this format and the endpoint has
+// played since its run: a stream starting now sends it as the beginning of playback instead of
+// discarding it as audio from before the session.
+bool AudioPcmRingHoldsPlayback(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytesPerFrame);
 
 // True while the render stream runs and has rendered audio that is not silence in this run.
 // The AVDTP stream follows this, so a run Windows makes only to rebuild the endpoint does not

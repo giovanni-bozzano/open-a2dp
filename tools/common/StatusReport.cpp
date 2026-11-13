@@ -233,6 +233,8 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
 	AppendField(text, "status.sendFailures", status.sendFailures);
+	AppendField(text, "status.pcmDroppedBytes", status.pcmDroppedBytes);
+	AppendField(text, "status.serviceSilenceSamples", status.serviceSilenceSamples);
 	AppendField(text, "status.lastError", status.lastError);
 	AppendField(text, "status.negotiatedCodec", status.negotiatedCodec);
 	AppendField(text, "status.preferenceFlags", status.preferenceFlags);
@@ -435,6 +437,14 @@ void AppendLatency(std::string& text, const Ioctl::Status& status)
 	AppendLine(text, "trimmed",
 			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,
 					  status.framesTrimmed));
+	// The two losses a trim does not describe, and the ones a listener notices without the counters
+	// above moving: audio the endpoint produced that never reached the ring, and PCM the encoder
+	// service had to fill with silence because the ring was short.
+	AppendLine(text, "not copied",
+			   Format("%llu B of endpoint PCM (the copy ran late or the ring was full)",
+					  status.pcmDroppedBytes));
+	AppendLine(text, "service silence",
+			   Format("%llu samples zero-filled by the encoder service", status.serviceSilenceSamples));
 }
 
 // What the stream holds and how far ahead of the clock it runs. Milliseconds matter here: the

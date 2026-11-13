@@ -510,7 +510,9 @@ RowTone ToneForLabel(const std::string& label, const std::string& value)
 	// listener heard the gap. The counts cover everything since the sink appeared and are never
 	// reset, so the tone says this sink has lost audio, and the count itself says whether it
 	// still is: a number that stopped growing is a fault that stopped.
-	if ((label == "underruns" || label == "trimmed") && !value.empty() && value[0] != '0')
+	if ((label == "underruns" || label == "trimmed" || label == "not copied" ||
+		 label == "service silence") &&
+		!value.empty() && value[0] != '0')
 	{
 		return RowTone::Warning;
 	}
@@ -609,6 +611,14 @@ constexpr RowTip kRowTips[] = {
 	 L"encoder service records, one media send.\n\n"
 	 L"How much buffer the machine actually needed. A gap larger than the lead explains "
 	 L"the underruns or trims below; nothing larger means the setting is fine."},
+	{"not copied",
+	 L"Audio the endpoint produced that never reached the driver's buffer: the copy ran later than "
+	 L"the engine's own buffer, or the buffer was full.\n\n"
+	 L"A listener hears it as a skip, and unlike a trim it is not the driver trading latency for "
+	 L"continuity - nothing was buffered to trade. A count that grows while the underruns do not "
+	 L"points at the machine (a stalled DPC or a long interrupt) rather than at the sink."},
+	{"service silence",
+	 L"PCM the encoder service filled with silence because the ring held less than one record."},
 	{"underruns",
 	 L"Packets built with silence because the ring held no audio the media clock had "
 	 L"already asked for. Counted for the endpoint's whole life and never reset.\n\n"

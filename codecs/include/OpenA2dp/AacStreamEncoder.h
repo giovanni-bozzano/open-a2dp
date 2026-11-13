@@ -59,10 +59,11 @@ public:
 	AacStreamEncoder& operator=(const AacStreamEncoder&) = delete;
 
 	// Starts a stream. `encoder` must be created for `params` (44.1 kHz stereo
-	// AAC-LC) and is owned by this object. PCM already buffered in `pcm` is
-	// discarded: it predates the stream and would only add latency.
+	// AAC-LC) and is owned by this object. PCM already buffered in the ring is the
+	// beginning of playback - the driver keeps it and drops what really predates
+	// the stream - so it is encoded as the first records above the preroll.
 	// `startTimeUs` is the clock value that corresponds to stream start.
-	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStreamParams& params, RingBufferView& pcm,
+	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStreamParams& params,
 			   uint64_t startTimeUs) noexcept;
 
 	void Stop() noexcept;

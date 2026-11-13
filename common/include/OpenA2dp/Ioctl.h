@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 7;
+constexpr uint32_t kAbiVersion = 8;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -216,7 +216,12 @@ struct FrameRecordHeader {
 	uint16_t magic;   // kFrameRecordMagic
 	uint16_t size;    // whole record including this header
 	uint32_t samples; // PCM samples covered (kAacSamplesPerFrame)
-	uint32_t flags;   // kFrameFlag*
+	// How much of that PCM the service had to zero-fill because the ring was short - the gap
+	// the listener hears, per channel. Carrying it with the record is what lets the driver count
+	// silence the service inserts like any other underrun, instead of leaving it in the service's
+	// own statistics where only a log line could see it.
+	uint32_t silenceSamples;
+	uint32_t flags; // kFrameFlag*
 };
 
 struct WaitEventOut {
@@ -317,12 +322,19 @@ struct Status {
 	// sent since the device started or since the last reset. The wire RTP sequence beside them
 	// is the 16-bit one and wraps in minutes. They are grouped past the byte, format and setting
 	// fields so each keeps 8-byte alignment without padding the record.
+	//
+	// `pcmDroppedBytes` is the loss `pcmTrimmedBytes` cannot describe: audio the endpoint produced
+	// that never reached the ring, because the copy ran later than the engine's own buffer or
+	// because the ring was full. `serviceSilenceSamples` is the other half: PCM the encoder
+	// service zero-filled because the ring was short. Both are audible and neither is a trim.
 	uint64_t pcmTrimmedBytes;
 	uint64_t framesTrimmed;
 	uint64_t packetsSent;
 	uint64_t framesDropped;
 	uint64_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
 	uint64_t sendFailures;
+	uint64_t pcmDroppedBytes;      // endpoint PCM that never reached the ring
+	uint64_t serviceSilenceSamples; // PCM the encoder service zero-filled (per channel)
 	// The sink's Bluetooth name, so a tool can show the sink as "name (address)" without
 	// asking the Bluetooth stack; empty until the sink reported one.
 	wchar_t sinkName[kSinkNameChars];
@@ -461,8 +473,8 @@ static_assert(sizeof(Preference) == 44, "Preference layout is part of the driver
 static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is part of the ABI");
 static_assert(sizeof(WaitEventOut) == 40, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
-static_assert(sizeof(FrameRecordHeader) == 12, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 336, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(FrameRecordHeader) == 16, "FrameRecordHeader layout is part of the ABI");
+static_assert(sizeof(Status) == 352, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

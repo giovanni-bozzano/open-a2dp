@@ -21,7 +21,7 @@ uint64_t PrerollSamples(const AacStreamParams& params) noexcept
 AacStreamEncoder::~AacStreamEncoder() = default;
 
 bool AacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStreamParams& params,
-							 RingBufferView& pcm, uint64_t startTimeUs) noexcept
+							 uint64_t startTimeUs) noexcept
 {
 	Stop();
 	if (encoder == nullptr) {
@@ -67,11 +67,8 @@ bool AacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStr
 	bytesPerSample_ = bytesPerSample;
 	ringBytesPerSample_ = ringBytesPerSample;
 	convert24_ = params.bitsPerSample == 24;
-	// The PCM the endpoint queued before MediaStart predates this stream.
-	const uint32_t stale = pcm.ReadableBytes();
-	if (stale != 0) {
-		pcm.Skip(stale);
-	}
+	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
+	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -145,7 +142,9 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 	}
 
 	stats_.pcmBytes += available;
-	stats_.silenceSamples += samplesPerFrame_ - availableSamples;
+	// The block is always whole, so its shortfall is exactly the silence this record carries.
+	const uint32_t silenceSamples = samplesPerFrame_ - availableSamples;
+	stats_.silenceSamples += silenceSamples;
 
 	size_t written = 0;
 	const HRESULT hr = encoder_->Encode(pcmBlock_.data(), accessUnit_.data(), accessUnit_.size(),
@@ -170,7 +169,8 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 	}
 
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
-	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), samplesPerFrame_, flags)) {
+	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), samplesPerFrame_,
+							silenceSamples, flags)) {
 		++stats_.records;
 		stats_.samples += samplesPerFrame_;
 		discontinuity_ = false;

@@ -50,8 +50,9 @@ public:
 	AptxHdStreamEncoder& operator=(const AptxHdStreamEncoder&) = delete;
 
 	// Starts a stream. `encoder` must take 24-in-32 PCM for `params` and is owned by this
-	// object. PCM already buffered in `pcm` is discarded: it predates the stream.
-	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxHdStreamParams& params, RingBufferView& pcm,
+	// object. PCM already buffered in the ring is the beginning of playback, kept by the
+	// driver, and is encoded as the first records.
+	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxHdStreamParams& params,
 			   uint64_t startTimeUs) noexcept;
 
 	void Stop() noexcept;
@@ -86,6 +87,9 @@ private:
 	uint32_t samplesPerFrame_ = 0;
 	uint32_t spanSamples_ = 0;   // one 10 ms record's worth of clock
 	uint32_t carrySamples_ = 0;  // samples the previous record left for this one
+	// Silence zero-filled for the samples the record that follows will carry, so the count
+	// reaches the driver with that record instead of staying in the service's statistics.
+	uint32_t pendingSilence_ = 0;
 	size_t maxFrames_ = 0;
 	std::vector<uint8_t> pcmRecord_;  // (spanSamples_ + samplesPerFrame_ - 1) * sampleBytes_
 	std::vector<uint8_t> frameData_;  // maxFrames_ * AptxHd::kFrameBytes

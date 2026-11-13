@@ -57,9 +57,10 @@ public:
 
 	// Starts a stream. `encoder` must take 16-bit stereo PCM for `params.sampleRate` and is
 	// owned by this object; `params.bitsPerSample` describes the ring, which may be wider.
-	// PCM already buffered in `pcm` is discarded: it predates the stream.
+	// PCM already buffered in the ring is the beginning of playback, kept by the driver, and
+	// is encoded as the first records.
 	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const LdacStreamParams& params,
-			   RingBufferView& pcm, uint64_t startTimeUs) noexcept;
+			   uint64_t startTimeUs) noexcept;
 
 	void Stop() noexcept;
 
@@ -88,6 +89,9 @@ private:
 	// Samples encoded since the last record was written: the encoder holds them until a packet
 	// is full, and the record that follows covers them all.
 	uint32_t pendingSamples_ = 0;
+	// Silence zero-filled for the samples the record that follows will carry, so the count
+	// reaches the driver with that record instead of staying in the service's statistics.
+	uint32_t pendingSilence_ = 0;
 	bool active_ = false;
 	bool discontinuity_ = false;
 

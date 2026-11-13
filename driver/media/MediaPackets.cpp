@@ -239,8 +239,15 @@ ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	TrimFrameBacklog(ctx);
 	const UCHAR* payload = nullptr;
 	uint32_t frameSamples = 0;
+	uint32_t silenceSamples = 0;
 	uint32_t flags = 0;
-	const ULONG length = ServiceReadFrame(ctx, &payload, &frameSamples, &flags);
+	const ULONG length = ServiceReadFrame(ctx, &payload, &frameSamples, &silenceSamples, &flags);
+	if (silenceSamples != 0)
+	{
+		// The service could not fill this record from the ring: the gap is the listener's, so it
+		// is counted with the other losses instead of living in the service's own statistics.
+		InterlockedAdd64(&ctx->ServiceSilenceSamples, silenceSamples);
+	}
 	if (length == 0)
 	{
 		return 0;

@@ -305,7 +305,7 @@ TEST(Ldac_StreamPacesOneFrameRecords)
 	LdacStreamParams params;
 	params.sampleRate = 48000;
 	LdacStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(kSampleRate48000), params, pcm.view, 1000));
+	REQUIRE(stream.Start(MakeEncoder(kSampleRate48000), params, 1000));
 
 	// 60 ms of preroll is the whole target at the start.
 	CHECK_EQ(stream.TargetSamples(1000), uint64_t{2880});
@@ -353,7 +353,7 @@ TEST(Ldac_StreamReadsTheRingItIsGiven)
 	LdacStreamParams params;
 	params.sampleRate = 44100;
 	LdacStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(kSampleRate44100), params, 0));
 
 	// Exactly enough PCM for the target, so nothing is zero-filled.
 	for (uint32_t frame = 0; frame < 2944; ++frame) {
@@ -370,14 +370,16 @@ TEST(Ldac_StreamReadsTheRingItIsGiven)
 	CHECK_EQ(stream.Stats().pcmBytes, consumed * 4);
 	CHECK_EQ(pcm.view.ReadableBytes(), uint32_t{2944 * 4} - static_cast<uint32_t>(consumed * 4));
 
-	// A wipe-out ring is the same stream with silence, not a new one.
+	// A restart is the same stream, not a new one: the PCM still in the ring is its first audio,
+	// read at the wider layout now, and only the rest of the preroll is silence.
 	LdacStreamParams wide;
 	wide.sampleRate = 44100;
 	wide.bitsPerSample = 24;
-	REQUIRE(stream.Start(MakeEncoder(kSampleRate44100), wide, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(kSampleRate44100), wide, 0));
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 64));
 	CHECK(stream.Stats().records > 0);
-	CHECK_EQ(stream.Stats().silenceSamples, consumed);
+	CHECK(stream.Stats().pcmBytes > 0);
+	CHECK_EQ(stream.Stats().silenceSamples + stream.Stats().pcmBytes / 8, consumed);
 	CHECK(stream.Stats().samples <= consumed);
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
 }

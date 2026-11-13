@@ -21,13 +21,14 @@ struct Record {
 	const uint8_t* payload = nullptr;
 	uint32_t payloadLength = 0;
 	uint32_t samples = 0;
+	uint32_t silenceSamples = 0; // zero-filled by the producer: a gap the listener hears
 	uint32_t flags = 0;
 };
 
 // Producer side. Writes header + payload with one RingBufferView::Write, so a
 // consumer never sees a partial record. Returns false when the record does not fit.
 inline bool Write(RingBufferView& ring, const uint8_t* payload, uint32_t payloadLength, uint32_t samples,
-				  uint32_t flags) noexcept
+				  uint32_t silenceSamples, uint32_t flags) noexcept
 {
 	if (payload == nullptr || payloadLength == 0 || payloadLength > Ioctl::kMaxFramePayload) {
 		return false;
@@ -42,6 +43,7 @@ inline bool Write(RingBufferView& ring, const uint8_t* payload, uint32_t payload
 		static_cast<uint16_t>(Ioctl::kFrameRecordMagic),
 		static_cast<uint16_t>(size),
 		samples,
+		silenceSamples,
 		flags,
 	};
 	memcpy(record, &header, sizeof(header));
@@ -80,6 +82,7 @@ inline ReadResult Read(RingBufferView& ring, uint8_t* storage, uint32_t storageB
 	out.payload = storage + sizeof(header);
 	out.payloadLength = payloadLength;
 	out.samples = header.samples;
+	out.silenceSamples = header.silenceSamples;
 	out.flags = header.flags;
 	return ReadResult::Record;
 }

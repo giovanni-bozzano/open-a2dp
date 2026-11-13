@@ -121,26 +121,26 @@ TEST(AptxStream_StartRejectsUnusableEncoder)
 	TestRing pcm(64 * 1024);
 	AptxStreamEncoder stream;
 
-	CHECK(!stream.Start(nullptr, AptxStreamParams{}, pcm.view, 0));
+	CHECK(!stream.Start(nullptr, AptxStreamParams{}, 0));
 
 	// 44.1 kHz encoder with a 48 kHz stream would consume the wrong pace.
 	AptxStreamParams params;
 	params.sampleRate = 48000;
-	CHECK(!stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	CHECK(!stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 	CHECK(!stream.Active());
 
 	// A 24-bit encoder cannot be fed from the 16-bit ring.
 	auto wide = MakeWideEncoder();
 	REQUIRE(wide != nullptr);
-	CHECK(!stream.Start(std::move(wide), params, pcm.view, 0));
+	CHECK(!stream.Start(std::move(wide), params, 0));
 
 	// The ring is either 16-bit or 24-in-32; any other depth has no layout.
 	params.bitsPerSample = 20;
-	CHECK(!stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm.view, 0));
+	CHECK(!stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, 0));
 
 	// The record layout is four samples to four bytes; another shape would overrun a buffer.
-	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(2, Aptx::kFrameBytes), params, pcm.view, 0));
-	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(Aptx::kSamplesPerFrame, 2), params, pcm.view, 0));
+	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(2, Aptx::kFrameBytes), params, 0));
+	CHECK(!stream.Start(std::make_unique<OddShapeEncoder>(Aptx::kSamplesPerFrame, 2), params, 0));
 }
 
 TEST(AptxStream_PacesTenMillisecondRecords)
@@ -151,7 +151,7 @@ TEST(AptxStream_PacesTenMillisecondRecords)
 	AptxStreamParams params;
 	params.sampleRate = 48000;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm.view, 1000));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, 1000));
 	CHECK_EQ(stream.TargetSamples(1000), uint64_t{2880}); // 60 ms preroll
 
 	WritePcm(pcm, 1, 2880);
@@ -183,7 +183,7 @@ TEST(AptxStream_CarriesSamplesAt44k)
 	AptxStreamParams params;
 	params.sampleRate = 44100;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
 	// 60 ms of 44.1 kHz is 2646 samples, exactly six spans of 441.
 	WritePcm(pcm, 1, 2646);
@@ -213,7 +213,7 @@ TEST(AptxStream_44kClockDoesNotDrift)
 	AptxStreamParams params;
 	params.sampleRate = 44100;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
 	// One second plus the 60 ms preroll is 106 spans of 441 samples, all silence. A clock that
 	// advanced by the encoded samples rather than by the span would trail by 26 samples.
@@ -238,7 +238,7 @@ TEST(AptxStream_RecordSamplesLockToFourSpans)
 	AptxStreamParams params;
 	params.sampleRate = 44100;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
 	// The 60 ms preroll is 2646 samples, six spans; four records are enough for one period.
 	WritePcm(pcm, 1, 2646);
@@ -269,7 +269,7 @@ TEST(AptxStream_StopClearsCarriedSamples)
 	AptxStreamParams params;
 	params.sampleRate = 44100;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
 	// Three spans leave three samples carried, which an uncleared carry would report as a
 	// 444-sample first record after the restart.
@@ -279,7 +279,7 @@ TEST(AptxStream_StopClearsCarriedSamples)
 
 	stream.Stop();
 	CHECK(!stream.Active());
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 	CHECK_EQ(stream.Stats().records, uint64_t{0});
 
 	// A separate frame ring, so the first record read is the restarted stream's own.
@@ -303,7 +303,7 @@ TEST(AptxStream_FullFrameRingDropsRecords)
 	AptxStreamParams params;
 	params.sampleRate = 48000;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate48000), params, 0));
 
 	// Six due records of 480 samples into room for two.
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
@@ -330,7 +330,7 @@ TEST(AptxStream_ShortRingBecomesSilence)
 	AptxStreamParams params;
 	params.sampleRate = 44100;
 	AptxStreamEncoder stream;
-	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, pcm.view, 0));
+	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
 	// One span of PCM for six due records: every missing sample becomes silence, and the one
 	// sample the first record cannot fit is still carried.
@@ -356,12 +356,12 @@ TEST(AptxStream_24BitRingMatches16Bit)
 	AptxStreamParams params;
 	params.sampleRate = 48000;
 	AptxStreamEncoder narrow;
-	REQUIRE(narrow.Start(MakeEncoder(Aptx::kSampleRate48000), params, pcm16.view, 0));
+	REQUIRE(narrow.Start(MakeEncoder(Aptx::kSampleRate48000), params, 0));
 
 	AptxStreamParams wideParams = params;
 	wideParams.bitsPerSample = 24;
 	AptxStreamEncoder wide;
-	REQUIRE(wide.Start(MakeEncoder(Aptx::kSampleRate48000), wideParams, pcm24.view, 0));
+	REQUIRE(wide.Start(MakeEncoder(Aptx::kSampleRate48000), wideParams, 0));
 
 	WritePcm(pcm16, 1000, 4800);
 	WriteWidePcm(pcm24, 1000, 4800);

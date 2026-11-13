@@ -21,7 +21,7 @@ uint64_t PrerollSamples(const AptxHdStreamParams& params) noexcept
 AptxHdStreamEncoder::~AptxHdStreamEncoder() = default;
 
 bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxHdStreamParams& params,
-								RingBufferView& pcm, uint64_t startTimeUs) noexcept
+								uint64_t startTimeUs) noexcept
 {
 	Stop();
 	if (encoder == nullptr)
@@ -75,11 +75,9 @@ bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const Apt
 	spanSamples_ = spanSamples;
 	maxFrames_ = maxFrames;
 	carrySamples_ = 0;
-	// The PCM the endpoint queued before MediaStart predates this stream.
-	const uint32_t stale = pcm.ReadableBytes();
-	if (stale != 0) {
-		pcm.Skip(stale);
-	}
+	pendingSilence_ = 0;
+	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
+	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -91,6 +89,7 @@ void AptxHdStreamEncoder::Stop() noexcept
 	encoder_.reset();
 	producedSamples_ = 0;
 	carrySamples_ = 0;
+	pendingSilence_ = 0;
 	discontinuity_ = false;
 }
 
@@ -132,6 +131,8 @@ bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& fram
 
 	const uint32_t readSamples = available / sampleBytes_;
 	stats_.pcmBytes += available;
+	// Saved for the record these samples end up in, which may be the next call's.
+	pendingSilence_ += spanSamples_ - readSamples;
 	stats_.silenceSamples += spanSamples_ - readSamples;
 
 	const uint32_t totalSamples = carrySamples_ + spanSamples_;
@@ -166,9 +167,12 @@ bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& fram
 	}
 
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
-	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), encodedSamples, flags)) {
+	const uint32_t recordSilence = pendingSilence_;
+	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), encodedSamples,
+						   recordSilence, flags)) {
 		++stats_.records;
 		stats_.samples += encodedSamples;
+		pendingSilence_ = 0;
 		discontinuity_ = false;
 	} else {
 		// The frame ring is full: the driver fell behind, so the next record is a

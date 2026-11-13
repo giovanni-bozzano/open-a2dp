@@ -111,10 +111,12 @@ Lifetime:
 - The mapping is cached and the rings are not paged, so the service may touch them at
   any time while the handle is open.
 
-At AAC stream start the driver flushes the frame ring before it latches
-`kEventStreamStart`, so the service never sends a stale encoded frame. The service is the
-PCM ring's consumer, so it discards buffered PCM itself when it sees the event (the
-driver, as producer, never moves the PCM tail).
+At stream start the driver flushes the frame ring before it latches
+`kEventStreamStart`, so the service never sends a stale encoded frame. The PCM ring is
+the driver's to decide: `MediaStart` drops it when it predates the stream (another format,
+or a run that never played) and keeps it when it is the beginning of playback, so the
+service encodes what is there instead of discarding it. That is also why every service
+encoder reports the PCM it had to zero-fill in its record (`silenceSamples`).
 
 ## 4. Frame records
 
@@ -127,6 +129,7 @@ is `size - sizeof(FrameRecordHeader)` and records are never padded:
 | `magic` | `kFrameRecordMagic` |
 | `size` | whole record including the header |
 | `samples` | PCM samples the payload covers (1024 for AAC-LC) |
+| `silenceSamples` | PCM samples in `samples` the service had to zero-fill |
 | `flags` | `kFrameFlagDiscontinuity` after a gap |
 
 Write and read are atomic per record:
@@ -134,7 +137,7 @@ Write and read are atomic per record:
 - the service builds header + payload in a 2 KiB stack buffer and calls
   `RingBufferView::Write` once; if it does not fit, the record is dropped and counted
   (never a partial record);
-- the driver peeks the 12-byte header and validates `magic` and `size`. If the payload
+- the driver peeks the 16-byte header and validates `magic` and `size`. If the payload
   (`size - sizeof(FrameRecordHeader)`) is larger than `kMaxFramePayload` the driver skips
   the record (`Skip(size)`) and counts it (`framesDropped`); otherwise it peeks the whole
   record into its scratch buffer and sends the payload;
