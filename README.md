@@ -92,7 +92,7 @@ it claims; everything else keeps using `BthA2dp.sys`.
 
 ## AI disclosure
 
-This project was built with extensive use of AI, **_steered at every step by a human_**. Coding
+This project was built with extensive use of AI, steered at every step by a human. Coding
 agents wrote most of the source, tests and documentation; the maintainer set the architecture,
 made the design decisions, directed each change and validated the result on real hardware. Where
 the reasoning behind a design matters it is written down in
