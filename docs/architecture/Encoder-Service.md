@@ -336,8 +336,12 @@ cannot read from the IE.
 | Media send failure | Reported by the send completion: stop media, request SUSPEND |
 | PCM ring full | Existing `AudioDroppedBytes` counter; the service is behind |
 
-`GET_STATUS` exposes `packetsSent`, `framesDropped`, `underruns`, `sendFailures` and
-`lastError` so the config UI and `dbgprint` triage agree.
+`GET_STATUS` exposes the counters above (`underruns`, `framesDropped`, `packetsSent`,
+`sendFailures`) with `lastError` carrying the NTSTATUS of the last media failure, plus the
+losses no state change announces: `pcmTrimmedBytes` with `framesTrimmed` for audio dropped to
+stay near live, `pcmDroppedBytes` for endpoint PCM that never reached the ring (the driver's
+`AudioDroppedBytes`), and `serviceSilenceSamples` for PCM the service had to zero-fill. The
+config UI and `dbgprint` triage therefore agree.
 
 ## 10. Security
 
