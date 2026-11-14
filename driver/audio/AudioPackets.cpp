@@ -5,10 +5,15 @@ namespace OpenA2dpDriver::Audio
 NTSTATUS OnAllocateRtPackets(_In_ ACXSTREAM stream, _In_ ULONG packetCount, _In_ ULONG packetSize, _Out_ PACX_RTPACKET* packets)
 {
 	*packets = nullptr;
-	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
+	const STREAM_CONTEXT* streamContext = GetStreamContext(stream);
+	DEVICE_CONTEXT* ctx = streamContext->Device;
+	// The stream's own format: ACX allocates before the stream runs, and only a run makes its
+	// format the endpoint's, so the pin format here can still be the previous stream's.
+	const ULONG frameBytes = static_cast<ULONG>(streamContext->Channels) *
+		AudioRenderSampleBytes(streamContext->ValidBits);
 	const ULONGLONG total = static_cast<ULONGLONG>(packetSize) * packetCount;
 	if (packetCount == 0 || packetCount > AudioMaxPacketCount || packetSize == 0 ||
-		ctx->PinBytesPerFrame == 0 || packetSize % ctx->PinBytesPerFrame != 0 ||
+		frameBytes == 0 || packetSize % frameBytes != 0 ||
 		total > AudioMaxBufferBytes)
 	{
 		OA2DP_WARN(ctx, "Audio", "allocate %u packets of %u bytes rejected", packetCount, packetSize);
