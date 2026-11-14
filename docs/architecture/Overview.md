@@ -25,27 +25,17 @@ kernel pointer.
 
 ## Audio paths
 
-```text
-Windows audio engine
-        |
-        v
-ACX render endpoint  (PCM stereo, 16-bit or 24-in-32)
-        |
-        v
-     PCM ring
-      /     \
-     /       \
-SBC path    Service path
-kernel SBC  AAC / aptX / aptX HD / LDAC
-     \       /
-      \     /
-     RTP packet
-        |
-        v
-   L2CAP media channel
-        |
-        v
- bthport -> radio -> sink
+```mermaid
+flowchart LR
+    ENGINE["Windows audio engine"] --> ACX["ACX render endpoint<br/>PCM stereo, 16-bit or 24-in-32"]
+    ACX --> PCM["PCM ring"]
+    PCM --> SBC["SBC path<br/>kernel encoder"]
+    PCM --> SERVICE["Service path<br/>AAC / aptX / aptX HD / LDAC"]
+    SERVICE --> FRAME["Frame ring<br/>encoded records"]
+    SBC --> RTP["RTP packet"]
+    FRAME --> RTP
+    RTP --> L2CAP["L2CAP media channel"]
+    L2CAP --> RADIO["bthport, radio, sink"]
 ```
 
 - **SBC** is encoded in the kernel, integer-only, and is always available.

@@ -59,6 +59,8 @@ reference: constants, structures and wire layouts live in the headers under
 - **Explain the present.** Describe how the system works, not the bugs it fixed
   or the options that were considered. Keep historical rationale only where it
   states a constraint a future change could otherwise violate.
+- **Graphs are Mermaid.** Use a `mermaid` fenced block for a diagram; Markdown
+  renderers draw it and the source stays diffable.
 - **Update the owner, not every copy.** When behaviour changes, change the guide
   or reference that owns it and fix the links that point at it.
 

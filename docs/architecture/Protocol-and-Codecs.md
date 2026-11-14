@@ -11,8 +11,12 @@ they are used; the headers are authoritative.
 
 The source drives:
 
-```text
-DISCOVER -> GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START
+```mermaid
+flowchart LR
+    DISCOVER["DISCOVER"] --> CAPS["GET_CAPABILITIES"]
+    CAPS --> CONFIG["SET_CONFIGURATION"]
+    CONFIG --> OPEN["OPEN"]
+    OPEN --> START["START"]
 ```
 
 `SUSPEND`, `CLOSE` and `ABORT` release stream state. The session also accepts a
