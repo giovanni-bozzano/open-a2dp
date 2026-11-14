@@ -229,14 +229,19 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 
 void ArmAudioTimerLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 {
-	LONGLONG due = static_cast<LONGLONG>(AudioFallbackWakeMs) * 10000;
+	LONGLONG due = static_cast<LONGLONG>(AudioCopyIntervalMs) * 10000;
 	const ULONGLONG bytesPerSecond = static_cast<ULONGLONG>(ctx->PinSampleRate) * ctx->PinBytesPerFrame;
 	if (ctx->AudioPacketSize != 0 && bytesPerSecond != 0)
 	{
 		// In (0, packet]: a position on the boundary was completed by the caller, so the next
 		// wake is the end of the packet that starts there. Rounded up, so it is never early.
 		const ULONGLONG remaining = ctx->AudioPacketSize - position % ctx->AudioPacketSize;
-		due = static_cast<LONGLONG>((remaining * 10000000ull + bytesPerSecond - 1) / bytesPerSecond);
+		const LONGLONG boundary =
+			static_cast<LONGLONG>((remaining * 10000000ull + bytesPerSecond - 1) / bytesPerSecond);
+		if (boundary < due)
+		{
+			due = boundary;
+		}
 	}
 	// Relative and never zero: a high-resolution timer requires a negative due time.
 	WdfTimerStart(ctx->AudioTimer, -due);
@@ -258,10 +263,10 @@ static ULONGLONG BoundaryQpcLocked(const DEVICE_CONTEXT* ctx, ULONGLONG boundary
 	return qpc < now ? qpc : now;
 }
 
-// The render clock: copies the packet that just ended into the PCM ring and reports it complete,
-// which is what hands the engine its next buffer, then arms itself for the end of the next one.
-// It re-arms unconditionally while the stream runs; pause and release clear AudioRunning under
-// the lock and stop it with a wait.
+// The render clock: copies what the engine has played into the PCM ring and reports each packet
+// that ended complete, which is what hands the engine its next buffer, then arms itself for the
+// end of the next packet or the next copy, whichever is sooner. It re-arms unconditionally while
+// the stream runs; pause and release clear AudioRunning under the lock and stop it with a wait.
 void OnAudioTimer(_In_ WDFTIMER timer)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));

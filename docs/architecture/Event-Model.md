@@ -6,7 +6,7 @@ IOCTLs. Elapsed time may only drive the cases below.
 ## Time uses that stay (verified not removable)
 | Use | Where | Why no event can replace it |
 |---|---|---|
-| Media clock | `MediaTimer`, `AudioTimer`, SBC target from `KeQueryInterruptTime`, service `kEventTick` (AAC, aptX, aptX HD) | A2DP is isochronous; nothing in the stack signals "next packet due". Paces data, not state. `AudioTimer` is the virtual device's own clock: armed one shot for the end of each engine packet and re-armed while the stream runs, it copies that packet and reports it complete. The engine waits on that notification, so no engine callback can stand in for it. |
+| Media clock | `MediaTimer`, `AudioTimer`, SBC target from `KeQueryInterruptTime`, service `kEventTick` (AAC, aptX, aptX HD) | A2DP is isochronous; nothing in the stack signals "next packet due". Paces data, not state. `AudioTimer` is the virtual device's own clock: armed one shot for the end of each engine packet (or 10 ms, if sooner) and re-armed while the stream runs, it copies what was played and reports each packet complete. The engine waits on that notification, so no engine callback can stand in for it. |
 | AVDTP response timer (3 s) | `ResponseTimer` -> `SourceSession::OnTimeout` | A connected but silent peer produces no event; AVDTP requires a signaling timeout. Expiry is delivered as a work-item event. |
 | Teardown bounds | `BrbOpRun` and send-slot cancel grace, `SignalingStop`, `SignalingAbortSession`, lock acquire bounds, service IOCTL/join bounds | PnP suspend and service stop must return when the Bluetooth stack never completes (no unbounded transport waits). Guards only; never used for steady-state transitions. |
 

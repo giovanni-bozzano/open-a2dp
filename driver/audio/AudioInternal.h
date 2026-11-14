@@ -28,11 +28,13 @@ DECLARE_CONST_UNICODE_STRING(RenderCircuitName, L"Speaker0");
 // Moves the PCM the clock has consumed from the RT buffer into the PCM ring and bounds the
 // backlog. Caller holds AudioLock.
 void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position);
-// Arms AudioTimer for the end of the packet that is playing at `position`; while the packet size
-// or format is not known yet it wakes after AudioFallbackWakeMs instead, so a running stream is
-// never left without a clock. Caller holds AudioLock and has checked AudioRunning.
+// Arms AudioTimer for the end of the packet that is playing at `position`, or AudioCopyIntervalMs
+// from now if that is sooner: the copy has to keep the ring within its slack of the clock whatever
+// packet size the engine picked, and it is also the wake while the packet size or format is not
+// known yet, so a running stream is never left without a clock. Caller holds AudioLock and has
+// checked AudioRunning.
 void ArmAudioTimerLocked(DEVICE_CONTEXT* ctx, ULONGLONG position);
-constexpr ULONG AudioFallbackWakeMs = 10;
+constexpr ULONG AudioCopyIntervalMs = 10;
 
 struct STREAM_CONTEXT
 {
