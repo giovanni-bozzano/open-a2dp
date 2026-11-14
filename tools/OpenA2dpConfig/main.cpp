@@ -312,6 +312,9 @@ struct SinkState
 	// user's hand.
 	int laidOutWidth = 0;
 	int laidOutHeight = 0;
+	// The window has been sized once, which is also when it is centered; resizing for a longer
+	// message afterwards keeps the corner the user has it at.
+	bool placed = false;
 	std::vector<GroupFrame> groups; // filled by ApplyLayout, drawn by WM_PAINT
 };
 
@@ -1522,15 +1525,23 @@ void ApplyLayout(HWND hwnd)
 	AdjustWindowRectEx(&rect, kWindowStyle, FALSE, 0);
 	const int windowWidth = rect.right - rect.left;
 	const int windowHeight = rect.bottom - rect.top;
-	// A second pass over the same strings - the list refilling after a sink connects, say -
-	// leaves the window where the user has it instead of re-centering it.
-	RECT placed = {};
-	GetWindowRect(hwnd, &placed);
-	if (placed.right - placed.left == windowWidth && placed.bottom - placed.top == windowHeight)
+	// The same strings measured again - every status tick used to do it - are the common case:
+	// the window is already the size the layout asks for, so nothing is placed.
+	RECT current = {};
+	GetWindowRect(hwnd, &current);
+	if (current.right - current.left == windowWidth && current.bottom - current.top == windowHeight)
 	{
 		return;
 	}
-	SetWindowPos(hwnd, nullptr, 0, 0, windowWidth, windowHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	// A new size keeps the corner the window has: a longer message must not move it under the
+	// pointer that just clicked the button which produced it.
+	SetWindowPos(hwnd, nullptr, current.left, current.top, windowWidth, windowHeight,
+				 SWP_NOZORDER | SWP_NOACTIVATE);
+	if (state->placed)
+	{
+		return;
+	}
+	state->placed = true;
 	// The size is known only now, so the window is centered here rather than left where the
 	// default placement put it - which can hang off the bottom of a short screen.
 	MONITORINFO monitor = {};
@@ -2232,48 +2243,79 @@ void ReloadDevices(HWND hwnd)
 	});
 
 	const HWND combo = GetDlgItem(hwnd, kSinkCombo);
-	SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-	state->devices = std::move(devices);
+	// What the list should show is read before the control is touched: refilling a combo that
+	// already holds these entries is what made the header blink on every status tick.
+	std::vector<DeviceState> states(devices.size(), DeviceState::Connected);
+	std::vector<std::wstring> names(devices.size());
+	std::vector<std::wstring> labels;
+	labels.reserve(devices.size());
 	// The sink the user already had stays selected; with none, the one that is playing is
 	// the one the window opens, and only then the first of the list.
+	size_t playing = devices.size();
+	for (size_t i = 0; i < devices.size(); ++i)
+	{
+		DeviceState deviceState = devices[i].path.empty() ? DeviceState::WindowsDriver : DeviceState::Connected;
+		if (!devices[i].path.empty())
+		{
+			(void)TryReadDeviceState(devices[i], deviceState, &names[i]);
+		}
+		states[i] = deviceState;
+		labels.push_back(DeviceLabel(devices[i].reference, deviceState, names[i]));
+		if (playing == devices.size() && deviceState == DeviceState::Playing)
+		{
+			playing = i;
+		}
+	}
+	const bool sameList =
+			state->devices.size() == devices.size() && state->deviceStates == states &&
+			state->deviceNames == names &&
+			std::equal(devices.begin(), devices.end(), state->devices.begin(),
+					[](const Device& left, const Device& right) {
+						return left.reference == right.reference && left.path == right.path;
+					});
+	state->devices = std::move(devices);
+	state->deviceStates = std::move(states);
+	state->deviceNames = std::move(names);
+
 	size_t selected = state->devices.size();
-	size_t playing = state->devices.size();
-	state->deviceStates.assign(state->devices.size(), DeviceState::Connected);
-	state->deviceNames.assign(state->devices.size(), std::wstring());
 	for (size_t i = 0; i < state->devices.size(); ++i)
 	{
-		DeviceState deviceState =
-				state->devices[i].path.empty() ? DeviceState::WindowsDriver : DeviceState::Connected;
-		if (!state->devices[i].path.empty())
-		{
-			(void)TryReadDeviceState(state->devices[i], deviceState, &state->deviceNames[i]);
-		}
-		state->deviceStates[i] = deviceState;
-		const std::wstring label =
-			DeviceLabel(state->devices[i].reference, deviceState, state->deviceNames[i]);
-		const LRESULT index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
-		if (index != CB_ERR)
-		{
-			SendMessageW(combo, CB_SETITEMDATA, static_cast<WPARAM>(index), static_cast<LPARAM>(i));
-		}
 		if (!previous.empty() && state->devices[i].reference == previous)
 		{
 			selected = i;
-		}
-		if (playing == state->devices.size() && deviceState == DeviceState::Playing)
-		{
-			playing = i;
+			break;
 		}
 	}
 	if (selected == state->devices.size())
 	{
 		selected = playing != state->devices.size() || state->devices.empty() ? playing : 0;
 	}
+	const bool moved = state->selected != selected;
 	state->selected = selected;
-	SelectDeviceItem(hwnd, state->selected);
-	// The labels carry the sink names, which are only known now, so the window is measured
-	// again: the picker is as wide as the longest "name (address)" the list holds.
-	ApplyLayout(hwnd);
+	if (sameList)
+	{
+		if (moved)
+		{
+			SelectDeviceItem(hwnd, state->selected);
+		}
+	}
+	else if (combo != nullptr)
+	{
+		SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+		for (size_t i = 0; i < labels.size(); ++i)
+		{
+			const LRESULT index =
+					SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(labels[i].c_str()));
+			if (index != CB_ERR)
+			{
+				SendMessageW(combo, CB_SETITEMDATA, static_cast<WPARAM>(index), static_cast<LPARAM>(i));
+			}
+		}
+		SelectDeviceItem(hwnd, state->selected);
+		// The labels carry the sink names, which are only known now, so the window is measured
+		// again: the picker is as wide as the longest "name (address)" the list holds.
+		ApplyLayout(hwnd);
+	}
 	// Another sink arriving or leaving does not change the open one: keep its control device
 	// and the settings the user may have changed but not applied yet.
 	if (state->open && !previous.empty() && state->selected < state->devices.size() &&

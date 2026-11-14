@@ -809,8 +809,19 @@ void UpdateStatusView(HWND parent, int id, const std::vector<StatusRow>& rows, c
 		}
 		if (sameShape)
 		{
+			// The one-second refresh runs whether or not anything moved; repainting an
+			// unchanged report is what made the panel flicker while the sink was idle.
+			bool sameContent = true;
+			for (size_t i = 0; i < rows.size() && sameContent; ++i)
+			{
+				sameContent = state->rows[i].value == rows[i].value && state->rows[i].tone == rows[i].tone &&
+							  state->rows[i].tip == rows[i].tip;
+			}
 			state->rows = rows;
-			InvalidateRect(window, nullptr, FALSE);
+			if (!sameContent)
+			{
+				InvalidateRect(window, nullptr, FALSE);
+			}
 			return;
 		}
 	}
