@@ -105,10 +105,19 @@ the sink has not reconnected yet, the script says so - reconnect it and rerun.
   [--ldac-quality high|standard|mobile]`, and
   `OpenA2dpCtl format <codec> [auto|<rate> <1|2>]`
   (elevated). `status` shows AVDTP state, media state, codec, encoder registration and
-  counters; the latency lines are `latency`, `latency peak`, `pacing lead`, `buffered`,
-  `underruns` and `trimmed` (see [Latency](architecture/Latency.md)).
+  counters; the audio and loss lines are `latency`, `latency peak`, `worst gaps`,
+  `pacing lead`, `buffered`, `underruns`, `trimmed`, `not copied` and `service silence`
+  (see [Latency](architecture/Latency.md); the last two are endpoint PCM that never reached
+  the ring and PCM the service zero-filled).
+- `OpenA2dpCtl reset-counters` (elevated): zeroes the counters `status` reports - packets,
+  drops, underruns, send failures, trimmed audio, refused streams and jack flaps - without
+  stopping the stream or clearing the per-stream peaks, so a measurement window starts from
+  zero on a driver that has been running.
+- `OpenA2dpCtl driver [opena2dp|windows]` (elevated): one line per A2DP node with its source
+  driver, or a switch of this sink's node to the other driver; T34 uses it.
 - `OpenA2dpConfig` (elevated): the settings window over the same IOCTLs. It lists the
-  sinks, refreshes the status every second and stores the codec preference.
+  sinks, refreshes the status every second, stores the codec preference and switches a sink
+  between the two drivers.
 - Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
 - Device node: Device Manager, or `pnputil /enum-devices /class MEDIA` /
   `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
