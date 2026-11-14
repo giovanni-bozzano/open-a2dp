@@ -3,6 +3,12 @@
 // Single-producer / single-consumer byte ring living in memory shared between
 // the kernel driver and the user-mode encoder service.
 // Kernel-safe: no STL, no exceptions, no allocation. Capacity must be a power of two.
+//
+// The producer may also drop the oldest unread bytes (Discard) to keep a stalled consumer near
+// live audio. Both sides then move the tail, so both do it with a compare-and-swap, and the
+// consumer validates every read: it copies first and commits only if the tail did not move
+// meanwhile. The producer never overwrites unread bytes without first moving the tail past
+// them, so a read that commits is never torn, and one that does not is retried.
 
 #include <OpenA2dp/Types.h>
 #include <string.h>
@@ -19,7 +25,7 @@ namespace OpenA2dp {
 #pragma warning(disable : 4324) // structure padded due to alignment specifier
 struct alignas(64) RingHeader {
 	alignas(64) volatile LONG head; // written by producer (total bytes written, wraps at 2^32)
-	alignas(64) volatile LONG tail; // written by consumer (total bytes read, wraps at 2^32)
+	alignas(64) volatile LONG tail; // total bytes read or discarded, wraps at 2^32
 	alignas(64) uint32_t capacity;  // bytes, power of two
 	uint32_t reserved[15];
 };
@@ -48,9 +54,13 @@ public:
 
 	uint32_t ReadableBytes() const noexcept
 	{
-		const uint32_t head = static_cast<uint32_t>(ReadAcquire(&header_->head));
+		// Tail first: it only grows, so a head read after it is never behind it. A discard and
+		// writes between the two reads can make the difference exceed the capacity; that span is
+		// being overwritten, which a validated read detects.
 		const uint32_t tail = static_cast<uint32_t>(ReadAcquire(&header_->tail));
-		return head - tail;
+		const uint32_t head = static_cast<uint32_t>(ReadAcquire(&header_->head));
+		const uint32_t readable = head - tail;
+		return readable < Capacity() ? readable : Capacity();
 	}
 
 	uint32_t WritableBytes() const noexcept { return Capacity() - ReadableBytes(); }
@@ -67,14 +77,53 @@ public:
 		return true;
 	}
 
-	// Consumer side. Reads all bytes or nothing.
+	// Consumer side. Reads all bytes or nothing. The copy is committed only if the producer did
+	// not discard under it; otherwise the bytes may already be overwritten, so it reads again
+	// from where the discard left the tail.
 	bool Read(void* dst, uint32_t len) noexcept
 	{
-		if (!Peek(dst, len)) {
-			return false;
+		return len <= Capacity() && ReadUpTo(dst, len, len == 0 ? 1 : len) == len;
+	}
+
+	// Consumer side. Reads as many whole `granule`-byte units as are readable, up to `maxLen`,
+	// and returns the bytes read. Validated like Read, and sized from the readable bytes at the
+	// moment of the copy, so a discard between the caller's check and the read costs only what it
+	// discarded, never the rest.
+	uint32_t ReadUpTo(void* dst, uint32_t maxLen, uint32_t granule) noexcept
+	{
+		for (;;) {
+			const uint32_t tail = static_cast<uint32_t>(ReadAcquire(&header_->tail));
+			const uint32_t head = static_cast<uint32_t>(ReadAcquire(&header_->head));
+			const uint32_t readable = head - tail < Capacity() ? head - tail : Capacity();
+			uint32_t len = maxLen < readable ? maxLen : readable;
+			len -= len % granule;
+			if (len == 0) {
+				return 0;
+			}
+			Copy(tail, dst, len, false);
+			if (static_cast<uint32_t>(InterlockedCompareExchange(&header_->tail, static_cast<LONG>(tail + len),
+																   static_cast<LONG>(tail))) == tail) {
+				return len;
+			}
 		}
-		Skip(len);
-		return true;
+	}
+
+	// Drops up to `len` of the oldest unread bytes and returns how many it dropped. The producer
+	// uses it to keep a stalled consumer near live audio; it is safe against a concurrent Read.
+	uint32_t Discard(uint32_t len) noexcept
+	{
+		for (;;) {
+			const uint32_t tail = static_cast<uint32_t>(ReadAcquire(&header_->tail));
+			const uint32_t readable = static_cast<uint32_t>(ReadAcquire(&header_->head)) - tail;
+			const uint32_t drop = len < readable ? len : readable;
+			if (drop == 0) {
+				return 0;
+			}
+			if (static_cast<uint32_t>(InterlockedCompareExchange(&header_->tail, static_cast<LONG>(tail + drop),
+																   static_cast<LONG>(tail))) == tail) {
+				return drop;
+			}
+		}
 	}
 
 	bool Peek(void* dst, uint32_t len) const noexcept
@@ -87,6 +136,7 @@ public:
 		return true;
 	}
 
+	// Consumer side, after Peek, on a ring whose producer never discards (the frame ring).
 	void Skip(uint32_t len) noexcept
 	{
 		const uint32_t tail = static_cast<uint32_t>(header_->tail);

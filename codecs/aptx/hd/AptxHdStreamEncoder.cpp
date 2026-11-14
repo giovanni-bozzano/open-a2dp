@@ -140,11 +140,8 @@ bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& fram
 	std::memset(spanStart, 0, recordBytes);
 	const uint32_t lead = static_cast<uint32_t>(std::min<uint64_t>(leadSilence_, spanSamples_));
 	leadSilence_ -= lead;
-	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), (spanSamples_ - lead) * sampleBytes_);
-	available -= available % sampleBytes_;
-	if (available != 0 && !pcm.Read(spanStart + static_cast<size_t>(lead) * sampleBytes_, available)) {
-		available = 0;
-	}
+	const uint32_t available = pcm.ReadUpTo(spanStart + static_cast<size_t>(lead) * sampleBytes_,
+											 (spanSamples_ - lead) * sampleBytes_, sampleBytes_);
 
 	const uint32_t readSamples = available / sampleBytes_;
 	stats_.pcmBytes += available;

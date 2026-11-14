@@ -40,8 +40,10 @@ Invariants:
    them into the caller; the service only sees one user-mode base address.
 3. Losing the service (crash, kill, hang) must not hang the driver, leak a mapping or
    block teardown. The worst case is a suspended stream that reconnects as SBC.
-4. Each ring has exactly one producer and one consumer (SPSC), so the existing
-   `RingBufferView` needs no kernel lock beyond the single-consumer rule.
+4. Each ring has exactly one producer and one consumer. The PCM ring's producer (the driver)
+   may also drop the oldest unread audio after a stall, so `RingBufferView` moves the tail
+   with a compare-and-swap on both sides and the consumer commits a read only if no drop
+   happened under its copy; no lock spans the two processes.
 
 ## 2. Components and threads
 

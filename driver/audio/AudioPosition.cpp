@@ -78,8 +78,7 @@ static void CopySpanLocked(DEVICE_CONTEXT* ctx, RingBufferView& ring, ULONGLONG 
 	{
 		// Audio captured at another format cannot be played at this one: drop it before the two
 		// are mixed into the same ring, which no consumer could ever read correctly.
-		ctx->AudioDroppedBytes += pending;
-		ring.Skip(pending);
+		ctx->AudioDroppedBytes += ring.Discard(pending);
 	}
 	// Never copy more than one buffer: anything older was already overwritten, so it is lost - the
 	// clock was starved for longer than the engine buffers.

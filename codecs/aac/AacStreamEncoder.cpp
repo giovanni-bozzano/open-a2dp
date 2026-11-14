@@ -132,11 +132,7 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 	if (convert24_) {
 		// The ring carries 24-in-32; the top 16 bits of each sample are the AAC input. A
 		// short read leaves the rest of the block silent, as the 16-bit path does.
-		available = std::min<uint32_t>(pcm.ReadableBytes(), wanted);
-		available -= available % ringBytesPerSample_;
-		if (available != 0 && !pcm.Read(ringBlock_.data(), available)) {
-			available = 0;
-		}
+		available = pcm.ReadUpTo(ringBlock_.data(), wanted, ringBytesPerSample_);
 		availableSamples = available / ringBytesPerSample_;
 		for (uint32_t frame = 0; frame < availableSamples; ++frame) {
 			for (uint16_t channel = 0; channel < params_.channels; ++channel) {
@@ -148,11 +144,8 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 			}
 		}
 	} else {
-		available = std::min<uint32_t>(pcm.ReadableBytes(), wanted);
-		available -= available % bytesPerSample_;
-		if (available != 0 && !pcm.Read(pcmBlock_.data() + static_cast<size_t>(lead) * bytesPerSample_, available)) {
-			available = 0;
-		}
+		available = pcm.ReadUpTo(pcmBlock_.data() + static_cast<size_t>(lead) * bytesPerSample_, wanted,
+								 bytesPerSample_);
 		availableSamples = available / bytesPerSample_;
 	}
 

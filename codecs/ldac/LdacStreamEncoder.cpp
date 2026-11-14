@@ -130,11 +130,8 @@ bool LdacStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 	std::memset(pcmRecord_.data(), 0, recordBytes);
 	const uint32_t lead = static_cast<uint32_t>(std::min<uint64_t>(leadSilence_, samplesPerFrame_));
 	leadSilence_ -= lead;
-	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), (samplesPerFrame_ - lead) * ringSampleBytes_);
-	available -= available % ringSampleBytes_;
-	if (available != 0 && !pcm.Read(pcmRecord_.data() + static_cast<size_t>(lead) * ringSampleBytes_, available)) {
-		available = 0;
-	}
+	const uint32_t available = pcm.ReadUpTo(pcmRecord_.data() + static_cast<size_t>(lead) * ringSampleBytes_,
+											 (samplesPerFrame_ - lead) * ringSampleBytes_, ringSampleBytes_);
 	stats_.pcmBytes += available;
 	// Saved for the record this unit ends up in, which may be a later call's output. The lead is
 	// silence on purpose, not a gap.

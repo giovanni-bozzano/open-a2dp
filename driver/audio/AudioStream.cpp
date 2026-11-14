@@ -138,12 +138,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 		// replay audio from before this run's first sample; the audio captured from here on is the
 		// beginning of playback and is kept (CopyConsumedLocked).
 		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-		const ULONG stale = ring.ReadableBytes();
-		if (stale != 0)
-		{
-			ctx->AudioDroppedBytes += stale;
-			ring.Skip(stale);
-		}
+		ctx->AudioDroppedBytes += ring.Discard(ring.ReadableBytes());
 	}
 	if (ctx->AudioRunning)
 	{
@@ -202,11 +197,7 @@ ULONG AudioDropStalePcm(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytes
 	if (!keep)
 	{
 		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-		dropped = ring.ReadableBytes();
-		if (dropped != 0)
-		{
-			ring.Skip(dropped);
-		}
+		dropped = ring.Discard(ring.ReadableBytes());
 	}
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	return dropped;

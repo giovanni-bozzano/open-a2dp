@@ -53,8 +53,7 @@ inline uint32_t Trim(RingBufferView& ring, uint32_t limitBytes, uint32_t frameBy
 	if (trim > readable - frameBytes) {
 		trim = readable - frameBytes;
 	}
-	ring.Skip(trim);
-	return trim;
+	return ring.Discard(trim);
 }
 
 } // namespace OpenA2dp::PcmBacklog

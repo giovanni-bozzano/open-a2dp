@@ -8,6 +8,7 @@
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcCodec.h>
 
+#include <atomic>
 #include <thread>
 #include <vector>
 
@@ -399,4 +400,90 @@ TEST(RingBuffer_ConcurrentStress)
 	}
 	producer.join();
 	CHECK(ok);
+}
+
+// The producer drops the oldest frames whenever the ring holds more than a quarter of it - the
+// PCM backlog trim under a stalled consumer - while the consumer keeps reading. Every value must
+// come out exactly once, read or counted as discarded, and every read must be one contiguous run:
+// a torn copy or a tail moved backwards breaks one or the other.
+TEST(RingBuffer_ProducerDiscardsUnderAConcurrentReader)
+{
+	RingHeader header;
+	RingBufferView::Initialize(&header, 4096);
+	std::vector<uint8_t> data(4096);
+	RingBufferView ring(&header, data.data());
+
+	constexpr uint32_t kTotal = 1'000'000;
+	std::atomic<bool> done{false};
+	uint64_t discarded = 0;
+	std::thread producer([&] {
+		uint32_t next = 0;
+		uint32_t chunk[25];
+		while (next < kTotal) {
+			const uint32_t n = std::min<uint32_t>(25, kTotal - next);
+			for (uint32_t i = 0; i < n; ++i) {
+				chunk[i] = next + i;
+			}
+			if (ring.Write(chunk, n * 4)) {
+				next += n;
+			} else {
+				std::this_thread::yield();
+			}
+			const uint32_t readable = ring.ReadableBytes();
+			if (readable > 1024) {
+				discarded += ring.Discard((readable - 512) & ~3u);
+			}
+		}
+		done = true;
+	});
+
+	uint64_t read = 0;
+	bool contiguous = true;
+	bool increasing = true;
+	bool started = false;
+	uint32_t last = 0;
+	uint32_t chunk[16];
+	while (!(done && ring.ReadableBytes() == 0)) {
+		const uint32_t bytes = ring.ReadUpTo(chunk, sizeof(chunk), 4);
+		if (bytes == 0) {
+			std::this_thread::yield();
+			continue;
+		}
+		const uint32_t count = bytes / 4;
+		for (uint32_t i = 1; i < count; ++i) {
+			contiguous = contiguous && chunk[i] == chunk[i - 1] + 1;
+		}
+		increasing = increasing && (!started || chunk[0] > last);
+		started = true;
+		last = chunk[count - 1];
+		read += count;
+	}
+	producer.join();
+	CHECK(contiguous);
+	CHECK(increasing);
+	CHECK(discarded > 0);
+	CHECK_EQ(read + discarded / 4, uint64_t{kTotal});
+}
+
+// A read takes what is there in whole units, so a discard between the caller's check and the read
+// costs what it discarded and never the rest of the unit.
+TEST(RingBuffer_ReadUpToTakesWhatIsLeft)
+{
+	RingHeader header;
+	RingBufferView::Initialize(&header, 64);
+	uint8_t data[64];
+	RingBufferView ring(&header, data);
+	const uint8_t bytes[30] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+	REQUIRE(ring.Write(bytes, sizeof(bytes)));
+
+	CHECK_EQ(ring.Discard(8), uint32_t{8});
+	uint8_t out[32] = {};
+	// 22 bytes left: five whole 4-byte units, starting where the discard left off.
+	CHECK_EQ(ring.ReadUpTo(out, sizeof(out), 4), uint32_t{20});
+	CHECK_EQ(out[0], uint8_t{9});
+	CHECK_EQ(ring.ReadableBytes(), uint32_t{2});
+	CHECK_EQ(ring.ReadUpTo(out, sizeof(out), 4), uint32_t{0});
+	// No more than is readable is ever discarded.
+	CHECK_EQ(ring.Discard(100), uint32_t{2});
+	CHECK_EQ(ring.ReadableBytes(), uint32_t{0});
 }
