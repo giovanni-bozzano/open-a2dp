@@ -171,7 +171,8 @@ least 3 times; teardown tests 10 times.
 **T7 Disconnect during media channel open (S)** — power off right after AVDTP `Open`.
 
 **T8 Disconnect while streaming (S)** — power off during playback.
-- Expect for T6-T8: `signaling channel remote disconnect` or link-down messages, then
+- Expect for T6-T8: `signaling channel remote disconnect` or link-down messages, the sink
+  disappears from `OpenA2dpCtl list` while it is off, then
   `signaling channel closed`; no hang (the Bluetooth settings page and `status` stay
   responsive), no Verifier bugcheck; the endpoint becomes unplugged; reconnecting works.
   Acceptable WARNs: `still pending at close; abandoning it`, `closed a channel whose open

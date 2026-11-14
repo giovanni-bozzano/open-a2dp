@@ -57,12 +57,62 @@ static void PublishControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
 	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, TRUE);
 }
 
-// A start that follows a power transition has the device object from before the D0 exit: the
-// rundown waited on at the quiesce refuses every new handler until it is reinitialized.
-static void ResumeControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
+// The MS-DOS name the tools enumerate. The control device keeps its \Device name across a D0
+// exit, but this link is removed while the device is quiesced so a sink that is asleep or
+// disconnected is not listed; ServiceStart puts it back.
+static NTSTATUS FormatControlLink(_In_ DEVICE_CONTEXT* ctx,
+	_Out_writes_(capacity) WCHAR* linkName, size_t capacity)
 {
+	return RtlStringCchPrintfW(
+		linkName, capacity, L"\\DosDevices\\OpenA2dpCtl-%012I64X", ctx->RemoteAddress);
+}
+
+static NTSTATUS CreateControlLink(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
+{
+	WCHAR linkName[48];
+	UNICODE_STRING link;
+	NTSTATUS status = FormatControlLink(ctx, linkName, ARRAYSIZE(linkName));
+	if (NT_SUCCESS(status))
+	{
+		RtlInitUnicodeString(&link, linkName);
+		status = WdfDeviceCreateSymbolicLink(control, &link);
+	}
+	return status;
+}
+
+static void DeleteControlLink(_In_ DEVICE_CONTEXT* ctx)
+{
+	WCHAR linkName[48];
+	UNICODE_STRING link;
+	NTSTATUS status = FormatControlLink(ctx, linkName, ARRAYSIZE(linkName));
+	if (NT_SUCCESS(status))
+	{
+		RtlInitUnicodeString(&link, linkName);
+		status = IoDeleteSymbolicLink(&link);
+	}
+	// Already gone is normal on a second quiesce, or when the framework deleted the device.
+	if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_NOT_FOUND)
+	{
+		OA2DP_WARN(ctx, "Service", "control link removal failed 0x%08X", status);
+	}
+}
+
+// A start that follows a power transition has the device object from before the D0 exit: the
+// link was removed at the quiesce and the rundown it drained refuses every handler until it is
+// reinitialized. The link goes back first, because the tools find a sink through it.
+static bool ResumeControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
+{
+	// A collision means the previous removal had not completed; the link already names this
+	// control device, so it is usable.
+	const NTSTATUS status = CreateControlLink(ctx, control);
+	if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_COLLISION)
+	{
+		OA2DP_ERROR(ctx, "Service", "control link recreate failed 0x%08X", status);
+		return false;
+	}
 	ExReInitializeRundownProtection(&GetControlDeviceContext(control)->Rundown);
 	PublishControl(ctx, control);
+	return true;
 }
 
 void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
@@ -71,12 +121,15 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return;
 	}
-	// The object and its link outlive a D0 exit, so there is nothing to create here; creating a
-	// second one would collide with the name and the link the first one still holds.
+	// The object and its \Device name outlive a D0 exit, so there is nothing to create here:
+	// only the link is recreated, and keeping the object is what stops a name collision with a
+	// copy that is still being destroyed.
 	if (ctx->ControlDevice != nullptr)
 	{
-		ResumeControl(ctx, static_cast<WDFDEVICE>(ctx->ControlDevice));
-		OA2DP_INFO(ctx, "Service", "control device resumed");
+		if (ResumeControl(ctx, static_cast<WDFDEVICE>(ctx->ControlDevice)))
+		{
+			OA2DP_INFO(ctx, "Service", "control device resumed");
+		}
 		return;
 	}
 
@@ -168,10 +221,10 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	}
 
 	WCHAR linkName[48];
-	UNICODE_STRING linkNameString;
-	status = RtlStringCchPrintfW(linkName, ARRAYSIZE(linkName), L"\\DosDevices\\OpenA2dpCtl-%ws", address);
+	status = FormatControlLink(ctx, linkName, ARRAYSIZE(linkName));
 	if (NT_SUCCESS(status))
 	{
+		UNICODE_STRING linkNameString;
 		RtlInitUnicodeString(&linkNameString, linkName);
 		status = WdfDeviceCreateSymbolicLink(control, &linkNameString);
 	}
@@ -198,10 +251,14 @@ void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	// Stop serving but keep the object: the service's next arrival is the interface state below,
-	// and a name that is never released cannot collide with a recreate on the way back to D0.
-	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
+	// Stop serving but keep the object: the service's next arrival is the interface state
+	// below, and a name that is never released cannot collide with a recreate on the way back
+	// to D0. The link goes before the interface removal is published: both tools reload on
+	// that notification and find sinks through the link, so a link removed afterwards would
+	// leave a disconnected sink listed until the next notification.
 	InterlockedExchange(&ctx->ServiceActive, 0);
+	DeleteControlLink(ctx);
+	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
 	LatchEvents(ctx, Ioctl::kEventDeviceGone);
 
 	// Wait for every IOCTL and cleanup handler that is already running (none of them
@@ -216,7 +273,7 @@ void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx)
 	// still open keeps its own state but no longer speaks for the device.
 	InterlockedIncrement(&ctx->ServiceGeneration);
 	InterlockedExchange(&ctx->EncoderRegistered, 0);
-	OA2DP_INFO(ctx, "Service", "control device quiesced; the link stays");
+	OA2DP_INFO(ctx, "Service", "control device quiesced; the link is removed");
 }
 
 void ServiceStop(_In_ DEVICE_CONTEXT* ctx)

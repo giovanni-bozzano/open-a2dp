@@ -2,7 +2,7 @@
 
 namespace OpenA2dpDriver::Service
 {
-// Enters a handler: returns the device, or nullptr once ServiceStop has begun.
+// Enters a handler: returns the device, or nullptr once ServiceQuiesce has begun.
 DEVICE_CONTEXT* EnterControl(WDFDEVICE control)
 {
 	CONTROL_DEVICE_CONTEXT* cc = GetControlDeviceContext(control);

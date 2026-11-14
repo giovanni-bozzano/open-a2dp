@@ -13,8 +13,8 @@ namespace OpenA2dpDriver::Service
 {
 // Context of the per-device control device that exposes the service interface.
 // The control device's parent is the driver, so its handles can outlive the FDO's
-// start/stop cycle. Every handler enters through Rundown, which ServiceStop drains
-// before it detaches Device; the control device also holds a reference on the FDO
+// start/stop cycle. Every handler enters through Rundown, which ServiceQuiesce drains
+// before the link goes away; the control device also holds a reference on the FDO
 // (Owner) until it is destroyed, so DEVICE_CONTEXT memory stays valid for anything
 // that still runs afterwards (a WAIT_EVENT cancel routine).
 struct CONTROL_DEVICE_CONTEXT

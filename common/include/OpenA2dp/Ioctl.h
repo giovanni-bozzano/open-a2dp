@@ -30,8 +30,8 @@ constexpr uint32_t kAbiVersion = 10;
 constexpr wchar_t kControlLinkPrefix[] = L"OpenA2dpCtl-";
 constexpr uint32_t kControlAddressChars = 12;
 
-// Device interface on the PnP device, enabled only while its control device exists
-// (after the link is created, disabled before it goes, re-enabled after a resume). The
+// Device interface on the PnP device, enabled only while its control link exists (after the
+// link is created, disabled once it is removed, re-enabled with it after a resume). The
 // service registers for its arrival instead of polling; it is never opened.
 constexpr GUID kControlArrivalInterface = {
 	0x9f710239, 0x3d1c, 0x472d, {0xac, 0xd1, 0x25, 0x9c, 0x64, 0xb0, 0x9b, 0x69}};

@@ -128,6 +128,13 @@ and deleted only at removal or unload: a copy with open handles can outlive a
 power transition, and a name recreated too early loses the race for the rest of
 the boot.
 
+The symbolic link is not kept across that transition. The tools and the service
+find a sink through `\DosDevices\OpenA2dpCtl-<address>`, so the link is removed
+before the quiesce publishes the interface removal and recreated before the next
+start publishes its arrival. A disconnected or sleeping sink is therefore not
+listed, while the control device object and its `\Device` name stay put for the
+resume path.
+
 Rundown and an FDO reference protect outstanding handlers and handles. Removal
 delivers a device-gone event to any parked service wait. `RingLock` serializes
 ring map and unmap ownership; the mapping belongs to the file handle and is
