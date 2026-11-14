@@ -160,14 +160,18 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		? lostBytes * 1000ull / (static_cast<ULONGLONG>(pin.sampleRate) * pin.bytesPerFrame)
 		: 0;
 	const ULONGLONG started = KeQueryInterruptTime();
-	if (runStamp != 0 && started > runStamp)
+	if (lostMs != 0)
 	{
-		OA2DP_INFO(ctx, "Media", "stream started %I64u ms after the endpoint ran, %I64u ms of endpoint PCM lost",
-			(started - runStamp) / 10000ull, lostMs);
-	}
-	else
-	{
-		OA2DP_INFO(ctx, "Media", "stream restarted, %I64u ms of endpoint PCM lost", lostMs);
+		if (runStamp != 0 && started > runStamp)
+		{
+			OA2DP_INFO(ctx, "Media",
+					"stream started %I64u ms after the endpoint ran, %I64u ms of endpoint PCM lost",
+					(started - runStamp) / 10000ull, lostMs);
+		}
+		else
+		{
+			OA2DP_INFO(ctx, "Media", "stream restarted, %I64u ms of endpoint PCM lost", lostMs);
+		}
 	}
 	const ULONG packetBytes = static_cast<ULONG>(SbcFixed::FramesPerPacket(params,
 		MediaPayloadCapacity(ctx), ctx->SbcFramesPerPacket) * params.SamplesPerFrame() *

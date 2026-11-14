@@ -198,8 +198,8 @@ audio. [Latency](Latency.md) covers the resulting budget and the trim policy.
 | PCM ring full | Count the dropped endpoint PCM; the service is behind |
 
 `GET_STATUS` exposes the counters, the last media error and the losses that cause
-no state change: trimmed PCM, trimmed records, endpoint PCM that never reached
-the ring, and service zero-fill. [Diagnostics](../DIAGNOSTICS.md) explains them.
+no state change: trimmed PCM, trimmed records, PCM the copy missed, and service
+zero-fill. [Diagnostics](../DIAGNOSTICS.md) explains them.
 
 ## Security
 

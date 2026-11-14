@@ -77,8 +77,9 @@ static void CopySpanLocked(DEVICE_CONTEXT* ctx, RingBufferView& ring, ULONGLONG 
 	if (pending != 0 && ctx->PcmRingFormat != format)
 	{
 		// Audio captured at another format cannot be played at this one: drop it before the two
-		// are mixed into the same ring, which no consumer could ever read correctly.
-		ctx->AudioDroppedBytes += ring.Discard(pending);
+		// are mixed into the same ring, which no consumer could ever read correctly. This is an
+		// expected format boundary, not PCM the copy missed.
+		(void)ring.Discard(pending);
 	}
 	// Never copy more than one buffer: anything older was already overwritten, so it is lost - the
 	// clock was starved for longer than the engine buffers.
@@ -125,8 +126,10 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 	}
 	// The AVDTP stream starts on the first audio, not on the run edge: Windows also runs the
 	// stream around an endpoint rebuild with nothing to play. Checked before the skip below,
-	// because until START completes media is stopped.
-	if (ctx->AudioHeard == 0 && ctx->AudioRunning &&
+	// because until START completes media is stopped. The first audio of a run is also the end
+	// of the pre-roll window, so a trim there is startup cleanup rather than a playing stall.
+	const bool firstAudio = ctx->AudioHeard == 0;
+	if (firstAudio && ctx->AudioRunning &&
 		SpanHasAudio(ctx, ctx->AudioCopiedPosition, position, bufferSize))
 	{
 		ctx->AudioHeard = 1;
@@ -202,7 +205,11 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		if (LatencyBudget::TrimNow(PcmBacklog::OverLimit(ring, limit, frameBytes),
 								ctx->PcmTrimStrikes))
 		{
-			ctx->AudioTrimmedBytes += PcmBacklog::Trim(ring, target, frameBytes);
+			const uint32_t dropped = PcmBacklog::Trim(ring, target, frameBytes);
+			if (!firstAudio)
+			{
+				ctx->AudioTrimmedBytes += dropped;
+			}
 		}
 
 		// Peak driver-side latency for this stream. An instantaneous reading hides the spike a

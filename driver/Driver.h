@@ -514,12 +514,18 @@ struct DEVICE_CONTEXT
 	ULONGLONG AudioBasePosition;
 	ULONGLONG AudioCopiedPosition;
 	ULONGLONG AudioCompletedPackets;
+	// Audio the copy could not take: it ran past the engine's buffer, or the ring was full. Audio
+	// deliberately discarded at a run or format boundary is not counted; that audio belongs to a
+	// previous session, not to the stream that is playing.
 	ULONGLONG AudioDroppedBytes;
+	// AudioDroppedBytes at the current run's edge, so a pause reports that run's loss instead of
+	// the lifetime total. Written under AudioLock with AudioDroppedBytes.
+	ULONGLONG AudioRunDroppedBytes;
 	// Audio the producer discarded from the head of the PCM ring to keep the stream near live;
-	// counted apart from the drops above, which mean new audio could not be written at all. Like
-	// the media counters it accumulates across streams - status reports everything since the
-	// endpoint appeared or the last RESET_COUNTERS, so a fault that stopped is still visible as a
-	// count that stops growing.
+	// counted apart from the drops above, which mean new audio could not be written at all. The
+	// pre-stream trim that prepares a run is not counted. Like the media counters it accumulates
+	// across streams - status reports everything since the endpoint appeared or the last
+	// RESET_COUNTERS, so a fault that stopped is still visible as a count that stops growing.
 	ULONGLONG AudioTrimmedBytes;
 	OpenA2dp::RingHeader* PcmRingHeader;
 	UCHAR* PcmRingData;

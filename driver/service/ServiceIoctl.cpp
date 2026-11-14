@@ -618,6 +618,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		ctx->AudioTrimmedBytes = 0;
 		ctx->PacketsSent = 0;
 		ctx->AudioDroppedBytes = 0;
+		ctx->AudioRunDroppedBytes = 0;
 		InterlockedExchange64(&ctx->ServiceSilenceSamples, 0);
 		OA2DP_INFO(ctx, "Service", "counters reset");
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);

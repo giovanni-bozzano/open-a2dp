@@ -2,6 +2,17 @@
 
 namespace OpenA2dpDriver::Audio
 {
+// The PCM this run lost and a new baseline for the next pause. A lifetime counter cannot tell
+// an old boundary discard from loss in the stream that just played. Caller holds AudioLock.
+static ULONGLONG TakeRunDroppedLocked(DEVICE_CONTEXT* ctx)
+{
+	const ULONGLONG total = ctx->AudioDroppedBytes;
+	const ULONGLONG dropped =
+		total > ctx->AudioRunDroppedBytes ? total - ctx->AudioRunDroppedBytes : 0;
+	ctx->AudioRunDroppedBytes = total;
+	return dropped;
+}
+
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,
 	_In_ ACXDATAFORMAT format, _In_ const GUID*, _In_ ACXOBJECTBAG)
 {
@@ -96,8 +107,13 @@ NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 {
 	DEVICE_CONTEXT* ctx = GetStreamContext(stream)->Device;
 	KIRQL irql;
+	ULONGLONG dropped = 0;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const BOOLEAN wasRunning = ctx->AudioRunning;
+	if (wasRunning != FALSE)
+	{
+		dropped = TakeRunDroppedLocked(ctx);
+	}
 	ctx->AudioRunning = FALSE;
 	ctx->AudioBasePosition = 0;
 	ctx->AudioCopiedPosition = 0;
@@ -110,6 +126,11 @@ NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 	WdfTimerStop(ctx->AudioTimer, TRUE);
 	if (wasRunning != FALSE)
 	{
+		if (dropped != 0)
+		{
+			OA2DP_INFO(ctx, "Audio",
+					"stream released, %llu bytes of endpoint PCM not copied during this run", dropped);
+		}
 		// Released without a pause - a playback that stopped, or the format change that rebuilds
 		// the endpoint - leaves a stream nothing plays for. A stream Windows only enumerated and
 		// released never ran, so it must not suspend the one that does.
@@ -136,9 +157,10 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 		// The previous run played, so what the ring still holds is audio of a session that already
 		// ended - a pause it was suspended with, or the stream before this run. Keeping it would
 		// replay audio from before this run's first sample; the audio captured from here on is the
-		// beginning of playback and is kept (CopyConsumedLocked).
+		// beginning of playback and is kept (CopyConsumedLocked). This is boundary cleanup, not a
+		// copy loss, so it does not move AudioDroppedBytes.
 		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-		ctx->AudioDroppedBytes += ring.Discard(ring.ReadableBytes());
+		(void)ring.Discard(ring.ReadableBytes());
 	}
 	if (ctx->AudioRunning)
 	{
@@ -152,6 +174,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioRunning = TRUE;
 	ctx->AudioHeard = 0;
 	ctx->AudioSkippedBytes = 0;
+	ctx->AudioRunDroppedBytes = ctx->AudioDroppedBytes;
 	ArmAudioTimerLocked(ctx, ctx->AudioBasePosition);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
@@ -166,14 +189,22 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	ctx->AudioBasePosition = CurrentPositionLocked(ctx, nullptr);
 	ctx->AudioRunning = FALSE;
-	const ULONGLONG dropped = ctx->AudioDroppedBytes;
+	const ULONGLONG dropped = TakeRunDroppedLocked(ctx);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	WdfTimerStop(ctx->AudioTimer, TRUE);
 
-	// Cumulative, like the counters a soak reads: the loss is reported once on the pause and kept
-	// in status until the counters are reset.
-	OA2DP_INFO(ctx, "Audio", "stream paused, %llu bytes of endpoint PCM never copied since the last "
-			"reset", dropped);
+	// The lifecycle line stays; only this run's loss is added, and only when there is some. A
+	// pause that discarded the pre-roll at a session boundary is normal and must not look like a
+	// new fault in the log.
+	if (dropped != 0)
+	{
+		OA2DP_INFO(ctx, "Audio", "stream paused, %llu bytes of endpoint PCM not copied during this "
+				"run", dropped);
+	}
+	else
+	{
+		OA2DP_INFO(ctx, "Audio", "stream paused");
+	}
 	// Nothing is playing, so the stream the sink keeps buffering is silence the listener does not
 	// need: suspend it and start again on the next run.
 	SignalingOnAudioPause(ctx);

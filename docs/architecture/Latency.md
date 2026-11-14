@@ -79,8 +79,11 @@ Two extra figures make a transient visible after it ended:
 `underruns` counts packets that had to be filled with silence because PCM was
 late. Only the due window counts; the intentional lead at stream start is not an
 underrun, and a paused endpoint asks for no audio. `trimmed` counts the audio
-dropped to return to live. `not copied` and `service silence` cover PCM that never
-reached the ring and PCM the service had to zero-fill.
+dropped from a running stream to return to live; the pre-stream trim that bounds
+the opening lead is not counted. `not copied` covers PCM the copy missed because
+it ran past the engine buffer or the ring was full, and `service silence` covers
+PCM the service had to zero-fill. Stale PCM discarded at a run or format boundary
+is not a copy loss.
 
 ### Protect the producer
 

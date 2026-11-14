@@ -46,7 +46,7 @@ driver reload. A new stream cannot hide an earlier fault.
 | `underruns` | Packets that had to be filled with silence because PCM was late |
 | `send failures` | Media sends that failed |
 | `trimmed` | PCM bytes and encoded records dropped to stay near live after a stall |
-| `not copied` | Endpoint PCM that never reached the ring |
+| `not copied` | Endpoint PCM the copy missed because it ran late or the ring was full |
 | `service silence` | Samples the service had to zero-fill |
 | `refused streams` | Windows stream formats the endpoint could not serve |
 | `jack flaps` | Endpoint rebuilds caused by a format change |
@@ -54,6 +54,12 @@ driver reload. A new stream cannot hide an earlier fault.
 
 `reset-counters` leaves the stream, its settings and the per-stream latency peak
 alone, so it can run during playback. The peak resets when the next stream starts.
+
+Boundary cleanup is not a loss. PCM left from a previous run, or captured at a
+format that is ending, is discarded on purpose and does not move `not copied`;
+the pre-stream trim that bounds the opening lead is not counted in `trimmed`.
+Those boundary events can still produce an `INFO` line when the discarded amount
+is nonzero, but they should not make an otherwise clean stream look faulty.
 
 ## Driver and service logs
 
@@ -65,6 +71,10 @@ OpenA2dp <LEVEL> [<sink> (<address>)] <Category>: <message>
 
 The service writes `[svc]` lines to the same debugger output. There is no service
 log file.
+
+The audio path reports a run's missed PCM once when it pauses or is released, and
+only if that run lost any; a plain `stream paused` is the normal lifecycle line.
+Normal start and stop do not add a loss line.
 
 To capture:
 

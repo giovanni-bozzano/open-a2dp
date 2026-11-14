@@ -438,8 +438,9 @@ void AppendLatency(std::string& text, const Ioctl::Status& status)
 			   Format("%llu B of PCM and %llu records of old audio dropped", status.pcmTrimmedBytes,
 					  status.framesTrimmed));
 	// The two losses a trim does not describe, and the ones a listener notices without the counters
-	// above moving: audio the endpoint produced that never reached the ring, and PCM the encoder
-	// service had to fill with silence because the ring was short.
+	// above moving: audio the copy missed because it ran past the engine buffer or the ring was
+	// full, and PCM the encoder service had to fill with silence because the ring was short.
+	// Discards at a run or format boundary are deliberate and are not counted.
 	AppendLine(text, "not copied",
 			   Format("%llu B of endpoint PCM (the copy ran late or the ring was full)",
 					  status.pcmDroppedBytes));

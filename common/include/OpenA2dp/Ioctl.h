@@ -328,17 +328,18 @@ struct Status {
 	// is the 16-bit one and wraps in minutes. They are grouped past the byte, format and setting
 	// fields so each keeps 8-byte alignment without padding the record.
 	//
-	// `pcmDroppedBytes` is the loss `pcmTrimmedBytes` cannot describe: audio the endpoint produced
-	// that never reached the ring, because the copy ran later than the engine's own buffer or
-	// because the ring was full. `serviceSilenceSamples` is the other half: PCM the encoder
-	// service zero-filled because the ring was short. Both are audible and neither is a trim.
+	// `pcmDroppedBytes` is the loss `pcmTrimmedBytes` cannot describe: audio the copy missed
+	// because it ran later than the engine's own buffer or because the ring was full. Audio
+	// deliberately discarded at a run or format boundary is not counted. `serviceSilenceSamples`
+	// is the other half: PCM the encoder service zero-filled because the ring was short. Both are
+	// audible and neither is a trim.
 	uint64_t pcmTrimmedBytes;
 	uint64_t framesTrimmed;
 	uint64_t packetsSent;
 	uint64_t framesDropped;
 	uint64_t underruns; // SBC: PCM underrun; AAC: no record available on a tick
 	uint64_t sendFailures;
-	uint64_t pcmDroppedBytes;      // endpoint PCM that never reached the ring
+	uint64_t pcmDroppedBytes;      // endpoint PCM the copy missed or could not fit
 	uint64_t serviceSilenceSamples; // PCM the encoder service zero-filled (per channel)
 	// The sink's Bluetooth name, so a tool can show the sink as "name (address)" without
 	// asking the Bluetooth stack; empty until the sink reported one.

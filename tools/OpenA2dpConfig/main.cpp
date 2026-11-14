@@ -615,8 +615,8 @@ constexpr RowTip kRowTips[] = {
 	 L"How much buffer the machine actually needed. A gap larger than the lead explains "
 	 L"the underruns or trims below; nothing larger means the setting is fine."},
 	{"not copied",
-	 L"Audio the endpoint produced that never reached the driver's buffer: the copy ran later than "
-	 L"the engine's own buffer, or the buffer was full.\n\n"
+	 L"Audio the copy missed: it ran later than the engine's own buffer, or the driver's buffer "
+	 L"was full. Audio deliberately discarded at a stream or format boundary is not counted.\n\n"
 	 L"A listener hears it as a skip, and unlike a trim it is not the driver trading latency for "
 	 L"continuity - nothing was buffered to trade. A count that grows while the underruns do not "
 	 L"points at the machine (a stalled DPC or a long interrupt) rather than at the sink."},
@@ -628,8 +628,9 @@ constexpr RowTip kRowTips[] = {
 	 L"Each one is a tiny silent patch - a click or a small gap. A number that keeps "
 	 L"growing is a problem now; one that never changes is history."},
 	{"trimmed",
-	 L"Old audio discarded when a ring held more than the lead plus its slack for two "
-	 L"observations. Counted for the endpoint's whole life and never reset.\n\n"
+	 L"Old audio discarded from a running stream's PCM ring when it held more than the lead "
+	 L"plus its slack for two observations. The pre-stream trim that bounds the opening lead is "
+	 L"not counted. Counted for the endpoint's whole life and never reset.\n\n"
 	 L"Each one is a small skip - the stream jumps forward to live sound instead of "
 	 L"staying behind. Growing means Bluetooth or the PC fell behind for a moment."},
 	{"codec",
