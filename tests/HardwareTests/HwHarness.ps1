@@ -204,7 +204,9 @@ function ConvertFrom-StatusReport {
 function Get-Status {
     # Every assertion below reads this: the same text the window copies out.
     $result = Invoke-Ctl 'status'
-    Assert-CtlOk $result 'OpenA2dpCtl status'
+    # The check returns the result it passed; without the discard it would be this function's
+    # first return value, and every `$status.X` below would enumerate it plus the report.
+    $null = Assert-CtlOk $result 'OpenA2dpCtl status'
     $status = ConvertFrom-StatusReport -Lines ($result.Output -split "`r?`n")
     $script:Hw.LastStatus = $status
     return $status
@@ -677,7 +679,7 @@ function Get-DeviceAddress {
         return ($script:Hw.Device -replace '-', ':').ToUpper()
     }
     $result = Invoke-Ctl 'list'
-    Assert-CtlOk $result 'OpenA2dpCtl list'
+    $null = Assert-CtlOk $result 'OpenA2dpCtl list'
     $addresses = @([regex]::Matches($result.Output, '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}') |
         ForEach-Object { $_.Value.ToUpper() } | Select-Object -Unique)
     if ($addresses.Count -eq 0) { Skip-Test 'no sink address in `OpenA2dpCtl list`; pass -Device <address>.' }
