@@ -74,6 +74,7 @@ bool LdacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const LdacS
 	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
 	leadSilence_ = 0;
 	leadKnown_ = false;
+	pendingSkip_ = 0;
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -88,6 +89,7 @@ void LdacStreamEncoder::Stop() noexcept
 	pendingSilence_ = 0;
 	leadSilence_ = 0;
 	leadKnown_ = false;
+	pendingSkip_ = 0;
 	discontinuity_ = false;
 }
 
@@ -105,9 +107,17 @@ bool LdacStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView
 	}
 
 	const uint64_t target = TargetSamples(nowUs);
-	if (!leadKnown_) {
-		// The PCM buffered at start is the beginning of playback: the lead goes in front of it.
-		leadSilence_ = LatencyBudget::LeadSilenceSamples(target, pcm.ReadableBytes() / ringSampleBytes_);
+	const uint64_t due = target > producedSamples_ ? target - producedSamples_ : 0;
+	const uint64_t buffered = pcm.ReadableBytes() / ringSampleBytes_;
+	const uint64_t lead = PrerollSamples(params_);
+	if (!leadKnown_ || LatencyBudget::Stalled(due, buffered + leadSilence_, lead, samplesPerFrame_, params_.sampleRate)) {
+		// The stream picks up at the lead - at its start, and after a stall in which the driver
+		// trimmed what this one could not read - instead of padding the gap back with silence. The
+		// next record carries the skip, so the driver moves the RTP timestamp past it.
+		const LatencyBudget::Restart restart = LatencyBudget::RestartAt(due, buffered, lead);
+		producedSamples_ += restart.skipSamples;
+		pendingSkip_ += static_cast<uint32_t>(restart.skipSamples);
+		leadSilence_ = restart.leadSilenceSamples;
 		leadKnown_ = true;
 	}
 	for (size_t i = 0; i < maxRecords && producedSamples_ < target; ++i) {
@@ -178,11 +188,12 @@ bool LdacStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames
 	const uint32_t recordSilence = pendingSilence_;
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
 	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), recordSamples,
-						   recordSilence, flags)) {
+						   recordSilence, pendingSkip_, flags)) {
 		++stats_.records;
 		stats_.samples += recordSamples;
 		pendingSamples_ = 0;
 		pendingSilence_ = 0;
+		pendingSkip_ = 0;
 		stats_.payloadBytes += payload;
 		discontinuity_ = false;
 	} else {

@@ -622,8 +622,8 @@ struct DEVICE_CONTEXT
 	// interrupt time. Taken under MediaLock with the rest of the pacer state.
 	ULONG SbcUnderrunPackets;
 	ULONGLONG SbcUnderrunLogTime;
-	// SBC frames of silence still owed in front of the stream's first audio: the lead minus the
-	// PCM the ring already held when the stream started (LatencyBudget::LeadSilenceSamples).
+	// SBC frames of silence still owed in front of the stream's audio when it (re)starts its lead
+	// (LatencyBudget::RestartAt).
 	ULONG SbcLeadSilenceFrames;
 	UCHAR FrameRecord[OpenA2dp::Ioctl::kMaxFrameRecordBytes];
 

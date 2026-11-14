@@ -117,8 +117,9 @@ At stream start the driver flushes the frame ring before it latches
 `kEventStreamStart`, so the service never sends a stale encoded frame. The PCM ring is
 the driver's to decide: `MediaStart` drops it when it predates the stream (another format,
 or a run that never played) and keeps it when it is the beginning of playback, so the
-service encodes what is there instead of discarding it: its first pump sends the preroll
-minus that buffered PCM as silence in front of it (`LatencyBudget::LeadSilenceSamples`).
+service encodes what is there instead of discarding it: its first pump sends what the
+preroll asks for beyond that buffered PCM as silence in front of it, and skips any clock
+past the lead that the encoder's own start-up took (`LatencyBudget::RestartAt`).
 Each record reports the PCM the service had to zero-fill after that lead
 (`silenceSamples`), which is a gap and not the lead.
 
@@ -134,6 +135,7 @@ is `size - sizeof(FrameRecordHeader)` and records are never padded:
 | `size` | whole record including the header |
 | `samples` | PCM samples the payload covers (1024 for AAC-LC) |
 | `silenceSamples` | PCM samples in `samples` the service had to zero-fill because the ring was short (the start-up lead is not counted) |
+| `skippedSamples` | clock the service skipped right before this record when it restarted its lead (at its start, or after a stall); the driver moves the RTP timestamp past it |
 | `flags` | `kFrameFlagDiscontinuity` after a gap |
 
 Write and read are atomic per record:
@@ -141,7 +143,7 @@ Write and read are atomic per record:
 - the service builds header + payload in a 2 KiB stack buffer and calls
   `RingBufferView::Write` once; if it does not fit, the record is dropped and counted
   (never a partial record);
-- the driver peeks the 16-byte header and validates `magic` and `size`. If the payload
+- the driver peeks the 20-byte header and validates `magic` and `size`. If the payload
   (`size - sizeof(FrameRecordHeader)`) is larger than `kMaxFramePayload` the driver skips
   the record (`Skip(size)`) and counts it (`framesDropped`); otherwise it peeks the whole
   record into its scratch buffer and sends the payload;
@@ -263,7 +265,12 @@ of it, so from then on the ring holds exactly what the clock asks for. A whole 1
 block is then encoded once its PCM is in the ring (`LatencyBudget::UnitReady`): encoding it
 as soon as one sample is due would zero-fill audio that is a copy tick away and play it as
 a gap. Only a block a whole block plus `kPcmSlackMs` overdue is padded, which is a real
-underrun and is reported. A record always covers 1024 samples: reading just the samples due
+underrun and is reported. A stream that falls further behind than the lead with its audio
+gone - the service was held off and the driver trimmed the ring meanwhile
+(`LatencyBudget::Stalled`) - restarts its lead the way it started instead: the clock skips
+the gap and the next record's `skippedSamples` carries it, because padding it would reach
+the sink as a burst of silence it plays late for the rest of the stream. A record always
+covers 1024 samples: reading just the samples due
 since the last tick and padding the rest would insert silence into the middle of the audio
 at the tick rate. The driver no
 longer computes a target for AAC; it only drains the frame ring, one packet per

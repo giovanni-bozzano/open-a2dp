@@ -249,14 +249,19 @@ ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples)
 	const UCHAR* payload = nullptr;
 	uint32_t frameSamples = 0;
 	uint32_t silenceSamples = 0;
+	uint32_t skippedSamples = 0;
 	uint32_t flags = 0;
-	const ULONG length = ServiceReadFrame(ctx, &payload, &frameSamples, &silenceSamples, &flags);
+	const ULONG length = ServiceReadFrame(ctx, &payload, &frameSamples, &silenceSamples, &skippedSamples, &flags);
 	if (silenceSamples != 0)
 	{
 		// The service could not fill this record from the ring: the gap is the listener's, so it
 		// is counted with the other losses instead of living in the service's own statistics.
 		InterlockedAdd64(&ctx->ServiceSilenceSamples, silenceSamples);
 	}
+	// The service skipped its clock over PCM the copy discarded after a stall: the timeline moves
+	// past the gap here, at the record it precedes, whether or not this packet goes out.
+	ctx->RtpTimestamp += skippedSamples;
+	ctx->MediaSamplesSent += skippedSamples;
 	if (length == 0)
 	{
 		return 0;

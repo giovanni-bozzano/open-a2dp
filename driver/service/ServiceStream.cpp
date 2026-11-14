@@ -43,11 +43,12 @@ void ServiceTick(_In_ DEVICE_CONTEXT* ctx)
 }
 
 ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _Out_ uint32_t* samples,
-	_Out_ uint32_t* silenceSamples, _Out_ uint32_t* flags)
+	_Out_ uint32_t* silenceSamples, _Out_ uint32_t* skippedSamples, _Out_ uint32_t* flags)
 {
 	*payload = nullptr;
 	*samples = 0;
 	*silenceSamples = 0;
+	*skippedSamples = 0;
 	*flags = 0;
 	if (ctx->FrameRingHeader == nullptr)
 	{
@@ -80,6 +81,7 @@ ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _O
 	// A record can claim more silence than PCM it covers only if the producer is broken; the
 	// counter is clamped so one bad record cannot move it by more than the audio it stood for.
 	*silenceSamples = record.silenceSamples > record.samples ? record.samples : record.silenceSamples;
+	*skippedSamples = record.skippedSamples;
 	*flags = record.flags;
 	return record.payloadLength;
 }

@@ -313,15 +313,44 @@ TEST(LatencyBudget_UnderrunOnlyCountsDueAudio)
 	CHECK_EQ(UnderrunSamples(64, 0), uint32_t{0});
 }
 
-// A stream starts with the lead minus what is already buffered, as silence in front of that
-// audio: buffered audio then runs straight into live audio instead of being followed by padding.
-TEST(LatencyBudget_LeadSilenceGoesInFrontOfBufferedAudio)
+// A stream (re)starts its lead as silence in front of the buffered audio, so that audio runs
+// straight into live audio instead of being followed by padding, and never owes the sink more
+// than the lead or the buffered audio: what the clock asks for beyond that is skipped.
+TEST(LatencyBudget_RestartPutsTheLeadInFrontOfBufferedAudio)
 {
 	using namespace LatencyBudget;
-	CHECK_EQ(LeadSilenceSamples(2646, 0), uint64_t{2646});
-	CHECK_EQ(LeadSilenceSamples(2646, 1000), uint64_t{1646});
+	constexpr uint64_t kLead = 2646;
+	// At a start the clock asks for exactly the lead.
+	CHECK_EQ(RestartAt(kLead, 0, kLead).skipSamples, uint64_t{0});
+	CHECK_EQ(RestartAt(kLead, 0, kLead).leadSilenceSamples, kLead);
+	CHECK_EQ(RestartAt(kLead, 1000, kLead).leadSilenceSamples, uint64_t{1646});
 	// More buffered than the lead: no silence at all, the audio is simply sent.
-	CHECK_EQ(LeadSilenceSamples(2646, 4000), uint64_t{0});
+	CHECK_EQ(RestartAt(kLead, 4000, kLead).leadSilenceSamples, uint64_t{0});
+	CHECK_EQ(RestartAt(kLead, 4000, kLead).skipSamples, uint64_t{0});
+	// Half a second behind with the ring trimmed to the lead: skip to the lead, owe nothing.
+	CHECK_EQ(RestartAt(22050 + kLead, kLead, kLead).skipSamples, uint64_t{22050});
+	CHECK_EQ(RestartAt(22050 + kLead, kLead, kLead).leadSilenceSamples, uint64_t{0});
+	// Behind with more audio than the lead: the audio is kept and only the rest is skipped.
+	CHECK_EQ(RestartAt(22050, 4000, kLead).skipSamples, uint64_t{22050 - 4000});
+}
+
+// A stall is a clock that ran further ahead than the sink can buffer with the audio for it gone.
+// Running one unit short is not one - the unit is padded and the sink keeps its buffer - and
+// neither is a long way behind with the audio still there: that is simply sent.
+TEST(LatencyBudget_StalledNeedsTheAudioToBeGone)
+{
+	using namespace LatencyBudget;
+	constexpr uint32_t kRate = 44100;
+	constexpr uint32_t kUnit = 1024;
+	constexpr uint64_t kLead = 2646;
+	constexpr uint64_t kSlack = kRate * kPcmSlackMs / 1000;
+	CHECK(Stalled(22050 + kLead, kLead, kLead, kUnit, kRate));
+	// Within the lead and its slack: not behind enough to matter.
+	CHECK(!Stalled(kLead + kSlack, 0, kLead, kUnit, kRate));
+	// Far behind, but every sample is buffered.
+	CHECK(!Stalled(22050, 22050, kLead, kUnit, kRate));
+	CHECK(!Stalled(22050, 22050 - kUnit - kSlack, kLead, kUnit, kRate));
+	CHECK(Stalled(22050, 22050 - kUnit - kSlack - 1, kLead, kUnit, kRate));
 }
 
 // A unit waits for its PCM while that PCM is only a copy tick late, and is padded only once the

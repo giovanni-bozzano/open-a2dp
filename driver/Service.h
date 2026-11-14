@@ -46,11 +46,12 @@ void ServiceTick(_In_ DEVICE_CONTEXT* ctx);
 
 // Consumes one frame record. Returns the payload length and points *payload into the
 // device scratch buffer (valid until the next call), or 0 when no record is available.
-// `silenceSamples` is how much of the record's PCM the service had to zero-fill.
+// `silenceSamples` is how much of the record's PCM the service had to zero-fill, and
+// `skippedSamples` how far its clock skipped before the record over PCM the driver discarded.
 // Sets StreamFault on a corrupt record header.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _Out_ uint32_t* samples,
-	_Out_ uint32_t* silenceSamples, _Out_ uint32_t* flags);
+	_Out_ uint32_t* silenceSamples, _Out_ uint32_t* skippedSamples, _Out_ uint32_t* flags);
 
 // Discards pending encoded frames so a new consumer starts at the current position.
 _IRQL_requires_max_(DISPATCH_LEVEL)

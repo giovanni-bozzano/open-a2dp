@@ -50,7 +50,7 @@ TEST(FrameRecord_RoundTrip)
 	uint8_t payload[100];
 	FillPayload(payload, sizeof(payload));
 
-	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0,
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 24, 441,
 							   Ioctl::kFrameFlagDiscontinuity));
 	CHECK_EQ(ring.view.ReadableBytes(), static_cast<uint32_t>(sizeof(Ioctl::FrameRecordHeader) + sizeof(payload)));
 
@@ -59,6 +59,8 @@ TEST(FrameRecord_RoundTrip)
 	REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
 	CHECK_EQ(record.payloadLength, static_cast<uint32_t>(sizeof(payload)));
 	CHECK_EQ(record.samples, Ioctl::kAacSamplesPerFrame);
+	CHECK_EQ(record.silenceSamples, uint32_t{24});
+	CHECK_EQ(record.skippedSamples, uint32_t{441});
 	CHECK_EQ(record.flags, Ioctl::kFrameFlagDiscontinuity);
 	CHECK(PayloadMatches(record.payload, record.payloadLength));
 	CHECK_EQ(ring.view.ReadableBytes(), uint32_t{0});
@@ -136,11 +138,11 @@ TEST(FrameRecord_WriteRejectsInvalidInput)
 	TestRing ring;
 	uint8_t payload[8] = {};
 
-	CHECK(!FrameRecord::Write(ring.view, nullptr, 8, Ioctl::kAacSamplesPerFrame, 0, 0));
-	CHECK(!FrameRecord::Write(ring.view, payload, 0, Ioctl::kAacSamplesPerFrame, 0, 0));
+	CHECK(!FrameRecord::Write(ring.view, nullptr, 8, Ioctl::kAacSamplesPerFrame, 0, 0, 0));
+	CHECK(!FrameRecord::Write(ring.view, payload, 0, Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 
 	uint8_t tooLarge[Ioctl::kMaxFramePayload + 1] = {};
-	CHECK(!FrameRecord::Write(ring.view, tooLarge, sizeof(tooLarge), Ioctl::kAacSamplesPerFrame, 0, 0));
+	CHECK(!FrameRecord::Write(ring.view, tooLarge, sizeof(tooLarge), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 	CHECK_EQ(ring.view.ReadableBytes(), uint32_t{0});
 }
 
@@ -151,25 +153,27 @@ TEST(FrameRecord_WriteRejectsFullRing)
 	FillPayload(payload, sizeof(payload));
 
 	while (ring.view.WritableBytes() >= sizeof(Ioctl::FrameRecordHeader) + sizeof(payload)) {
-		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 	}
-	CHECK(!FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
+	CHECK(!FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 }
 
 TEST(FrameRecord_TrimDropsTheOldestRecords)
 {
 	TestRing ring;
 	uint8_t payload[100] = {};
-	// One record per index, so the record that survives the trim is identifiable.
+	// One record per index, so the record that survives the trim is identifiable. The second one
+	// carries a clock skip, which is timeline the trim drops along with it.
 	for (uint8_t i = 0; i < 6; ++i) {
 		payload[0] = i;
-		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0));
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, i == 1 ? 300u : 0u, 0));
 	}
 	const uint32_t readableBefore = ring.view.ReadableBytes();
 	const uint32_t recordBytes = static_cast<uint32_t>(sizeof(Ioctl::FrameRecordHeader) + sizeof(payload));
 
-	// Six records are 768 samples; keeping 384 drops the oldest three.
-	CHECK_EQ(FrameRecord::Trim(ring.view, 384), static_cast<uint32_t>(3 * 128));
+	// Six records are 768 samples; keeping 384 drops the oldest three, and the RTP timestamp has
+	// to move past their audio and the skip one of them carried.
+	CHECK_EQ(FrameRecord::Trim(ring.view, 384), static_cast<uint32_t>(3 * 128 + 300));
 	CHECK_EQ(readableBefore - ring.view.ReadableBytes(), 3 * recordBytes);
 
 	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
@@ -184,7 +188,7 @@ TEST(FrameRecord_TrimLeavesBacklogThatFits)
 	TestRing ring;
 	uint8_t payload[100] = {};
 	for (uint8_t i = 0; i < 2; ++i) {
-		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0));
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0, 0));
 	}
 	const uint32_t readable = ring.view.ReadableBytes();
 	CHECK_EQ(FrameRecord::Trim(ring.view, 384), uint32_t{0});
@@ -202,7 +206,7 @@ TEST(FrameRecord_TrimStopsAtCorruptRecord)
 {
 	TestRing ring;
 	uint8_t payload[100] = {};
-	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0));
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0, 0));
 	Ioctl::FrameRecordHeader bad{0x1234, 64, 128, 0};
 	REQUIRE(ring.view.Write(&bad, sizeof(bad)));
 	const uint32_t readable = ring.view.ReadableBytes();
@@ -218,7 +222,7 @@ TEST(FrameRecord_TrimToZeroEmptiesTheRing)
 	TestRing ring;
 	uint8_t payload[100] = {};
 	for (uint8_t i = 0; i < 4; ++i) {
-		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0));
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), 128, 0, 0, 0));
 	}
 	// "Keep at most nothing" drops every record the walk validated; the driver never asks for
 	// that, but the boundary must not leave a record the caller did not count on.
@@ -232,8 +236,8 @@ TEST(FrameRecord_BufferedCountsSamplesWithoutConsuming)
 	uint8_t payload[100] = {};
 	CHECK_EQ(FrameRecord::Buffered(ring.view), uint32_t{0});
 
-	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
-	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 	CHECK_EQ(FrameRecord::Buffered(ring.view), 2 * Ioctl::kAacSamplesPerFrame);
 	const uint32_t readable = ring.view.ReadableBytes();
 	CHECK_EQ(readable, static_cast<uint32_t>(2 * (sizeof(Ioctl::FrameRecordHeader) + sizeof(payload))));
@@ -248,7 +252,7 @@ TEST(FrameRecord_BufferedCountsSamplesWithoutConsuming)
 	// the valid one written after it is not walked to.
 	Ioctl::FrameRecordHeader bad{0x1234, 64, Ioctl::kAacSamplesPerFrame, 0};
 	REQUIRE(ring.view.Write(&bad, sizeof(bad)));
-	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
+	REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 	CHECK_EQ(FrameRecord::Buffered(ring.view), Ioctl::kAacSamplesPerFrame);
 }
 
@@ -262,13 +266,13 @@ TEST(FrameRecord_WrapAround)
 	uint8_t payload[180];
 	FillPayload(payload, sizeof(payload));
 	for (int i = 0; i < 200; ++i) {
-		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 		REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
 		REQUIRE(PayloadMatches(record.payload, record.payloadLength));
 	}
 
 	for (int i = 0; i < 3; ++i) {
-		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0));
+		REQUIRE(FrameRecord::Write(ring.view, payload, sizeof(payload), Ioctl::kAacSamplesPerFrame, 0, 0, 0));
 	}
 	for (int i = 0; i < 3; ++i) {
 		REQUIRE(FrameRecord::Read(ring.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);

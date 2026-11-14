@@ -27,7 +27,13 @@ single largest fixed part of it.
    of permanent offset. The render copy now drops the oldest frames past
    `LatencyBudget::RingLimitMs` of backlog, and `FrameRecord::Trim` drops encoded records past
    that same limit; the RTP timestamp moves past the dropped span, so the sink hears one
-   gap rather than old audio. Both are counted and reported (`trimmed`: PCM bytes and encoded
+   gap rather than old audio. The PCM drop is safe against the encoder service reading
+   the ring at the same moment (`RingBufferView` validates every read), and a consumer that
+   finds itself further behind than the lead with the audio gone - the kernel SBC pacer or
+   the service encoder (`LatencyBudget::Stalled`) - picks up at the lead instead of padding
+   the gap (`LatencyBudget::RestartAt`; the service passes the skip to the RTP timestamp in
+   the next record's `skippedSamples`). Without that the pacer would send the gap as a burst
+   of silence when the stall ended, which a sink plays late for the rest of the stream. Both are counted and reported (`trimmed`: PCM bytes and encoded
    records) and logged once per second, so a stall on the service-encoded codecs is visible in
    the panel too. The excess has to persist to be dropped - `LatencyBudget::TrimNow` requires it
    on two consecutive observations, `kTrimStrikes` - because a copy tick landing while the pacer
@@ -71,7 +77,7 @@ single largest fixed part of it.
    [driver lifecycle](Driver-Lifecycle.md#acx-audio)), so its silence is a pause, not a gap.
    Only the due window counts:
    the lead a stream starts with is silence sent on purpose in front of its first audio
-   (`LatencyBudget::LeadSilenceSamples`), not a short read, and the frames a packet carries
+   (`LatencyBudget::RestartAt`), not a short read, and the frames a packet carries
    past the target are normal; counting either would make the number noise. After the lead
    every packet waits for its own PCM (`LatencyBudget::UnitReady`) and is padded only once it
    is a packet plus `kPcmSlackMs` overdue, so a silence that is counted is one the listener

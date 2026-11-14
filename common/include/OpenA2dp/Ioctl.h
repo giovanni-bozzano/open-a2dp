@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 8;
+constexpr uint32_t kAbiVersion = 9;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -221,6 +221,11 @@ struct FrameRecordHeader {
 	// silence the service inserts like any other underrun, instead of leaving it in the service's
 	// own statistics where only a log line could see it.
 	uint32_t silenceSamples;
+	// Clock the service skipped right before this record when it restarted its lead
+	// (LatencyBudget::RestartAt): at its start, or after a stall left it further behind than the
+	// sink can buffer. The driver moves the RTP timestamp past it, so the sink sees one gap where
+	// the audio was lost instead of a seamless timeline.
+	uint32_t skippedSamples;
 	uint32_t flags; // kFrameFlag*
 };
 
@@ -473,7 +478,7 @@ static_assert(sizeof(Preference) == 44, "Preference layout is part of the driver
 static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is part of the ABI");
 static_assert(sizeof(WaitEventOut) == 40, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
-static_assert(sizeof(FrameRecordHeader) == 16, "FrameRecordHeader layout is part of the ABI");
+static_assert(sizeof(FrameRecordHeader) == 20, "FrameRecordHeader layout is part of the ABI");
 static_assert(sizeof(Status) == 352, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");

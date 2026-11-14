@@ -93,9 +93,11 @@ private:
 	AacStreamStats stats_;
 	uint64_t startTimeUs_ = 0;
 	uint64_t producedSamples_ = 0;
-	// Silence still owed in front of the first audio, set on the first pump.
+	// Silence still owed in front of the first audio, set when the stream (re)starts its lead.
 	uint64_t leadSilence_ = 0;
 	bool leadKnown_ = false;
+	// Clock skipped at a (re)start that the next record carries for the RTP timestamp.
+	uint32_t pendingSkip_ = 0;
 	bool active_ = false;
 	bool discontinuity_ = false;
 

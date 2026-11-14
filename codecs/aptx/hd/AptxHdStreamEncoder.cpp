@@ -81,6 +81,7 @@ bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const Apt
 	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
 	leadSilence_ = 0;
 	leadKnown_ = false;
+	pendingSkip_ = 0;
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -95,6 +96,7 @@ void AptxHdStreamEncoder::Stop() noexcept
 	pendingSilence_ = 0;
 	leadSilence_ = 0;
 	leadKnown_ = false;
+	pendingSkip_ = 0;
 	discontinuity_ = false;
 }
 
@@ -112,9 +114,17 @@ bool AptxHdStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferVi
 	}
 
 	const uint64_t target = TargetSamples(nowUs);
-	if (!leadKnown_) {
-		// The PCM buffered at start is the beginning of playback: the lead goes in front of it.
-		leadSilence_ = LatencyBudget::LeadSilenceSamples(target, pcm.ReadableBytes() / sampleBytes_);
+	const uint64_t due = target > producedSamples_ ? target - producedSamples_ : 0;
+	const uint64_t buffered = pcm.ReadableBytes() / sampleBytes_;
+	const uint64_t lead = PrerollSamples(params_);
+	if (!leadKnown_ || LatencyBudget::Stalled(due, buffered + leadSilence_, lead, spanSamples_, params_.sampleRate)) {
+		// The stream picks up at the lead - at its start, and after a stall in which the driver
+		// trimmed what this one could not read - instead of padding the gap back with silence. The
+		// next record carries the skip, so the driver moves the RTP timestamp past it.
+		const LatencyBudget::Restart restart = LatencyBudget::RestartAt(due, buffered, lead);
+		producedSamples_ += restart.skipSamples;
+		pendingSkip_ += static_cast<uint32_t>(restart.skipSamples);
+		leadSilence_ = restart.leadSilenceSamples;
 		leadKnown_ = true;
 	}
 	for (size_t i = 0; i < maxRecords && producedSamples_ < target; ++i) {
@@ -184,10 +194,11 @@ bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& fram
 	const uint32_t flags = discontinuity_ ? Ioctl::kFrameFlagDiscontinuity : 0;
 	const uint32_t recordSilence = pendingSilence_;
 	if (FrameRecord::Write(frames, payload_.data(), static_cast<uint32_t>(payload), encodedSamples,
-						   recordSilence, flags)) {
+						   recordSilence, pendingSkip_, flags)) {
 		++stats_.records;
 		stats_.samples += encodedSamples;
 		pendingSilence_ = 0;
+		pendingSkip_ = 0;
 		discontinuity_ = false;
 	} else {
 		// The frame ring is full: the driver fell behind, so the next record is a

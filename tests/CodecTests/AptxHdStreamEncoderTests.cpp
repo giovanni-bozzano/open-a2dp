@@ -155,12 +155,11 @@ TEST(AptxHdStream_ShortRingLeadsWithSilence)
 	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
 }
 
-// One second plus the 60 ms preroll is 106 spans of 441 samples, all lead silence because the
-// ring is empty at the first pump. A clock that advanced by the encoded samples rather than by
-// the span would trail by 26 samples and grow.
+// One second plus the 60 ms preroll is 106 spans of 441 samples, all of it buffered. A clock that
+// advanced by the encoded samples rather than by the span would trail by 26 samples and grow.
 TEST(AptxHdStream_44kClockDoesNotDrift)
 {
-	TestRing pcm(64 * 1024);
+	TestRing pcm(512 * 1024);
 	TestRing frames(256 * 1024); // 106 records of 6-byte frames
 
 	AptxHdStreamParams params;
@@ -168,6 +167,7 @@ TEST(AptxHdStream_44kClockDoesNotDrift)
 	AptxHdStreamEncoder stream;
 	REQUIRE(stream.Start(MakeEncoder(AptxHd::kSampleRate44100), params, 0));
 
+	WriteWidePcm(pcm, 1, 46746);
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 200));
 	CHECK_EQ(stream.Stats().records, uint64_t{106});
 	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});

@@ -76,13 +76,34 @@ constexpr uint32_t LeadFloorMs(uint32_t unitSamples, uint32_t sampleRate) noexce
 	return (unitSamples * 1000u + sampleRate - 1) / sampleRate + kPcmSlackMs;
 }
 
-// Silence a stream starts with: what the clock already asks for beyond the PCM buffered when the
-// stream starts. It goes in front of that PCM, never after it - padding the lead behind the
-// buffered audio would play it, then a gap, then live audio. From then on the ring holds exactly
-// what the clock asks for, so every later unit can wait for its own PCM (UnitReady).
-constexpr uint64_t LeadSilenceSamples(uint64_t dueSamples, uint64_t bufferedSamples) noexcept
+// Where a stream picks up when its clock is `dueSamples` ahead of what it sent and the ring holds
+// `bufferedSamples`: at its start, and after a stall (Stalled). The sink can hold the lead and no
+// more, so the clock skips whatever is due beyond the lead or the buffered audio, whichever is
+// longer - padding it would reach the sink as a burst of silence it then plays late for the rest
+// of the stream. What the buffered audio cannot fill of the rest is owed as silence in front of
+// it, never behind it, so the buffered audio runs straight into the live audio that follows.
+struct Restart {
+	uint64_t skipSamples;
+	uint64_t leadSilenceSamples;
+};
+
+constexpr Restart RestartAt(uint64_t dueSamples, uint64_t bufferedSamples, uint64_t leadSamples) noexcept
 {
-	return dueSamples > bufferedSamples ? dueSamples - bufferedSamples : 0;
+	const uint64_t keep = bufferedSamples > leadSamples ? bufferedSamples : leadSamples;
+	const uint64_t resume = dueSamples < keep ? dueSamples : keep;
+	return {dueSamples - resume, resume > bufferedSamples ? resume - bufferedSamples : 0};
+}
+
+// Whether a running stream fell behind its clock by more than the sink can buffer with the audio
+// for it gone - the transport or the encoder was held off, and the copy trimmed the ring back to
+// the lead meanwhile. `availableSamples` is the PCM in the ring plus any lead silence still owed.
+// A stream that only ran one unit short pads it (UnitReady) and keeps the sink's buffer full; this
+// is for the stall a pad cannot help, where the stream restarts its lead instead (RestartAt).
+constexpr bool Stalled(uint64_t dueSamples, uint64_t availableSamples, uint64_t leadSamples,
+					   uint32_t unitSamples, uint32_t sampleRate) noexcept
+{
+	const uint64_t slack = static_cast<uint64_t>(sampleRate) * kPcmSlackMs / 1000;
+	return dueSamples > leadSamples + slack && dueSamples > availableSamples + unitSamples + slack;
 }
 
 // Whether a unit (an SBC packet, an AAC block, a service record) of `unitSamples` is encoded now.
@@ -102,7 +123,7 @@ constexpr bool UnitReady(uint64_t availableSamples, uint32_t unitSamples, uint64
 //
 // A packet carries more samples than the clock has asked for, because it is built whole, and
 // the frames past the due point are not a gap: that audio is what the sink is meant to buffer.
-// The lead a stream starts with is silence sent on purpose (LeadSilenceSamples), not a short read,
+// The lead a stream starts with is silence sent on purpose (RestartAt), not a short read,
 // so it never reaches this count.
 constexpr uint32_t UnderrunSamples(uint32_t silentSamples, uint32_t dueSamples) noexcept
 {

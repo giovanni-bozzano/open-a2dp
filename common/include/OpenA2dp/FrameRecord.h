@@ -22,13 +22,14 @@ struct Record {
 	uint32_t payloadLength = 0;
 	uint32_t samples = 0;
 	uint32_t silenceSamples = 0; // zero-filled by the producer: a gap the listener hears
+	uint32_t skippedSamples = 0; // clock skipped before this record (discarded PCM)
 	uint32_t flags = 0;
 };
 
 // Producer side. Writes header + payload with one RingBufferView::Write, so a
 // consumer never sees a partial record. Returns false when the record does not fit.
 inline bool Write(RingBufferView& ring, const uint8_t* payload, uint32_t payloadLength, uint32_t samples,
-				  uint32_t silenceSamples, uint32_t flags) noexcept
+				  uint32_t silenceSamples, uint32_t skippedSamples, uint32_t flags) noexcept
 {
 	if (payload == nullptr || payloadLength == 0 || payloadLength > Ioctl::kMaxFramePayload) {
 		return false;
@@ -44,6 +45,7 @@ inline bool Write(RingBufferView& ring, const uint8_t* payload, uint32_t payload
 		static_cast<uint16_t>(size),
 		samples,
 		silenceSamples,
+		skippedSamples,
 		flags,
 	};
 	memcpy(record, &header, sizeof(header));
@@ -83,6 +85,7 @@ inline ReadResult Read(RingBufferView& ring, uint8_t* storage, uint32_t storageB
 	out.payloadLength = payloadLength;
 	out.samples = header.samples;
 	out.silenceSamples = header.silenceSamples;
+	out.skippedSamples = header.skippedSamples;
 	out.flags = header.flags;
 	return ReadResult::Record;
 }
@@ -114,9 +117,10 @@ inline uint32_t Buffered(RingBufferView& ring) noexcept
 
 // Consumer side, for latency: drops the oldest records while more than `limitSamples` are
 // buffered, so a consumer that fell behind (a stalled transport) returns to live audio instead
-// of replaying the backlog at real time. Returns the number of samples dropped; the caller
-// advances its media timestamp by that much so the sink sees the gap as one jump. A malformed
-// record stops the walk and is left for Read to report.
+// of replaying the backlog at real time. Returns the samples of timeline dropped - the records'
+// audio plus any clock skip they carried; the caller advances its media timestamp by that much
+// so the sink sees the gap as one jump. A malformed record stops the walk and is left for Read
+// to report.
 inline uint32_t Trim(RingBufferView& ring, uint32_t limitSamples) noexcept
 {
 	// Records are walked by header, so no payload is copied and the read position does not move
@@ -146,20 +150,23 @@ inline uint32_t Trim(RingBufferView& ring, uint32_t limitSamples) noexcept
 	}
 
 	uint32_t dropped = 0;
-	uint32_t skipped = 0;
+	uint32_t skippedBytes = 0;
+	// A dropped record's own clock skip is part of the timeline it stood for.
+	uint32_t timeline = 0;
 	while (total - dropped > limitSamples) {
 		Ioctl::FrameRecordHeader header{};
-		if (!ring.PeekAt(skipped, &header, sizeof(header))) {
+		if (!ring.PeekAt(skippedBytes, &header, sizeof(header))) {
 			break;
 		}
-		skipped += header.size;
+		skippedBytes += header.size;
 		dropped += header.samples;
+		timeline += header.samples + header.skippedSamples;
 	}
-	if (skipped == 0) {
+	if (skippedBytes == 0) {
 		return 0;
 	}
-	ring.Skip(skipped);
-	return dropped;
+	ring.Skip(skippedBytes);
+	return timeline;
 }
 
 } // namespace OpenA2dp::FrameRecord

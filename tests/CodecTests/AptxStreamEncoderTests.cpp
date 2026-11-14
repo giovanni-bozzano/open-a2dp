@@ -207,7 +207,7 @@ TEST(AptxStream_CarriesSamplesAt44k)
 // remainder without the encoded total falling further behind the clock on every record.
 TEST(AptxStream_44kClockDoesNotDrift)
 {
-	TestRing pcm(64 * 1024);
+	TestRing pcm(256 * 1024);
 	TestRing frames(64 * 1024);
 
 	AptxStreamParams params;
@@ -215,9 +215,9 @@ TEST(AptxStream_44kClockDoesNotDrift)
 	AptxStreamEncoder stream;
 	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
-	// One second plus the 60 ms preroll is 106 spans of 441 samples. The ring is empty at the first
-	// pump, so all of it is lead silence - sent on purpose, not counted as a gap. A clock that
-	// advanced by the encoded samples rather than by the span would trail by 26 samples.
+	// One second plus the 60 ms preroll is 106 spans of 441 samples, all of it buffered. A clock
+	// that advanced by the encoded samples rather than by the span would trail by 26 samples.
+	WritePcm(pcm, 1, 46746);
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 200));
 	CHECK_EQ(stream.Stats().records, uint64_t{106});
 	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});

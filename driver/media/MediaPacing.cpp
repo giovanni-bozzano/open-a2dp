@@ -75,8 +75,25 @@ void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 	// it, and one built earlier would pad audio that is about to arrive with silence. A paused
 	// endpoint asks for nothing, so its packets are padded to keep the stream's place.
 	const uint32_t packetSamples = SbcPacketSamples(ctx);
-	const uint64_t available =
-		PcmSamples(ctx) + static_cast<uint64_t>(ctx->SbcLeadSilenceFrames) * ctx->Encoder.GetParams().SamplesPerFrame();
+	const uint32_t frameSamples = ctx->Encoder.GetParams().SamplesPerFrame();
+	const uint64_t buffered = PcmSamples(ctx);
+	const uint64_t lead = static_cast<uint64_t>(rate) * ctx->PacingLeadMs / 1000;
+	if (LatencyBudget::Stalled(target - ctx->MediaSamplesSent,
+			buffered + static_cast<uint64_t>(ctx->SbcLeadSilenceFrames) * frameSamples, lead, packetSamples, rate))
+	{
+		// The transport held the stream off for longer than the sink can buffer and the copy trimmed
+		// the ring back to the lead meanwhile. Padding the gap would send it as a burst of silence the
+		// sink then plays late for the rest of the stream; the stream picks up at the lead instead,
+		// with the RTP timestamp past the gap.
+		const LatencyBudget::Restart restart =
+			LatencyBudget::RestartAt(target - ctx->MediaSamplesSent, buffered, lead);
+		ctx->MediaSamplesSent += restart.skipSamples;
+		ctx->RtpTimestamp += static_cast<ULONG>(restart.skipSamples);
+		ctx->SbcLeadSilenceFrames = static_cast<ULONG>(restart.leadSilenceSamples / frameSamples);
+		OA2DP_WARN(ctx, "Media", "stream was held off %I64u ms; resuming %u ms ahead of the clock",
+			restart.skipSamples * 1000 / rate, ctx->PacingLeadMs);
+	}
+	const uint64_t available = buffered + static_cast<uint64_t>(ctx->SbcLeadSilenceFrames) * frameSamples;
 	if (AudioStreamRunning(ctx) &&
 		!LatencyBudget::UnitReady(available, packetSamples, target - ctx->MediaSamplesSent, rate))
 	{

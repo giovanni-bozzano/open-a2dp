@@ -194,11 +194,11 @@ TEST(AacStream_StartAcceptsWorstCaseCapacity)
 	WritePcm(pcm, 0, 4096);
 	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
 
-	// 7056 samples are due: 2960 of lead in front of the 4096 buffered make six whole blocks, and
-	// the seventh waits for its PCM.
-	CHECK_EQ(stream.Stats().records, uint64_t{6});
+	// 7056 samples are due but the sink holds only what is buffered: the stream starts at the
+	// 4096 buffered samples, four whole blocks, instead of sending the rest as silence first.
+	CHECK_EQ(stream.Stats().records, uint64_t{4});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
-	CHECK_EQ(fake->calls, 6);
+	CHECK_EQ(fake->calls, 4);
 }
 
 TEST(AacStream_RealEncoderStartsAndProducesRecords)
@@ -395,6 +395,69 @@ TEST(AacStream_PadsABlockOnlyOnceItsPcmIsMissing)
 	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
 	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
 	CHECK_EQ(record.silenceSamples, uint32_t{1024 - 598});
+}
+
+// After a service stall the driver keeps only the lead of the PCM it buffered. The stream picks up
+// at that lead instead of encoding the gap as silence - which would reach the sink as a burst it
+// then plays late for the rest of the stream - and the next record carries the skip so the
+// driver moves the RTP timestamp past the gap.
+TEST(AacStream_RestartsTheLeadAfterAStall)
+{
+	TestRing pcm(256 * 1024);
+	TestRing frames(64 * 1024);
+
+	auto encoder = MakeEncoder();
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
+	// The 60 ms lead is buffered: two whole blocks go out and 598 samples wait for the rest.
+	WritePcm(pcm, 0, 2646);
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{2});
+
+	// 500 ms later: the endpoint rendered 22050 samples and the driver trimmed the ring to the lead.
+	WritePcm(pcm, 0, 22050);
+	constexpr uint32_t kDropped = 598 + 22050 - 2646;
+	REQUIRE(pcm.view.Discard(kDropped * kStereoBytesPerSample) == kDropped * kStereoBytesPerSample);
+	REQUIRE(stream.Pump(500000, pcm.view, frames.view, 8));
+
+	// Only the lead that is left is encoded: no block of silence follows it.
+	CHECK_EQ(stream.Stats().records, uint64_t{4});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.skippedSamples, uint32_t{0});
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.skippedSamples, kDropped);
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.skippedSamples, uint32_t{0});
+}
+
+// The encoder can take a while to come up after the stream starts. Its first pump then finds the
+// clock past the lead: it starts at the lead like any restart, rather than sending the time it
+// took as silence in front of the audio.
+TEST(AacStream_SlowStartBeginsAtTheLead)
+{
+	TestRing pcm(256 * 1024);
+	TestRing frames(64 * 1024);
+
+	auto encoder = MakeEncoder();
+	FakeEncoder* fake = encoder.get();
+	AacStreamEncoder stream;
+	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
+	WritePcm(pcm, 1, 2646);
+	REQUIRE(stream.Pump(300000, pcm.view, frames.view, 8));
+
+	CHECK_EQ(stream.Stats().records, uint64_t{2});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+	REQUIRE(fake->blocks.size() == size_t{2});
+	CHECK_EQ(fake->blocks[0][0], int16_t{1});
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.skippedSamples, uint32_t{13230});
 }
 
 TEST(AacStream_PrimingProducesNoRecords)

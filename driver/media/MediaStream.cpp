@@ -133,9 +133,9 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	{
 		const RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
 		const uint64_t buffered = pin.bytesPerFrame != 0 ? ring.ReadableBytes() / pin.bytesPerFrame : 0;
-		const uint64_t leadSilence = LatencyBudget::LeadSilenceSamples(
-			static_cast<uint64_t>(params.sampleRate) * ctx->PacingLeadMs / 1000, buffered);
-		ctx->SbcLeadSilenceFrames = static_cast<ULONG>(leadSilence / params.SamplesPerFrame());
+		const uint64_t lead = static_cast<uint64_t>(params.sampleRate) * ctx->PacingLeadMs / 1000;
+		const LatencyBudget::Restart restart = LatencyBudget::RestartAt(lead, buffered, lead);
+		ctx->SbcLeadSilenceFrames = static_cast<ULONG>(restart.leadSilenceSamples / params.SamplesPerFrame());
 	}
 	// The copy keeps the endpoint's audio from the first sample this run played and skips only
 	// what came before it (CopyConsumedLocked), so what the wait for this stream cost is that
