@@ -326,6 +326,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		out->worstRenderGapMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstRenderGapMs, 0, 0));
 		out->worstServiceGapMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstServiceGapMs, 0, 0));
 		out->worstSendMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendMs, 0, 0));
+		out->worstSendTransportMs =
+			static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendTransportMs, 0, 0));
+		out->worstSendResumeMs =
+			static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendResumeMs, 0, 0));
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
 		const size_t payloadCapacity = out->mediaMtu > Rtp::kHeaderSize
 			? static_cast<size_t>(out->mediaMtu) - Rtp::kHeaderSize

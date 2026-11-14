@@ -229,6 +229,8 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.worstRenderGapMs", status.worstRenderGapMs);
 	AppendField(text, "status.worstServiceGapMs", status.worstServiceGapMs);
 	AppendField(text, "status.worstSendMs", status.worstSendMs);
+	AppendField(text, "status.worstSendTransportMs", status.worstSendTransportMs);
+	AppendField(text, "status.worstSendResumeMs", status.worstSendResumeMs);
 	AppendField(text, "status.packetsSent", status.packetsSent);
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
@@ -427,8 +429,10 @@ void AppendLatency(std::string& text, const Ioctl::Status& status)
 	// held audio off. A lead at or above the largest of these has margin; one below it is what
 	// the underrun and trim counts below are paying for.
 	AppendLine(text, "worst gaps",
-			   Format("render %u ms, frames %u ms, send %u ms (worst since this stream started)",
-					  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs));
+			   Format("render %u ms, frames %u ms, send %u ms (%u ms in the transport, %u ms until "
+					  "the next run; worst since this stream started)",
+					  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs,
+					  status.worstSendTransportMs, status.worstSendResumeMs));
 	// Audio the driver could not deliver in time: silence where the stream ran dry is an
 	// underrun, and audio discarded to stay near live after a stall is a trim. Both are
 	// cumulative across streams until the counters are reset, so a new stream cannot hide an

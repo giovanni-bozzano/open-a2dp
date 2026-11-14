@@ -30,6 +30,12 @@ field with its decimal and hex value.
 | `counters`, `last error` | Packet totals and the last transport failure |
 | `driver` | The driver build and its ABI; a mismatch means the tools and driver are from different builds |
 
+Within `worst gaps`, `send` is split into the time the packet spent in the
+transport and the time from its completion until the media work item ran. Only
+the first is the Bluetooth link and controller; a large second value means the
+machine did not schedule the driver's passive work item, not that the link
+stalled.
+
 [Latency](architecture/Latency.md) explains how the latency numbers are formed.
 The sink's own buffering is not reported by any A2DP profile, so the report only
 covers the driver side.
@@ -100,7 +106,7 @@ mean a wait did not finish include `stop: still waiting`, `BRB did not complete`
 | `encoder Not registered` | The encoder service state | The service is stopped, crashed, or from another build |
 | No sound, session looks configured | `listed formats`, `refused streams`, `sink jack` | The endpoint has no format Windows can open, or is rebuilding |
 | Occasional gaps | `underruns`, `pacing lead`, `worst gaps` | The lead is below what this sink or link needs |
-| Growing `trimmed` | `latency peak`, `worst gaps`, link quality | A transport or service stall; old audio was dropped to return to live |
+| Growing `trimmed` | `latency peak`, `worst gaps` | A transport or media work-item stall; old audio was dropped to return to live |
 | `send failures` or `last error` | The link and the sink | The transport failed; the session will suspend or close |
 | Stream stays `Suspended` | `endpoint` | The endpoint is paused; a paused stream is suspended by design |
 | Format change stops audio briefly | `jack flaps` | Windows is rebuilding the endpoint; the player reopens its stream |

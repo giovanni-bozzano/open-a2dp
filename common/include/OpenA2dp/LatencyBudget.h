@@ -130,4 +130,23 @@ constexpr uint32_t UnderrunSamples(uint32_t silentSamples, uint32_t dueSamples) 
 	return silentSamples < dueSamples ? silentSamples : dueSamples;
 }
 
+// One media send's interval, split into the two waits that make it up. The first is how long the
+// packet stayed with the transport - the Bluetooth link and controller - and the second is how
+// long the pacer's work item took to run after the completion. The lead has to cover the sum, but
+// only the first is the link: a large second figure means the machine did not schedule the driver.
+// A completion that never arrived, or that predates the submit, is not a measurement.
+struct SendGap {
+	uint32_t transportMs;
+	uint32_t resumeMs;
+};
+
+constexpr SendGap SplitSendGap(uint64_t started, uint64_t completed, uint64_t observed) noexcept
+{
+	if (started == 0 || completed < started || observed < completed) {
+		return {};
+	}
+	return {static_cast<uint32_t>((completed - started) / 10000),
+			static_cast<uint32_t>((observed - completed) / 10000)};
+}
+
 } // namespace OpenA2dp::LatencyBudget

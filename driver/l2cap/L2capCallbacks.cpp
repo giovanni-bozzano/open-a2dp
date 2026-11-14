@@ -8,6 +8,9 @@ void OnSendComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLET
 	// Read before Idle is set: from then on the slot may be reused by its owner.
 	const WDFWORKITEM workItem = slot->CompletionWorkItem;
 	InterlockedExchange(&slot->Status, params->IoStatus.Status);
+	// Stamped before Idle as well: the owner reads it once the event says the slot is free, so
+	// the split between transport time and the next run stays attributable to this send.
+	slot->CompletedAt = KeQueryInterruptTime();
 	KeSetEvent(&slot->Idle, IO_NO_INCREMENT, FALSE);
 	if (workItem != nullptr)
 	{

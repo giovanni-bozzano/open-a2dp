@@ -613,7 +613,10 @@ constexpr RowTip kRowTips[] = {
 	 L"The longest each stage held audio off for since the stream started - render copies, "
 	 L"encoder service records, one media send.\n\n"
 	 L"How much buffer the machine actually needed. A gap larger than the lead explains "
-	 L"the underruns or trims below; nothing larger means the setting is fine."},
+	 L"the underruns or trims below; nothing larger means the setting is fine.\n\n"
+	 L"The send figure is split into time in the transport (the Bluetooth link and controller) "
+	 L"and time until the driver's media work item ran. Only the first is the link; a large "
+	 L"second value means the machine was too busy to run the driver."},
 	{"not copied",
 	 L"Audio the copy missed: it ran later than the engine's own buffer, or the driver's buffer "
 	 L"was full. Audio deliberately discarded at a stream or format boundary is not counted.\n\n"

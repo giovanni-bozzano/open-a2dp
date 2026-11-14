@@ -269,12 +269,29 @@ void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 	WdfWaitLockAcquire(ctx->MediaLock, nullptr);
 
 	// A run that finds the slot idle again after a submit is the first run after that send
-	// completed, so this closes the interval the packet spent with the transport. Closed here
-	// rather than in the completion routine: that one runs at DISPATCH_LEVEL with the slot but no
-	// device context, so it cannot tell the media send from the signaling one.
+	// completed. The completion routine stamped when the transport finished, so this closes the
+	// interval as two waits: the link, and the delay until this work item ran. Splitting them is
+	// what tells a stalled Bluetooth link from a PASSIVE work item the machine did not schedule;
+	// the total alone cannot. Closed here rather than in the completion routine: that one runs at
+	// DISPATCH_LEVEL with the slot but no device context, so it cannot tell the media send from
+	// the signaling one.
 	if (ctx->MediaSendPending && L2capSendIdle(&ctx->MediaSend))
 	{
-		OA2dpNoteGapMs(ctx->MediaSendStarted, ctx->WorstSendMs, KeQueryInterruptTime());
+		const ULONGLONG now = KeQueryInterruptTime();
+		const LatencyBudget::SendGap gap =
+			LatencyBudget::SplitSendGap(ctx->MediaSendStarted, ctx->MediaSend.CompletedAt, now);
+		OA2dpNoteWorstMs(gap.transportMs, ctx->WorstSendTransportMs);
+		OA2dpNoteWorstMs(gap.resumeMs, ctx->WorstSendResumeMs);
+		// One line an outlier, not one a packet: a starved work item would otherwise flood the
+		// debug output and slow down the very path being measured.
+		if ((gap.transportMs >= MediaSplitLogMs || gap.resumeMs >= MediaSplitLogMs) &&
+			now - ctx->MediaSendLogTime >= UnderrunLogInterval)
+		{
+			ctx->MediaSendLogTime = now;
+			OA2DP_INFO(ctx, "Media", "media send %u ms in flight, %u ms until the next run",
+				gap.transportMs, gap.resumeMs);
+		}
+		OA2dpNoteGapMs(ctx->MediaSendStarted, ctx->WorstSendMs, now);
 		ctx->MediaSendPending = FALSE;
 	}
 

@@ -135,6 +135,7 @@ TEST(StatusReport_VerboseListsEveryField)
 									"status.frameCapacity", "status.underruns", "status.negotiatedCodec",
 									"status.preferenceFlags", "status.sinkCodecs", "preference.sbcBlocks",
 									"preference.prerollMs", "status.pacingLeadMs",
+									"status.worstSendTransportMs", "status.worstSendResumeMs",
 									"version.maxFramePayload"})
 	{
 		CHECK(Contains(report, field));
@@ -171,9 +172,21 @@ TEST(StatusReport_ShowsTheWorstGapsTheLeadHadToCover)
 	status.worstRenderGapMs = 12;
 	status.worstServiceGapMs = 30;
 	status.worstSendMs = 45;
+	// The send is the one gap the driver can attribute: time with the transport is the link,
+	// the rest is the media work item not having run yet. Both have to be visible.
+	status.worstSendTransportMs = 12;
+	status.worstSendResumeMs = 33;
 	const std::string report = Report(false, status, StreamingPreference());
 	CHECK(Contains(report,
-			"render 12 ms, frames 30 ms, send 45 ms (worst since this stream started)"));
+			"render 12 ms, frames 30 ms, send 45 ms (12 ms in the transport, 33 ms until the "
+			"next run; worst since this stream started)"));
+
+	// A send that never reached the split (an old completion, or a stream that just started)
+	// still prints the total, with zeroes where the two halves are unknown.
+	status.worstSendTransportMs = 0;
+	status.worstSendResumeMs = 0;
+	const std::string unsplit = Report(false, status, StreamingPreference());
+	CHECK(Contains(unsplit, "send 45 ms (0 ms in the transport, 0 ms until the next run;"));
 }
 
 // A lead the driver had to raise is reported as raised. A stored lead shorter than one access

@@ -296,6 +296,22 @@ TEST(LatencyBudget_LeadFloorCoversOneAccessUnit)
 // An underrun is audio the media clock asked for that the ring did not have. The tail of a
 // packet is built whole and reaches past the clock into audio the sink is meant to buffer, so
 // silence there must not count, or the number the panel shows would fire on a healthy stream.
+// A media send's interval is only attributable if the completion and the observation both fall
+// after the submit. The two halves are what separate a slow link from a starved pacer work item.
+TEST(LatencyBudget_SendGapSplitsTransportFromResume)
+{
+	using namespace LatencyBudget;
+	constexpr uint64_t kMs = 10000;
+	const SendGap gap = SplitSendGap(100 * kMs, 112 * kMs, 214 * kMs);
+	CHECK_EQ(gap.transportMs, uint32_t{12});
+	CHECK_EQ(gap.resumeMs, uint32_t{102});
+	// A completion before the submit, or no completion at all, is not a measurement.
+	CHECK_EQ(SplitSendGap(100 * kMs, 90 * kMs, 200 * kMs).transportMs, uint32_t{0});
+	CHECK_EQ(SplitSendGap(100 * kMs, 90 * kMs, 200 * kMs).resumeMs, uint32_t{0});
+	CHECK_EQ(SplitSendGap(100 * kMs, 0, 200 * kMs).transportMs, uint32_t{0});
+	CHECK_EQ(SplitSendGap(0, 0, 0).resumeMs, uint32_t{0});
+}
+
 TEST(LatencyBudget_UnderrunOnlyCountsDueAudio)
 {
 	using namespace LatencyBudget;

@@ -76,6 +76,9 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 	{
 		return false;
 	}
+	// Stamped before the submit: a completion that arrives inline must not predate the start, or
+	// the split between transport time and the next run would be unmeasurable for that send.
+	ctx->MediaSendStarted = KeQueryInterruptTime();
 	const NTSTATUS status = L2capSendAsync(ctx, &ctx->MediaSend, ctx->MediaChannel, ctx->MediaBuffer, length);
 	if (!NT_SUCCESS(status))
 	{
@@ -85,7 +88,6 @@ bool SubmitPacket(DEVICE_CONTEXT* ctx, ULONG length)
 	ctx->MediaSendUnchecked = TRUE;
 	// The completion work item notices the send left and closes the interval, so a link that
 	// buffers or retries becomes a number instead of only a trim the user cannot explain.
-	ctx->MediaSendStarted = KeQueryInterruptTime();
 	ctx->MediaSendPending = TRUE;
 	return true;
 }

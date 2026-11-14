@@ -25,6 +25,9 @@ constexpr ULONGLONG UnderrunLogInterval = 10000000ull;
 // indication). Measured in real time, because the watchdog wakes on demand.
 constexpr ULONG MediaBusyLimitMs = 3000;
 constexpr ULONGLONG MediaBusyLimit = MediaBusyLimitMs * 10000ull;
+// A send half this long on either side is logged: the transport and the wait for the media work
+// item are the two halves a hold-off can come from, and only the first is the Bluetooth link.
+constexpr ULONG MediaSplitLogMs = 40;
 // How long a stop waits for the media work item's lock before going ahead without it. A run is
 // bounded, so this only elapses when the run itself is stuck, and waiting forever would hang the
 // session that asked for the stop.
@@ -97,8 +100,12 @@ inline void MediaStatsReset(DEVICE_CONTEXT* ctx)
 	ctx->FrameTrimStrikes = 0;
 	ctx->WorstServiceGapMs = 0;
 	ctx->WorstSendMs = 0;
+	ctx->WorstSendTransportMs = 0;
+	ctx->WorstSendResumeMs = 0;
 	ctx->LastRecordTime = 0;
 	ctx->MediaSendPending = FALSE;
+	ctx->MediaSendLogTime = 0;
+	ctx->MediaSend.CompletedAt = 0;
 }
 
 // PCM samples (per channel) one SBC packet of this stream carries. Caller holds MediaLock.

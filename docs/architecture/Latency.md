@@ -74,7 +74,12 @@ Two extra figures make a transient visible after it ended:
 | Line | Meaning |
 |---|---|
 | `latency peak` | Worst lead-plus-rings value sampled during this stream; resets at the next `MediaStart` |
-| `worst gaps` | Longest interval the render path, the encoder service or a send held audio off during this stream |
+| `worst gaps` | Longest interval the render path, the encoder service or a send held audio off during this stream; a send also reports how much of it was transport time and how much was waiting for the media work item |
+
+The send split is the one attribution the driver can make without a debugger.
+Transport time is the Bluetooth link and controller; resume time is the passive
+media work item not having run. A lead above the total has margin, and which half
+is large says what to fix.
 
 `underruns` counts packets that had to be filled with silence because PCM was
 late. Only the due window counts; the intentional lead at stream start is not an

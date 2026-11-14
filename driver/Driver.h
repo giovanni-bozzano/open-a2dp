@@ -205,6 +205,9 @@ struct SEND_SLOT
 	KEVENT Idle;
 	WDFWORKITEM CompletionWorkItem;
 	volatile LONG Status;
+	// Interrupt time the transport completed this slot's last send, 0 before the first one.
+	// Written by the completion routine before Idle is set, read by the owner after it.
+	ULONGLONG CompletedAt;
 	UCHAR Buffer[SendSlotBytes];
 };
 
@@ -605,12 +608,18 @@ struct DEVICE_CONTEXT
 	volatile LONG WorstRenderGapMs;
 	volatile LONG WorstServiceGapMs;
 	volatile LONG WorstSendMs;
+	// The worst send's two halves (LatencyBudget::SplitSendGap): transport time is the link,
+	// resume time is the media work item being scheduled late. Same per-stream reset.
+	volatile LONG WorstSendTransportMs;
+	volatile LONG WorstSendResumeMs;
 	// Timestamps those gaps are measured from and the send in flight: LastRenderTime is guarded by
 	// AudioLock, the rest by MediaLock. 0 means nothing has been measured for this stream yet.
 	ULONGLONG LastRenderTime;
 	ULONGLONG LastRecordTime;
 	ULONGLONG MediaSendStarted;
 	BOOLEAN MediaSendPending;
+	// Last time the send split was logged; bounds a starved work item to one line a second.
+	ULONGLONG MediaSendLogTime;
 	// Consecutive observations each ring has been over its limit. A backlog has to persist before
 	// audio is dropped for it (LatencyBudget::TrimNow), so one copy tick or one record written at
 	// the wrong moment cannot cost a gap. PcmTrimStrikes is guarded by AudioLock, FrameTrimStrikes
@@ -664,6 +673,15 @@ inline void OA2dpNoteGapMs(ULONGLONG& last, volatile LONG& worstMs, ULONGLONG no
 		}
 	}
 	last = now;
+}
+
+// Keeps the worst millisecond figure a stream has seen; every figure starts at 0.
+inline void OA2dpNoteWorstMs(uint32_t ms, volatile LONG& worstMs)
+{
+	if (ms > static_cast<uint32_t>(worstMs))
+	{
+		worstMs = static_cast<LONG>(ms);
+	}
 }
 
 // l2cap/

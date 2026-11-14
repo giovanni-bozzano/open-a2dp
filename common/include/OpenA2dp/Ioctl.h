@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 9;
+constexpr uint32_t kAbiVersion = 10;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -298,6 +298,11 @@ struct Status {
 	uint32_t worstRenderGapMs;
 	uint32_t worstServiceGapMs;
 	uint32_t worstSendMs;
+	// How the worst send divides: time with the transport (the Bluetooth link and controller),
+	// and time from its completion until the media work item ran (scheduling and lock wait).
+	// Only the first is the link; a large second value means the machine starved the work item.
+	uint32_t worstSendTransportMs;
+	uint32_t worstSendResumeMs;
 	uint32_t lastError; // NTSTATUS of the last media failure, 0 if none
 	// Codec chosen by the last AVDTP negotiation (0 = none yet). It is valid
 	// before streaming starts, unlike `codec`, which is set by MediaStart.
@@ -480,7 +485,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 40, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 20, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 352, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 360, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 
