@@ -26,11 +26,12 @@ wake copies what the engine played into the PCM ring, reports the finished packe
   engine runs in event mode and sleeps until the driver reports a packet complete.
   `EvtAcxStreamSetRenderPacket` arrives only after such a notification has woken the engine, and
   position queries come from the engine's or an application's own schedule, so driving
-  completion from them waits on a reply to a message that was never sent. `0d3432a` tried it,
-  with media wakes as a further source, and `cd08d4b` reverted it. Before START there are no media
-  wakes, so the first audio, which is what triggers START, could go unseen. While streaming, an
-  SBC media wake comes once per packet, 20-43 ms apart, longer than a 2 x 10 ms engine buffer, so
-  completions were late and the copy read buffers the engine had not refilled.
+  completion from them waits on a reply to a message that was never sent. Driving it from those
+  events was tried, with media wakes as a further source, and had to be taken back out. Before
+  START there are no media wakes, so the first audio, which is what triggers START, could go
+  unseen. While streaming, an SBC media wake comes once per packet, 20-43 ms apart, longer than a
+  2 x 10 ms engine buffer, so completions were late and the copy read buffers the engine had not
+  refilled.
 - **The 10 ms cap.** With engine packets longer than 10 ms, wakes at the packet boundary alone
   would deliver PCM to the ring in bursts longer than `LatencyBudget::kPcmSlackMs`, which the lead
   floor and `UnitReady` assume the ring never trails the clock by. With shorter packets the cap
