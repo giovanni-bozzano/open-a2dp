@@ -55,8 +55,8 @@ public:
 
 	// Starts a stream. `encoder` must take 16-bit stereo PCM for `params.sampleRate` and is
 	// owned by this object; `params.bitsPerSample` describes the ring, which may be wider.
-	// PCM already buffered in the ring is the beginning of playback, kept by the driver, and is
-	// encoded as the first records.
+	// PCM already buffered in the ring is the beginning of playback, kept by the driver; the
+	// first pump sends the preroll as silence in front of it.
 	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxStreamParams& params,
 			   uint64_t startTimeUs) noexcept;
 
@@ -68,8 +68,10 @@ public:
 	// preroll the kernel paces SBC with.
 	uint64_t TargetSamples(uint64_t nowUs) const noexcept;
 
-	// Encodes everything the clock says is due, writing at most `maxRecords` records. Returns
-	// false on a fatal encoder error; the caller then stops the stream.
+	// Encodes everything the clock says is due whose PCM is in the ring, writing at most
+	// `maxRecords` records; a record waits for its PCM until it is overdue
+	// (LatencyBudget::UnitReady). Returns false on a fatal encoder error; the caller then stops
+	// the stream.
 	bool Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView& frames, size_t maxRecords) noexcept;
 
 	const AptxStreamParams& Params() const noexcept { return params_; }
@@ -77,7 +79,8 @@ public:
 
 private:
 	// Encodes one record covering the clock's 10 ms span plus whatever the frame layout
-	// carried over, zero-filling only the PCM the ring does not hold.
+	// carried over: lead silence still owed first, then PCM, zero-filling only what the ring
+	// does not hold.
 	bool EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept;
 
 	std::unique_ptr<IA2dpEncoder> encoder_;
@@ -85,6 +88,9 @@ private:
 	AptxStreamStats stats_;
 	uint64_t startTimeUs_ = 0;
 	uint64_t producedSamples_ = 0;
+	// Silence still owed in front of the first audio, set on the first pump.
+	uint64_t leadSilence_ = 0;
+	bool leadKnown_ = false;
 	bool active_ = false;
 	bool discontinuity_ = false;
 

@@ -1,6 +1,7 @@
 #include <OpenA2dp/AacStreamEncoder.h>
 
 #include <OpenA2dp/FrameRecord.h>
+#include <OpenA2dp/LatencyBudget.h>
 #include <OpenA2dp/PcmDepth.h>
 
 #include <algorithm>
@@ -69,6 +70,8 @@ bool AacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStr
 	convert24_ = params.bitsPerSample == 24;
 	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
 	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
+	leadSilence_ = 0;
+	leadKnown_ = false;
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -79,6 +82,8 @@ void AacStreamEncoder::Stop() noexcept
 	active_ = false;
 	encoder_.reset();
 	producedSamples_ = 0;
+	leadSilence_ = 0;
+	leadKnown_ = false;
 	discontinuity_ = false;
 }
 
@@ -96,7 +101,16 @@ bool AacStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView&
 	}
 
 	const uint64_t target = TargetSamples(nowUs);
+	if (!leadKnown_) {
+		// The PCM buffered at start is the beginning of playback: the lead goes in front of it.
+		leadSilence_ = LatencyBudget::LeadSilenceSamples(target, pcm.ReadableBytes() / ringBytesPerSample_);
+		leadKnown_ = true;
+	}
 	for (size_t i = 0; i < maxRecords && producedSamples_ < target; ++i) {
+		const uint64_t available = pcm.ReadableBytes() / ringBytesPerSample_ + leadSilence_;
+		if (!LatencyBudget::UnitReady(available, samplesPerFrame_, target - producedSamples_, params_.sampleRate)) {
+			break;
+		}
 		if (!EncodeBlock(pcm, frames)) {
 			return false;
 		}
@@ -106,19 +120,19 @@ bool AacStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView&
 
 bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) noexcept
 {
-	// Every record covers a whole 1024-sample block; a short read is zero-filled, so
-	// a late or empty PCM ring becomes silence instead of a stalled stream. Reading
-	// only the samples due since the last tick would be wrong: the sink plays each
-	// record as 1024 samples, so the padding would insert silence into the middle of
-	// the audio at the tick rate instead of delaying it.
+	// Every record covers a whole 1024-sample block. Lead silence owed at start goes first; the
+	// rest is read from the ring, and only a ring that is still short once the block is overdue
+	// (Pump) leaves a zero-filled tail - an underrun, counted as the record's silence.
 	std::memset(pcmBlock_.data(), 0, pcmBlock_.size());
+	const uint32_t lead = static_cast<uint32_t>(std::min<uint64_t>(leadSilence_, samplesPerFrame_));
+	leadSilence_ -= lead;
+	const uint32_t wanted = (samplesPerFrame_ - lead) * ringBytesPerSample_;
 	uint32_t available = 0;
 	uint32_t availableSamples = 0;
 	if (convert24_) {
 		// The ring carries 24-in-32; the top 16 bits of each sample are the AAC input. A
 		// short read leaves the rest of the block silent, as the 16-bit path does.
-		std::memset(ringBlock_.data(), 0, ringBlock_.size());
-		available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(ringBlock_.size()));
+		available = std::min<uint32_t>(pcm.ReadableBytes(), wanted);
 		available -= available % ringBytesPerSample_;
 		if (available != 0 && !pcm.Read(ringBlock_.data(), available)) {
 			available = 0;
@@ -129,21 +143,22 @@ bool AacStreamEncoder::EncodeBlock(RingBufferView& pcm, RingBufferView& frames) 
 				int32_t sample = 0;
 				std::memcpy(&sample, ringBlock_.data() + (frame * params_.channels + channel) * 4, sizeof(sample));
 				const int16_t narrow = Pcm::Narrow24To16(sample);
-				std::memcpy(pcmBlock_.data() + (frame * params_.channels + channel) * 2, &narrow, sizeof(narrow));
+				std::memcpy(pcmBlock_.data() + ((lead + frame) * params_.channels + channel) * 2, &narrow,
+							sizeof(narrow));
 			}
 		}
 	} else {
-		available = std::min<uint32_t>(pcm.ReadableBytes(), static_cast<uint32_t>(pcmBlock_.size()));
+		available = std::min<uint32_t>(pcm.ReadableBytes(), wanted);
 		available -= available % bytesPerSample_;
-		if (available != 0 && !pcm.Read(pcmBlock_.data(), available)) {
+		if (available != 0 && !pcm.Read(pcmBlock_.data() + static_cast<size_t>(lead) * bytesPerSample_, available)) {
 			available = 0;
 		}
 		availableSamples = available / bytesPerSample_;
 	}
 
 	stats_.pcmBytes += available;
-	// The block is always whole, so its shortfall is exactly the silence this record carries.
-	const uint32_t silenceSamples = samplesPerFrame_ - availableSamples;
+	// The lead is silence on purpose; only what the ring could not supply after it is a gap.
+	const uint32_t silenceSamples = samplesPerFrame_ - lead - availableSamples;
 	stats_.silenceSamples += silenceSamples;
 
 	size_t written = 0;

@@ -120,7 +120,6 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->PacketsSent = 0;
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
-	ctx->MediaCaughtUp = FALSE;
 	MediaStatsReset(ctx);
 	ctx->MediaStartTime = KeQueryInterruptTime();
 	// Hold the lead above one packet: the pacer otherwise asks for audio the copy path has not
@@ -128,6 +127,15 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	if (ctx->MediaOutMtu > Rtp::kHeaderSize)
 	{
 		ApplyLeadFloor(ctx, SbcPacketSamples(ctx));
+	}
+	// The lead the sink starts with is silence in front of whatever audio the ring already holds,
+	// so that audio plays straight into the live audio behind it.
+	{
+		const RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+		const uint64_t buffered = pin.bytesPerFrame != 0 ? ring.ReadableBytes() / pin.bytesPerFrame : 0;
+		const uint64_t leadSilence = LatencyBudget::LeadSilenceSamples(
+			static_cast<uint64_t>(params.sampleRate) * ctx->PacingLeadMs / 1000, buffered);
+		ctx->SbcLeadSilenceFrames = static_cast<ULONG>(leadSilence / params.SamplesPerFrame());
 	}
 	// The copy keeps the endpoint's audio from the first sample this run played and skips only
 	// what came before it (CopyConsumedLocked), so what the wait for this stream cost is that

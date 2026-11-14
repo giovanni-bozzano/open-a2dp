@@ -45,46 +45,40 @@ void ApplyLeadFloor(DEVICE_CONTEXT* ctx, uint32_t unitSamples)
 	}
 }
 
-// True when the PCM ring holds at least the audio of one whole packet. Caller holds MediaLock.
-static bool PcmHasPacket(DEVICE_CONTEXT* ctx, uint32_t packetSamples)
+// PCM samples (per channel) the ring holds at the endpoint's format. Caller holds MediaLock.
+static uint64_t PcmSamples(DEVICE_CONTEXT* ctx)
 {
 	const ULONG frameBytes = ctx->PinBytesPerFrame;
-	if (packetSamples == 0 || frameBytes == 0)
+	if (frameBytes == 0)
 	{
-		return true;
+		return 0;
 	}
 	const RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-	return ring.ReadableBytes() >= static_cast<ULONGLONG>(packetSamples) * frameBytes;
+	return ring.ReadableBytes() / frameBytes;
 }
 
 // SBC: pace from the endpoint clock and encode in the kernel. One packet per run; its
 // completion enqueues the next run, so a backlog drains at transport speed. Caller holds MediaLock.
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick)
 {
-	const ULONGLONG target = TargetSamples(ctx, ctx->Encoder.GetParams().sampleRate);
-
+	const uint32_t rate = ctx->Encoder.GetParams().sampleRate;
+	const ULONGLONG target = TargetSamples(ctx, rate);
 	if (ctx->MediaSamplesSent >= target)
 	{
-		// Caught up with the lead once: from here a short read is starvation, not startup.
-		ctx->MediaCaughtUp = TRUE;
 		return;
 	}
 	if (!MediaSendReady(ctx, tick))
 	{
 		return;
 	}
-	// A packet built from less than a packet of PCM pads the rest with silence, which is a gap the
-	// listener hears. The ring runs level with the clock, so a late copy tick leaves a packet
-	// short; waiting moves that audio from the sink's lead into the ring, and the copy wakes this
-	// work item as soon as a whole packet is there. The wait is bounded by the copy's own slack:
-	// past it the PCM is not late but missing, and holding the packet back would shrink the
-	// sink's lead for the rest of the stream without a single underrun being counted. A paused
-	// endpoint asks for nothing, so it keeps its place instead.
+	// A packet is built from its own PCM: the copy wakes this work item as soon as the ring holds
+	// it, and one built earlier would pad audio that is about to arrive with silence. A paused
+	// endpoint asks for nothing, so its packets are padded to keep the stream's place.
 	const uint32_t packetSamples = SbcPacketSamples(ctx);
-	const ULONGLONG waitLimit = packetSamples +
-		static_cast<ULONGLONG>(ctx->Encoder.GetParams().sampleRate) * LatencyBudget::kPcmSlackMs / 1000;
-	if (ctx->MediaCaughtUp && target - ctx->MediaSamplesSent < waitLimit && AudioStreamRunning(ctx) &&
-		!PcmHasPacket(ctx, packetSamples))
+	const uint64_t available =
+		PcmSamples(ctx) + static_cast<uint64_t>(ctx->SbcLeadSilenceFrames) * ctx->Encoder.GetParams().SamplesPerFrame();
+	if (AudioStreamRunning(ctx) &&
+		!LatencyBudget::UnitReady(available, packetSamples, target - ctx->MediaSamplesSent, rate))
 	{
 		return;
 	}

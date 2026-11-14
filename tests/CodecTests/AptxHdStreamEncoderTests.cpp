@@ -134,9 +134,10 @@ TEST(AptxHdStream_PacesTenMillisecondRecords)
 	CHECK_EQ(record.flags, uint32_t{0});
 }
 
-// 60 ms of 44.1 kHz is 2646 samples, six spans. Only one span is in the ring; the rest is
-// zero-filled, and the record sizes follow the carry rather than a fixed 440 samples.
-TEST(AptxHdStream_ShortRingBecomesSilence)
+// 60 ms of 44.1 kHz is 2646 samples, six spans. Only 440 samples are in the ring, so the rest of
+// the preroll is lead silence in front of them, and the record sizes follow the carry rather
+// than a fixed 440 samples.
+TEST(AptxHdStream_ShortRingLeadsWithSilence)
 {
 	TestRing pcm(64 * 1024);
 	TestRing frames(64 * 1024);
@@ -151,11 +152,12 @@ TEST(AptxHdStream_ShortRingBecomesSilence)
 
 	CHECK_EQ(stream.Stats().records, uint64_t{6});
 	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{440 * 8});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{6 * 441 - 440});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
 }
 
-// One second plus the 60 ms preroll is 106 spans of 441 samples, all silence. A clock that
-// advanced by the encoded samples rather than by the span would trail by 26 samples and grow.
+// One second plus the 60 ms preroll is 106 spans of 441 samples, all lead silence because the
+// ring is empty at the first pump. A clock that advanced by the encoded samples rather than by
+// the span would trail by 26 samples and grow.
 TEST(AptxHdStream_44kClockDoesNotDrift)
 {
 	TestRing pcm(64 * 1024);
@@ -168,7 +170,7 @@ TEST(AptxHdStream_44kClockDoesNotDrift)
 
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 200));
 	CHECK_EQ(stream.Stats().records, uint64_t{106});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{46746});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
 	// Only the 0..3 samples a record cannot encode are still owed to the clock.
 	CHECK(stream.Stats().samples >= 46743);

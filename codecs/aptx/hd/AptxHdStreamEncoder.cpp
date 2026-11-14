@@ -2,6 +2,7 @@
 
 #include <OpenA2dp/AptxHd.h>
 #include <OpenA2dp/FrameRecord.h>
+#include <OpenA2dp/LatencyBudget.h>
 
 #include <algorithm>
 #include <cstring>
@@ -78,6 +79,8 @@ bool AptxHdStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const Apt
 	pendingSilence_ = 0;
 	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
 	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
+	leadSilence_ = 0;
+	leadKnown_ = false;
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -90,6 +93,8 @@ void AptxHdStreamEncoder::Stop() noexcept
 	producedSamples_ = 0;
 	carrySamples_ = 0;
 	pendingSilence_ = 0;
+	leadSilence_ = 0;
+	leadKnown_ = false;
 	discontinuity_ = false;
 }
 
@@ -107,7 +112,16 @@ bool AptxHdStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferVi
 	}
 
 	const uint64_t target = TargetSamples(nowUs);
+	if (!leadKnown_) {
+		// The PCM buffered at start is the beginning of playback: the lead goes in front of it.
+		leadSilence_ = LatencyBudget::LeadSilenceSamples(target, pcm.ReadableBytes() / sampleBytes_);
+		leadKnown_ = true;
+	}
 	for (size_t i = 0; i < maxRecords && producedSamples_ < target; ++i) {
+		const uint64_t available = pcm.ReadableBytes() / sampleBytes_ + leadSilence_;
+		if (!LatencyBudget::UnitReady(available, spanSamples_, target - producedSamples_, params_.sampleRate)) {
+			break;
+		}
 		if (!EncodeRecord(pcm, frames)) {
 			return false;
 		}
@@ -117,23 +131,27 @@ bool AptxHdStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferVi
 
 bool AptxHdStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept
 {
-	// Samples the previous record could not fit go first; a short read is then zero-filled so
-	// a late or empty PCM ring becomes silence instead of a stalled stream.
+	// Samples the previous record could not fit go first, then the lead silence still owed, then
+	// the ring; only a ring still short once the record is overdue (Pump) leaves a zero-filled
+	// tail, which is an underrun.
 	const uint32_t recordBytes = spanSamples_ * sampleBytes_;
 	std::memcpy(pcmRecord_.data(), carryPcm_.data(), static_cast<size_t>(carrySamples_) * sampleBytes_);
 	uint8_t* const spanStart = pcmRecord_.data() + static_cast<size_t>(carrySamples_) * sampleBytes_;
 	std::memset(spanStart, 0, recordBytes);
-	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), recordBytes);
+	const uint32_t lead = static_cast<uint32_t>(std::min<uint64_t>(leadSilence_, spanSamples_));
+	leadSilence_ -= lead;
+	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), (spanSamples_ - lead) * sampleBytes_);
 	available -= available % sampleBytes_;
-	if (available != 0 && !pcm.Read(spanStart, available)) {
+	if (available != 0 && !pcm.Read(spanStart + static_cast<size_t>(lead) * sampleBytes_, available)) {
 		available = 0;
 	}
 
 	const uint32_t readSamples = available / sampleBytes_;
 	stats_.pcmBytes += available;
-	// Saved for the record these samples end up in, which may be the next call's.
-	pendingSilence_ += spanSamples_ - readSamples;
-	stats_.silenceSamples += spanSamples_ - readSamples;
+	// Saved for the record these samples end up in, which may be the next call's. The lead is
+	// silence on purpose, not a gap.
+	pendingSilence_ += spanSamples_ - lead - readSamples;
+	stats_.silenceSamples += spanSamples_ - lead - readSamples;
 
 	const uint32_t totalSamples = carrySamples_ + spanSamples_;
 	const size_t framesInRecord = totalSamples / samplesPerFrame_;

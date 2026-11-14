@@ -99,9 +99,6 @@ inline void MediaStatsReset(DEVICE_CONTEXT* ctx)
 	ctx->WorstSendMs = 0;
 	ctx->LastRecordTime = 0;
 	ctx->MediaSendPending = FALSE;
-	// Whether the previous stream caught up says nothing about this one: left set, it holds every
-	// packet to the clock instead of padding a stream that is still filling its lead.
-	ctx->MediaCaughtUp = FALSE;
 }
 
 // PCM samples (per channel) one SBC packet of this stream carries. Caller holds MediaLock.

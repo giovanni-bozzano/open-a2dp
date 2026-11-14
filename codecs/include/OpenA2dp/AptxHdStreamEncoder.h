@@ -51,7 +51,7 @@ public:
 
 	// Starts a stream. `encoder` must take 24-in-32 PCM for `params` and is owned by this
 	// object. PCM already buffered in the ring is the beginning of playback, kept by the
-	// driver, and is encoded as the first records.
+	// driver; the first pump sends the preroll as silence in front of it.
 	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AptxHdStreamParams& params,
 			   uint64_t startTimeUs) noexcept;
 
@@ -63,16 +63,18 @@ public:
 	// preroll the kernel paces SBC with.
 	uint64_t TargetSamples(uint64_t nowUs) const noexcept;
 
-	// Encodes everything the clock says is due, writing at most `maxRecords` records. Returns
-	// false on a fatal encoder error; the caller then stops the stream.
+	// Encodes everything the clock says is due whose PCM is in the ring, writing at most
+	// `maxRecords` records; a record waits for its PCM until it is overdue
+	// (LatencyBudget::UnitReady). Returns false on a fatal encoder error; the caller then stops
+	// the stream.
 	bool Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView& frames, size_t maxRecords) noexcept;
 
 	const AptxHdStreamParams& Params() const noexcept { return params_; }
 	const AptxHdStreamStats& Stats() const noexcept { return stats_; }
 
 private:
-	// Encodes one 10 ms record of framesInRecord frames, reading a full span of PCM and
-	// zero-filling only what the ring does not hold.
+	// Encodes one 10 ms record of framesInRecord frames: lead silence still owed first, then
+	// PCM, zero-filling only what the ring does not hold.
 	bool EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept;
 
 	std::unique_ptr<IA2dpEncoder> encoder_;
@@ -80,6 +82,9 @@ private:
 	AptxHdStreamStats stats_;
 	uint64_t startTimeUs_ = 0;
 	uint64_t producedSamples_ = 0;
+	// Silence still owed in front of the first audio, set on the first pump.
+	uint64_t leadSilence_ = 0;
+	bool leadKnown_ = false;
 	bool active_ = false;
 	bool discontinuity_ = false;
 

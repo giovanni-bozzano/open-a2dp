@@ -5,8 +5,8 @@
 // The service owns the AAC media clock (docs/architecture/AAC-Service-Boundary.md section 7):
 // on every WAIT_EVENT tick it tells this object how much time has elapsed, and
 // the object encodes a whole 1024-sample block whenever the clock has made one
-// due, pulling a full block of PCM from the shared PCM ring (zero-filling only
-// when the ring is short) and writing one LATM AudioMuxElement per frame into
+// due and its PCM is in the shared PCM ring (zero-filling only a block that is
+// overdue and still short), and writes one LATM AudioMuxElement per frame into
 // the shared frame ring. Everything here is clock-injected, so the pacing rules
 // are unit-tested with fake time.
 //
@@ -61,7 +61,7 @@ public:
 	// Starts a stream. `encoder` must be created for `params` (44.1 kHz stereo
 	// AAC-LC) and is owned by this object. PCM already buffered in the ring is the
 	// beginning of playback - the driver keeps it and drops what really predates
-	// the stream - so it is encoded as the first records above the preroll.
+	// the stream - so the first pump sends the preroll as silence in front of it.
 	// `startTimeUs` is the clock value that corresponds to stream start.
 	bool Start(std::unique_ptr<IA2dpEncoder> encoder, const AacStreamParams& params,
 			   uint64_t startTimeUs) noexcept;
@@ -74,18 +74,18 @@ public:
 	// including the preroll. Exposed for logging and tests.
 	uint64_t TargetSamples(uint64_t nowUs) const noexcept;
 
-	// Encodes everything the clock says is due, pulling PCM from `pcm` and
-	// writing at most `maxRecords` records to `frames`. Returns false on a fatal
-	// encoder error; the caller then stops the stream.
+	// Encodes everything the clock says is due whose PCM is in `pcm`, writing at most
+	// `maxRecords` records to `frames`. A block waits for its PCM until it is a block plus the
+	// copy slack overdue (LatencyBudget::UnitReady). Returns false on a fatal encoder error; the
+	// caller then stops the stream.
 	bool Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView& frames, size_t maxRecords) noexcept;
 
 	const AacStreamParams& Params() const noexcept { return params_; }
 	const AacStreamStats& Stats() const noexcept { return stats_; }
 
 private:
-	// Encodes one whole 1024-sample block, reading a full block of PCM and
-	// zero-filling only what the ring does not hold. Returns false on a fatal
-	// encoder error.
+	// Encodes one whole 1024-sample block: the lead silence still owed, then PCM from the ring,
+	// zero-filling only what the ring does not hold. Returns false on a fatal encoder error.
 	bool EncodeBlock(RingBufferView& pcm, RingBufferView& frames) noexcept;
 
 	std::unique_ptr<IA2dpEncoder> encoder_;
@@ -93,6 +93,9 @@ private:
 	AacStreamStats stats_;
 	uint64_t startTimeUs_ = 0;
 	uint64_t producedSamples_ = 0;
+	// Silence still owed in front of the first audio, set on the first pump.
+	uint64_t leadSilence_ = 0;
+	bool leadKnown_ = false;
 	bool active_ = false;
 	bool discontinuity_ = false;
 

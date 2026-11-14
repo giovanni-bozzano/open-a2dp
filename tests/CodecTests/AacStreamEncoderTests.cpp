@@ -194,9 +194,11 @@ TEST(AacStream_StartAcceptsWorstCaseCapacity)
 	WritePcm(pcm, 0, 4096);
 	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
 
-	CHECK_EQ(stream.Stats().records, uint64_t{7});
+	// 7056 samples are due: 2960 of lead in front of the 4096 buffered make six whole blocks, and
+	// the seventh waits for its PCM.
+	CHECK_EQ(stream.Stats().records, uint64_t{6});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
-	CHECK_EQ(fake->calls, 7);
+	CHECK_EQ(fake->calls, 6);
 }
 
 TEST(AacStream_RealEncoderStartsAndProducesRecords)
@@ -260,7 +262,9 @@ TEST(AacStream_OversizeActualFrameIsFatal)
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{1});
 }
 
-TEST(AacStream_PumpEncodesPreroll)
+// The preroll is silence in front of the PCM buffered at start, never padding behind it: the
+// buffered audio has to run straight into the live audio that follows.
+TEST(AacStream_PumpPutsThePrerollInFrontOfBufferedPcm)
 {
 	TestRing pcm(64 * 1024);
 	TestRing frames(64 * 1024);
@@ -269,26 +273,30 @@ TEST(AacStream_PumpEncodesPreroll)
 	FakeEncoder* fake = encoder.get();
 	AacStreamEncoder stream;
 	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 5000));
-	WritePcm(pcm, 0, 2048);
+	WritePcm(pcm, 1, 2048);
 
+	// 2646 samples are due: 598 of lead, then the 2048 buffered. Two blocks are whole; the third
+	// would be 598 samples of audio and the rest silence, so it waits for its PCM instead.
 	REQUIRE(stream.Pump(5000, pcm.view, frames.view, 8));
-	CHECK_EQ(stream.Stats().records, uint64_t{3});
-	CHECK_EQ(stream.Stats().samples, uint64_t{3 * Ioctl::kAacSamplesPerFrame});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{1024});
-	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{2 * kBlockBytes});
-	CHECK_EQ(fake->calls, 3);
+	CHECK_EQ(stream.Stats().records, uint64_t{2});
+	CHECK_EQ(stream.Stats().samples, uint64_t{2 * Ioctl::kAacSamplesPerFrame});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{(2048 - 598) * kStereoBytesPerSample});
+	CHECK_EQ(fake->calls, 2);
+	REQUIRE(fake->blocks.size() == size_t{2});
+	CHECK_EQ(fake->blocks[0][0], int16_t{0});
+	CHECK_EQ(fake->blocks[0][597 * 2 + 1], int16_t{0});
+	CHECK_EQ(fake->blocks[0][598 * 2], int16_t{1});
+	CHECK_EQ(fake->blocks[1][0], int16_t{1 + (1024 - 598) * 2});
 
 	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
 	FrameRecord::Record record;
 	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
 	CHECK_EQ(record.samples, Ioctl::kAacSamplesPerFrame);
+	CHECK_EQ(record.silenceSamples, uint32_t{0});
 	CHECK_EQ(record.flags, Ioctl::kFrameFlagDiscontinuity);
 	CHECK_EQ(record.payloadLength, static_cast<uint32_t>(fake->frameBytes + fake->latmOverhead));
 	CHECK_EQ(record.payload[0], uint8_t{0x7F});
-
-	// The other two records are contiguous.
-	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
-	CHECK_EQ(record.flags, uint32_t{0});
 	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
 	CHECK_EQ(record.flags, uint32_t{0});
 }
@@ -353,7 +361,9 @@ TEST(AacStream_HonoursRecordLimit)
 	CHECK_EQ(stream.Stats().records, uint64_t{5});
 }
 
-TEST(AacStream_PadsShortInputWithSilence)
+// A block whose PCM is late waits for it; only once it is a block plus the copy slack overdue is
+// its PCM missing, and then the shortfall is zero-filled and reported as the record's silence.
+TEST(AacStream_PadsABlockOnlyOnceItsPcmIsMissing)
 {
 	TestRing pcm(64 * 1024);
 	TestRing frames(64 * 1024);
@@ -364,20 +374,27 @@ TEST(AacStream_PadsShortInputWithSilence)
 	REQUIRE(stream.Start(std::move(encoder), AacStreamParams{}, 0));
 	WritePcm(pcm, 1234, Ioctl::kAacSamplesPerFrame);
 
-	// 100 ms needs 4410 + 2646 = 7056 samples: 7 blocks from 1 block of PCM.
-	REQUIRE(stream.Pump(100000, pcm.view, frames.view, 8));
-	CHECK_EQ(stream.Stats().records, uint64_t{7});
-	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{kBlockBytes});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{6 * Ioctl::kAacSamplesPerFrame});
-	REQUIRE(fake->blocks.size() == size_t{7});
+	// 2646 due: 1622 of lead and the 1024 buffered fill two blocks; 598 samples of PCM remain.
+	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{2});
+	// 20 ms later 1480 samples are due, still less than a block plus 20 ms of slack: wait.
+	REQUIRE(stream.Pump(20000, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{2});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+	// At 30 ms 1921 are due: the PCM is missing, so the block is sent with a silent tail.
+	REQUIRE(stream.Pump(30000, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{3});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{1024 - 598});
+	REQUIRE(fake->blocks.size() == size_t{3});
+	CHECK(fake->blocks[2][0] != int16_t{0});
+	CHECK_EQ(fake->blocks[2][598 * 2], int16_t{0});
 
-	// The real PCM is consumed first, then the ring is empty and becomes silence.
-	CHECK_EQ(fake->blocks[0][0], int16_t{1234});
-	CHECK_EQ(fake->blocks[0][1], int16_t{1235});
-	for (size_t block = 1; block < fake->blocks.size(); ++block) {
-		CHECK_EQ(fake->blocks[block][0], int16_t{0});
-		CHECK_EQ(fake->blocks[block][1], int16_t{0});
-	}
+	uint8_t storage[Ioctl::kMaxFrameRecordBytes];
+	FrameRecord::Record record;
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	REQUIRE(FrameRecord::Read(frames.view, storage, sizeof(storage), record) == FrameRecord::ReadResult::Record);
+	CHECK_EQ(record.silenceSamples, uint32_t{1024 - 598});
 }
 
 TEST(AacStream_PrimingProducesNoRecords)
@@ -489,11 +506,11 @@ TEST(AacStream_Converts24In32RingToEncoderInput)
 	}
 
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
-	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{2 * Ioctl::kAacSamplesPerFrame * 8});
-	// 60 ms of preroll asks for three blocks; the third one finds the ring empty and is
-	// encoded as silence.
-	REQUIRE(fake->blocks.size() == size_t{3});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{Ioctl::kAacSamplesPerFrame});
-	CHECK_EQ(fake->blocks[0][0], int16_t{0x1234}); // 0x56 rounds down
-	CHECK_EQ(fake->blocks[0][1], int16_t{0x5679}); // 0x9A rounds up
+	// 60 ms of preroll asks for 2646 samples: 598 of lead in front of the 2048 buffered make two
+	// whole blocks, and the rest waits for the PCM that follows it.
+	REQUIRE(fake->blocks.size() == size_t{2});
+	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{(2 * Ioctl::kAacSamplesPerFrame - 598) * 8});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+	CHECK_EQ(fake->blocks[0][598 * 2], int16_t{0x1234});     // 0x56 rounds down
+	CHECK_EQ(fake->blocks[0][598 * 2 + 1], int16_t{0x5679}); // 0x9A rounds up
 }

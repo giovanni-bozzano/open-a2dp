@@ -215,11 +215,12 @@ TEST(AptxStream_44kClockDoesNotDrift)
 	AptxStreamEncoder stream;
 	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
-	// One second plus the 60 ms preroll is 106 spans of 441 samples, all silence. A clock that
+	// One second plus the 60 ms preroll is 106 spans of 441 samples. The ring is empty at the first
+	// pump, so all of it is lead silence - sent on purpose, not counted as a gap. A clock that
 	// advanced by the encoded samples rather than by the span would trail by 26 samples.
 	REQUIRE(stream.Pump(1000000, pcm.view, frames.view, 200));
 	CHECK_EQ(stream.Stats().records, uint64_t{106});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{46746});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
 	// Only the 0..3 samples a record cannot encode are still owed to the clock.
 	CHECK(stream.Stats().samples >= 46743);
@@ -322,7 +323,7 @@ TEST(AptxStream_FullFrameRingDropsRecords)
 	CHECK_EQ(record.flags, uint32_t{0});
 }
 
-TEST(AptxStream_ShortRingBecomesSilence)
+TEST(AptxStream_ShortRingWaitsThenBecomesSilence)
 {
 	TestRing pcm(64 * 1024);
 	TestRing frames(64 * 1024);
@@ -332,14 +333,20 @@ TEST(AptxStream_ShortRingBecomesSilence)
 	AptxStreamEncoder stream;
 	REQUIRE(stream.Start(MakeEncoder(Aptx::kSampleRate44100), params, 0));
 
-	// One span of PCM for six due records: every missing sample becomes silence, and the one
-	// sample the first record cannot fit is still carried.
+	// One span of PCM for six due spans: the other five are the lead, in front of it.
 	WritePcm(pcm, 1, 441);
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 8));
-
 	CHECK_EQ(stream.Stats().records, uint64_t{6});
 	CHECK_EQ(stream.Stats().pcmBytes, uint64_t{441 * 4});
-	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{2646 - 441});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+
+	// With the ring empty, the next span waits for its PCM until it is a span plus 20 ms overdue,
+	// and only then is it sent as silence - a gap, counted as one.
+	REQUIRE(stream.Pump(29000, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{6});
+	REQUIRE(stream.Pump(30000, pcm.view, frames.view, 8));
+	CHECK_EQ(stream.Stats().records, uint64_t{7});
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{441});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
 }
 

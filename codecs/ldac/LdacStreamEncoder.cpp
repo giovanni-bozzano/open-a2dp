@@ -1,6 +1,7 @@
 #include <OpenA2dp/LdacStreamEncoder.h>
 
 #include <OpenA2dp/FrameRecord.h>
+#include <OpenA2dp/LatencyBudget.h>
 #include <OpenA2dp/PcmDepth.h>
 
 #include <algorithm>
@@ -71,6 +72,8 @@ bool LdacStreamEncoder::Start(std::unique_ptr<IA2dpEncoder> encoder, const LdacS
 	convert24_ = convert24;
 	// Nothing is discarded here: the driver drops the PCM that predates the stream and keeps the
 	// beginning of playback, so what the ring holds is the first audio this stream has to encode.
+	leadSilence_ = 0;
+	leadKnown_ = false;
 	discontinuity_ = true;
 	active_ = true;
 	return true;
@@ -83,6 +86,8 @@ void LdacStreamEncoder::Stop() noexcept
 	producedSamples_ = 0;
 	pendingSamples_ = 0;
 	pendingSilence_ = 0;
+	leadSilence_ = 0;
+	leadKnown_ = false;
 	discontinuity_ = false;
 }
 
@@ -100,7 +105,16 @@ bool LdacStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView
 	}
 
 	const uint64_t target = TargetSamples(nowUs);
+	if (!leadKnown_) {
+		// The PCM buffered at start is the beginning of playback: the lead goes in front of it.
+		leadSilence_ = LatencyBudget::LeadSilenceSamples(target, pcm.ReadableBytes() / ringSampleBytes_);
+		leadKnown_ = true;
+	}
 	for (size_t i = 0; i < maxRecords && producedSamples_ < target; ++i) {
+		const uint64_t available = pcm.ReadableBytes() / ringSampleBytes_ + leadSilence_;
+		if (!LatencyBudget::UnitReady(available, samplesPerFrame_, target - producedSamples_, params_.sampleRate)) {
+			break;
+		}
 		if (!EncodeRecord(pcm, frames)) {
 			return false;
 		}
@@ -110,19 +124,23 @@ bool LdacStreamEncoder::Pump(uint64_t nowUs, RingBufferView& pcm, RingBufferView
 
 bool LdacStreamEncoder::EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept
 {
-	// A short read is zero-filled so a late or empty PCM ring becomes silence instead of a
-	// stalled stream.
+	// Lead silence still owed goes first, then the ring; only a ring still short once the unit is
+	// overdue (Pump) leaves a zero-filled tail, which is an underrun.
 	const uint32_t recordBytes = samplesPerFrame_ * ringSampleBytes_;
 	std::memset(pcmRecord_.data(), 0, recordBytes);
-	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), recordBytes);
+	const uint32_t lead = static_cast<uint32_t>(std::min<uint64_t>(leadSilence_, samplesPerFrame_));
+	leadSilence_ -= lead;
+	uint32_t available = std::min<uint32_t>(pcm.ReadableBytes(), (samplesPerFrame_ - lead) * ringSampleBytes_);
 	available -= available % ringSampleBytes_;
-	if (available != 0 && !pcm.Read(pcmRecord_.data(), available)) {
+	if (available != 0 && !pcm.Read(pcmRecord_.data() + static_cast<size_t>(lead) * ringSampleBytes_, available)) {
 		available = 0;
 	}
 	stats_.pcmBytes += available;
-	// Saved for the record this unit ends up in, which may be a later call's output.
-	pendingSilence_ += samplesPerFrame_ - available / ringSampleBytes_;
-	stats_.silenceSamples += samplesPerFrame_ - available / ringSampleBytes_;
+	// Saved for the record this unit ends up in, which may be a later call's output. The lead is
+	// silence on purpose, not a gap.
+	const uint32_t silence = samplesPerFrame_ - lead - available / ringSampleBytes_;
+	pendingSilence_ += silence;
+	stats_.silenceSamples += silence;
 
 	// A wide ring holds 24-in-32 words; the encoder takes 16-bit samples, narrowed the way the
 	// kernel SBC path narrows the same ring.

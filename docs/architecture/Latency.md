@@ -70,8 +70,12 @@ single largest fixed part of it.
    the endpoint runs (`AudioStreamRunning`): a paused endpoint suspends the stream instead (see
    [driver lifecycle](Driver-Lifecycle.md#acx-audio)), so its silence is a pause, not a gap.
    Only the due window counts:
-   the silence a stream pads while it fills its lead, and the frames a packet carries past the
-   target, are normal and would otherwise make the number noise. That is the number the exit
+   the lead a stream starts with is silence sent on purpose in front of its first audio
+   (`LatencyBudget::LeadSilenceSamples`), not a short read, and the frames a packet carries
+   past the target are normal; counting either would make the number noise. After the lead
+   every packet waits for its own PCM (`LatencyBudget::UnitReady`) and is padded only once it
+   is a packet plus `kPcmSlackMs` overdue, so a silence that is counted is one the listener
+   hears. That is the number the exit
    gate below means: without it a lead too short for a sink was audible but invisible on the
    codec the driver uses by default.
 4. **The presentation position matches the ear.** The stream is sent `PacingLeadMs` ahead of
@@ -120,9 +124,10 @@ Every software lever in this document is in place; what is left needs a sink and
 2. **The trim policy is tested, its effect is not.** The limits and their arithmetic are
    covered in user mode (`LatencyBudget_*`, `FrameRecord_Trim*`, `PcmBacklog_*`); whether the
    sink hears one gap rather than a dropout after a stall needs hardware.
-3. **A long lead costs start-up silence.** A stream with a 200 ms lead sends 200 ms of silence
-   before the first real sample, because the pacer pads what the ring does not have. That is
-   the lead working as configured, not a fault, but it is why the default stays at 60 ms.
+3. **A long lead costs start-up silence.** A stream with a 200 ms lead sends up to 200 ms of
+   silence before the first real sample: the lead minus whatever audio the ring kept from the
+   endpoint's first sample, sent in front of that audio. That is the lead working as
+   configured, not a fault, but it is why the default stays at 60 ms.
 4. **The sink's buffer still starts where ours ends.** The delay we report covers the lead we
    hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
    Windows' latency figure is a lower bound rather than the audible total.

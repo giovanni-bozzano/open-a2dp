@@ -76,16 +76,36 @@ constexpr uint32_t LeadFloorMs(uint32_t unitSamples, uint32_t sampleRate) noexce
 	return (unitSamples * 1000u + sampleRate - 1) / sampleRate + kPcmSlackMs;
 }
 
+// Silence a stream starts with: what the clock already asks for beyond the PCM buffered when the
+// stream starts. It goes in front of that PCM, never after it - padding the lead behind the
+// buffered audio would play it, then a gap, then live audio. From then on the ring holds exactly
+// what the clock asks for, so every later unit can wait for its own PCM (UnitReady).
+constexpr uint64_t LeadSilenceSamples(uint64_t dueSamples, uint64_t bufferedSamples) noexcept
+{
+	return dueSamples > bufferedSamples ? dueSamples - bufferedSamples : 0;
+}
+
+// Whether a unit (an SBC packet, an AAC block, a service record) of `unitSamples` is encoded now.
+// `availableSamples` is the PCM in the ring plus any lead silence still owed; `dueSamples` is how
+// far the clock is past what was sent. A unit whose PCM is there is ready. One whose PCM is not is
+// normally a copy tick away, and encoding it now would zero-fill audio that is about to arrive -
+// a gap in the middle of the stream. Only once the clock is a whole unit plus the copy slack past
+// what was sent is the PCM missing rather than late, and the unit is padded: an underrun.
+constexpr bool UnitReady(uint64_t availableSamples, uint32_t unitSamples, uint64_t dueSamples,
+						 uint32_t sampleRate) noexcept
+{
+	return availableSamples >= unitSamples ||
+		   dueSamples >= unitSamples + static_cast<uint64_t>(sampleRate) * kPcmSlackMs / 1000;
+}
+
 // PCM the media clock asked for that the ring did not have - the gap a listener hears.
 //
 // A packet carries more samples than the clock has asked for, because it is built whole, and
-// the frames past the due point are normally not in the ring yet: that audio is what the sink
-// is meant to buffer, so a short tail is not a fault. Nor is the silence a stream pads while
-// it fills its lead at start, which is why `caughtUp` has to be true before anything counts;
-// otherwise every healthy stream would report an underrun of one lead.
-constexpr uint32_t UnderrunSamples(uint32_t silentSamples, uint32_t dueSamples, bool caughtUp) noexcept
+// the frames past the due point are not a gap: that audio is what the sink is meant to buffer.
+// The lead a stream starts with is silence sent on purpose (LeadSilenceSamples), not a short read,
+// so it never reaches this count.
+constexpr uint32_t UnderrunSamples(uint32_t silentSamples, uint32_t dueSamples) noexcept
 {
-	if (!caughtUp || dueSamples == 0) return 0;
 	return silentSamples < dueSamples ? silentSamples : dueSamples;
 }
 

@@ -115,8 +115,10 @@ At stream start the driver flushes the frame ring before it latches
 `kEventStreamStart`, so the service never sends a stale encoded frame. The PCM ring is
 the driver's to decide: `MediaStart` drops it when it predates the stream (another format,
 or a run that never played) and keeps it when it is the beginning of playback, so the
-service encodes what is there instead of discarding it. That is also why every service
-encoder reports the PCM it had to zero-fill in its record (`silenceSamples`).
+service encodes what is there instead of discarding it: its first pump sends the preroll
+minus that buffered PCM as silence in front of it (`LatencyBudget::LeadSilenceSamples`).
+Each record reports the PCM the service had to zero-fill after that lead
+(`silenceSamples`), which is a gap and not the lead.
 
 ## 4. Frame records
 
@@ -129,7 +131,7 @@ is `size - sizeof(FrameRecordHeader)` and records are never padded:
 | `magic` | `kFrameRecordMagic` |
 | `size` | whole record including the header |
 | `samples` | PCM samples the payload covers (1024 for AAC-LC) |
-| `silenceSamples` | PCM samples in `samples` the service had to zero-fill |
+| `silenceSamples` | PCM samples in `samples` the service had to zero-fill because the ring was short (the start-up lead is not counted) |
 | `flags` | `kFrameFlagDiscontinuity` after a gap |
 
 Write and read are atomic per record:
@@ -253,12 +255,15 @@ No driver wait depends on the service.
 ## 7. Pacing and timestamps
 
 The service owns the media clock for AAC and both aptX codecs. `elapsed * rate + preroll`
-(the formula the SBC path uses today) says how much audio must have been encoded by now;
-whenever it exceeds
-what has been produced, a whole 1024-sample block is encoded and a full block of PCM is
-pulled from the ring, zero-filling only what the ring does not hold. A record always
-covers 1024 samples: reading just the samples due since the last tick and padding the
-rest would insert silence into the middle of the audio at the tick rate. The driver no
+(the formula the SBC path uses today) says how much audio must have been encoded by now.
+The first pump sends what that asks for beyond the PCM already buffered as silence in front
+of it, so from then on the ring holds exactly what the clock asks for. A whole 1024-sample
+block is then encoded once its PCM is in the ring (`LatencyBudget::UnitReady`): encoding it
+as soon as one sample is due would zero-fill audio that is a copy tick away and play it as
+a gap. Only a block a whole block plus `kPcmSlackMs` overdue is padded, which is a real
+underrun and is reported. A record always covers 1024 samples: reading just the samples due
+since the last tick and padding the rest would insert silence into the middle of the audio
+at the tick rate. The driver no
 longer computes a target for AAC; it only drains the frame ring, one packet per
 media-clock tick or send completion, and advances the RTP timestamp by each record's
 `samples`. The aptX encoders follow the same clock with ten-millisecond records of whole

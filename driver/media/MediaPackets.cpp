@@ -141,12 +141,21 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 	uint32_t silentSamples = 0;
 	for (size_t i = 0; i < frameCount; ++i)
 	{
-		// AudioReadPcm returns frames, which is the same unit as SamplesPerFrame: both count one
-		// sample per channel. The shortfall is already samples, so it is added as read.
-		const ULONG read = AudioReadPcm(ctx, ctx->PcmBuffer, spf);
-		if (read < spf)
+		if (ctx->SbcLeadSilenceFrames != 0)
 		{
-			silentSamples += spf - read;
+			// The lead goes in front of the stream's first audio and is not a short read.
+			--ctx->SbcLeadSilenceFrames;
+			RtlZeroMemory(ctx->PcmBuffer, sizeof(ctx->PcmBuffer));
+		}
+		else
+		{
+			// AudioReadPcm returns frames, which is the same unit as SamplesPerFrame: both count
+			// one sample per channel. The shortfall is already samples, so it is added as read.
+			const ULONG read = AudioReadPcm(ctx, ctx->PcmBuffer, spf);
+			if (read < spf)
+			{
+				silentSamples += spf - read;
+			}
 		}
 		const size_t written = ctx->Encoder.Encode(ctx->PcmBuffer, ctx->MediaBuffer + offset, sizeof(ctx->MediaBuffer) - offset);
 		if (written == 0)
@@ -162,7 +171,7 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 	uint32_t missing = 0;
 	if (AudioStreamRunning(ctx))
 	{
-		missing = LatencyBudget::UnderrunSamples(silentSamples, dueSamples, ctx->MediaCaughtUp != FALSE);
+		missing = LatencyBudget::UnderrunSamples(silentSamples, dueSamples);
 	}
 	if (missing != 0)
 	{

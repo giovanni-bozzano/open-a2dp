@@ -292,27 +292,52 @@ TEST(LatencyBudget_LeadFloorCoversOneAccessUnit)
 	CHECK(LeadFloorMs(Ioctl::kAacSamplesPerFrame, 44100) > Ioctl::kMinPrerollMs);
 }
 
-// An underrun is audio the media clock asked for that the ring did not have. Two kinds of
-// silence are normal and must not count, or the number the panel shows would fire on a stream
-// with nothing wrong with it: the lead a stream pads at start, and the tail of a packet, which
-// is built whole and therefore reaches past the clock into audio the sink is meant to buffer.
+// An underrun is audio the media clock asked for that the ring did not have. The tail of a
+// packet is built whole and reaches past the clock into audio the sink is meant to buffer, so
+// silence there must not count, or the number the panel shows would fire on a healthy stream.
 TEST(LatencyBudget_UnderrunOnlyCountsDueAudio)
 {
 	using namespace LatencyBudget;
 	constexpr uint32_t kPacket = 7 * 128;
 
-	// Filling the lead at start: silence, but the stream has not caught up yet.
-	CHECK_EQ(UnderrunSamples(kPacket, kPacket, false), uint32_t{0});
-	// Caught up and nothing at all in the ring: the whole packet is a gap.
-	CHECK_EQ(UnderrunSamples(kPacket, kPacket, true), kPacket);
+	// Nothing at all in the ring: the whole packet is a gap.
+	CHECK_EQ(UnderrunSamples(kPacket, kPacket), kPacket);
 	// Only 128 samples are due, so 300 missing is still a 128-sample gap: the rest is the tail
 	// the sink buffers.
-	CHECK_EQ(UnderrunSamples(300, 128, true), uint32_t{128});
+	CHECK_EQ(UnderrunSamples(300, 128), uint32_t{128});
 	// A short tail inside the window counts exactly what is missing.
-	CHECK_EQ(UnderrunSamples(40, 128, true), uint32_t{40});
+	CHECK_EQ(UnderrunSamples(40, 128), uint32_t{40});
 	// Nothing missing, or nothing due, is not an underrun.
-	CHECK_EQ(UnderrunSamples(0, 128, true), uint32_t{0});
-	CHECK_EQ(UnderrunSamples(64, 0, true), uint32_t{0});
+	CHECK_EQ(UnderrunSamples(0, 128), uint32_t{0});
+	CHECK_EQ(UnderrunSamples(64, 0), uint32_t{0});
+}
+
+// A stream starts with the lead minus what is already buffered, as silence in front of that
+// audio: buffered audio then runs straight into live audio instead of being followed by padding.
+TEST(LatencyBudget_LeadSilenceGoesInFrontOfBufferedAudio)
+{
+	using namespace LatencyBudget;
+	CHECK_EQ(LeadSilenceSamples(2646, 0), uint64_t{2646});
+	CHECK_EQ(LeadSilenceSamples(2646, 1000), uint64_t{1646});
+	// More buffered than the lead: no silence at all, the audio is simply sent.
+	CHECK_EQ(LeadSilenceSamples(2646, 4000), uint64_t{0});
+}
+
+// A unit waits for its PCM while that PCM is only a copy tick late, and is padded only once the
+// clock is a unit plus the copy slack ahead - the point where waiting longer would starve the sink.
+TEST(LatencyBudget_UnitWaitsForItsPcmUntilItIsMissing)
+{
+	using namespace LatencyBudget;
+	constexpr uint32_t kRate = 44100;
+	constexpr uint32_t kUnit = 1024;
+	constexpr uint64_t kSlack = kRate * kPcmSlackMs / 1000;
+	// The PCM is there (lead silence counts as PCM): encode.
+	CHECK(UnitReady(kUnit, kUnit, 1, kRate));
+	// One sample due but the block's PCM is still arriving: wait instead of zero-filling it.
+	CHECK(!UnitReady(kUnit - 1, kUnit, 1, kRate));
+	CHECK(!UnitReady(0, kUnit, kUnit + kSlack - 1, kRate));
+	// A unit plus the slack due and still no PCM: it is missing, so pad it.
+	CHECK(UnitReady(0, kUnit, kUnit + kSlack, kRate));
 }
 
 TEST(RingBuffer_WrapAround)

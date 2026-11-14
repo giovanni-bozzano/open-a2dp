@@ -310,13 +310,14 @@ TEST(Ldac_StreamPacesOneFrameRecords)
 	// 60 ms of preroll is the whole target at the start.
 	CHECK_EQ(stream.TargetSamples(1000), uint64_t{2880});
 
-	// An empty PCM ring becomes silence instead of a stalled stream: the clock's samples are all
-	// consumed, in whole encoder units. Records only appear once the encoder holds a full
-	// packet, so they trail the consumption by whatever is still pending.
-	const uint64_t consumed = ((2880 + kSamplesPerFrame - 1) / kSamplesPerFrame) * kSamplesPerFrame;
+	// An empty PCM ring at the first pump makes the whole target lead silence: sent in whole
+	// encoder units and not counted as a gap. The unit the lead only half fills waits for its
+	// PCM. Records only appear once the encoder holds a full packet, so they trail the
+	// consumption by whatever is still pending.
+	const uint64_t consumed = (2880 / kSamplesPerFrame) * kSamplesPerFrame;
 	REQUIRE(stream.Pump(1000, pcm.view, frames.view, 64));
 	CHECK(stream.Stats().records > 0);
-	CHECK_EQ(stream.Stats().silenceSamples, consumed);
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
 	CHECK(stream.Stats().samples <= consumed);
 	CHECK_EQ(stream.Stats().samples % kSamplesPerFrame, uint64_t{0});
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
@@ -371,15 +372,18 @@ TEST(Ldac_StreamReadsTheRingItIsGiven)
 	CHECK_EQ(pcm.view.ReadableBytes(), uint32_t{2944 * 4} - static_cast<uint32_t>(consumed * 4));
 
 	// A restart is the same stream, not a new one: the PCM still in the ring is its first audio,
-	// read at the wider layout now, and only the rest of the preroll is silence.
+	// read at the wider layout now, with only the rest of the preroll as lead silence in front.
+	// None of it is a gap, and none of it is lost: what was not read yet waits for its unit.
 	LdacStreamParams wide;
 	wide.sampleRate = 44100;
 	wide.bitsPerSample = 24;
+	const uint32_t remaining = pcm.view.ReadableBytes();
 	REQUIRE(stream.Start(MakeEncoder(kSampleRate44100), wide, 0));
 	REQUIRE(stream.Pump(0, pcm.view, frames.view, 64));
 	CHECK(stream.Stats().records > 0);
 	CHECK(stream.Stats().pcmBytes > 0);
-	CHECK_EQ(stream.Stats().silenceSamples + stream.Stats().pcmBytes / 8, consumed);
+	CHECK_EQ(stream.Stats().silenceSamples, uint64_t{0});
+	CHECK_EQ(stream.Stats().pcmBytes + pcm.view.ReadableBytes(), uint64_t{remaining});
 	CHECK(stream.Stats().samples <= consumed);
 	CHECK_EQ(stream.Stats().encodeErrors, uint64_t{0});
 }
