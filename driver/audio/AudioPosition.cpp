@@ -81,17 +81,12 @@ static void CopySpanLocked(DEVICE_CONTEXT* ctx, RingBufferView& ring, ULONGLONG 
 		ctx->AudioDroppedBytes += pending;
 		ring.Skip(pending);
 	}
-	// Never copy more than one buffer: anything older was already overwritten.
+	// Never copy more than one buffer: anything older was already overwritten, so it is lost - the
+	// clock was starved for longer than the engine buffers.
 	ULONGLONG copied = ctx->AudioCopiedPosition;
 	if (position - copied > bufferSize)
 	{
-		// Only a running stream was going to hear that span. Otherwise the engine simply produced
-		// nothing (it was not rendering, so no event arrived), and counting that as audio the
-		// listener lost would describe a stall as a gap.
-		if (ctx->MediaActive)
-		{
-			ctx->AudioDroppedBytes += position - copied - bufferSize;
-		}
+		ctx->AudioDroppedBytes += position - copied - bufferSize;
 		copied = position - bufferSize;
 	}
 	while (copied < position)
@@ -231,60 +226,76 @@ void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 		}
 	}
 }
-} // namespace OpenA2dpDriver::Audio
 
-// Declared in Driver.h: the media side calls it too, because there is no audio timer polling the
-// render clock. Every event that can arrive while the endpoint renders - the engine releasing a
-// packet, its position queries, any media wake - copies what the clock consumed and tells ACX
-// which packets are done, and that notification is what hands the engine its next buffer. One
-// copy and at most one notification per call, so no event can flood the other side.
-void AudioTick(_In_ DEVICE_CONTEXT* ctx)
+void ArmAudioTimerLocked(DEVICE_CONTEXT* ctx, ULONGLONG position)
 {
-	using namespace OpenA2dpDriver::Audio;
+	LONGLONG due = static_cast<LONGLONG>(AudioFallbackWakeMs) * 10000;
+	const ULONGLONG bytesPerSecond = static_cast<ULONGLONG>(ctx->PinSampleRate) * ctx->PinBytesPerFrame;
+	if (ctx->AudioPacketSize != 0 && bytesPerSecond != 0)
+	{
+		// In (0, packet]: a position on the boundary was completed by the caller, so the next
+		// wake is the end of the packet that starts there. Rounded up, so it is never early.
+		const ULONGLONG remaining = ctx->AudioPacketSize - position % ctx->AudioPacketSize;
+		due = static_cast<LONGLONG>((remaining * 10000000ull + bytesPerSecond - 1) / bytesPerSecond);
+	}
+	// Relative and never zero: a high-resolution timer requires a negative due time.
+	WdfTimerStart(ctx->AudioTimer, -due);
+}
+
+// The QPC time the render clock crossed `boundary`, which is when that packet completed. A
+// timer wakes after the boundary, so stamping the wake instead would report each completion
+// late by a varying amount. Caller holds AudioLock while the stream runs.
+static ULONGLONG BoundaryQpcLocked(const DEVICE_CONTEXT* ctx, ULONGLONG boundary, ULONGLONG now)
+{
+	ULONGLONG frequency;
+	(void)QpcNow(&frequency);
+	if (boundary < ctx->AudioBasePosition || ctx->PinBytesPerFrame == 0 || ctx->PinSampleRate == 0)
+	{
+		return now;
+	}
+	const ULONGLONG frames = (boundary - ctx->AudioBasePosition) / ctx->PinBytesPerFrame;
+	const ULONGLONG qpc = ctx->AudioStartQpc + frames * frequency / ctx->PinSampleRate;
+	return qpc < now ? qpc : now;
+}
+
+// The render clock: copies the packet that just ended into the PCM ring and reports it complete,
+// which is what hands the engine its next buffer, then arms itself for the end of the next one.
+// It re-arms unconditionally while the stream runs; pause and release clear AudioRunning under
+// the lock and stop it with a wait.
+void OnAudioTimer(_In_ WDFTIMER timer)
+{
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfTimerGetParentObject(timer));
 	ACXSTREAM stream = nullptr;
 	ULONGLONG completed = 0;
-	ULONGLONG qpc = 0;
+	ULONGLONG completedQpc = 0;
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	if (!ctx->AudioRunning || ctx->AudioBuffer == nullptr || ctx->AudioPacketSize == 0)
+	if (!ctx->AudioRunning)
 	{
 		KeReleaseSpinLock(&ctx->AudioLock, irql);
 		return;
 	}
+	ULONGLONG qpc;
 	const ULONGLONG position = CurrentPositionLocked(ctx, &qpc);
 	CopyConsumedLocked(ctx, position);
-
-	const ULONGLONG due = position / ctx->AudioPacketSize;
-	if (due > ctx->AudioCompletedPackets)
+	if (ctx->AudioPacketSize != 0)
 	{
-		ctx->AudioCompletedPackets = due;
-		completed = due;
-		stream = ctx->AudioStream;
+		const ULONGLONG due = position / ctx->AudioPacketSize;
+		if (due > ctx->AudioCompletedPackets)
+		{
+			ctx->AudioCompletedPackets = due;
+			completed = due;
+			completedQpc = BoundaryQpcLocked(ctx, due * ctx->AudioPacketSize, qpc);
+			stream = ctx->AudioStream;
+		}
 	}
+	ArmAudioTimerLocked(ctx, position);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
-	if (completed != 0 && stream != nullptr)
+	if (stream != nullptr)
 	{
-		// Outside the lock: this is an ACX call, and ACX must be able to take its own locks.
-		(void)AcxRtStreamNotifyPacketComplete(stream, completed - 1, qpc);
+		// Outside the lock: ACX sets the engine's notification event and takes its own locks.
+		(void)AcxRtStreamNotifyPacketComplete(stream, completed - 1, completedQpc);
 	}
-}
-
-void AudioScheduleTick(_In_ DEVICE_CONTEXT* ctx)
-{
-	if (ctx->AudioTickWorkItem != nullptr)
-	{
-		// Coalesced by WDF: a queued request absorbs every request made while it is pending.
-		WdfWorkItemEnqueue(ctx->AudioTickWorkItem);
-	}
-}
-
-// Declared with the rest of the audio callbacks (AudioInternal.h), so it lives in that namespace;
-// the tick itself is the cross-subsystem entry point declared in Driver.h.
-namespace OpenA2dpDriver::Audio
-{
-void OnAudioTickWorkItem(_In_ WDFWORKITEM workItem)
-{
-	::AudioTick(GetDeviceContext(WdfWorkItemGetParentObject(workItem)));
 }
 } // namespace OpenA2dpDriver::Audio

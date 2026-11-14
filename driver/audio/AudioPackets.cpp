@@ -120,13 +120,10 @@ NTSTATUS OnGetHwLatency(_In_ ACXSTREAM stream, _Out_ ULONG* fifoSize, _Out_ ULON
 	return STATUS_SUCCESS;
 }
 
-// The engine released a packet, so its data is queued and part of it is due now: this is the copy's
-// clock. It also completes the packet the endpoint has finished with, which is what makes the
-// engine's next buffer available - the release and its notification are one exchange, so nothing
-// has to wake between packets.
-NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM stream, _In_ ULONG, _In_ ULONG, _In_ ULONG)
+// The render clock (OnAudioTimer) copies each packet when it ends, whichever one the engine
+// wrote, so a release needs no work here.
+NTSTATUS OnSetRenderPacket(_In_ ACXSTREAM, _In_ ULONG, _In_ ULONG, _In_ ULONG)
 {
-	AudioScheduleTick(GetStreamContext(stream)->Device);
 	return STATUS_SUCCESS;
 }
 
@@ -138,9 +135,6 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket)
 	const ULONGLONG position = CurrentPositionLocked(ctx, nullptr);
 	*currentPacket = ctx->AudioPacketSize == 0 ? 0 : static_cast<ULONG>(position / ctx->AudioPacketSize);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	// The engine asks where the stream is: the packets the clock has passed are done, and saying so
-	// is what hands the buffers back. Scheduled, not notified here, because this is an ACX callback.
-	AudioScheduleTick(ctx);
 	return STATUS_SUCCESS;
 }
 
@@ -159,9 +153,6 @@ NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG posit
 	position = position > lead ? position - lead : 0;
 	*positionInBlocks = bytesPerFrame == 0 ? 0 : position / bytesPerFrame;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	// Same as OnGetCurrentPacket: the answer the engine wants is the completion it has not been
-	// told about yet, and a position query is the event that carries it.
-	AudioScheduleTick(ctx);
 	return STATUS_SUCCESS;
 }
 } // namespace OpenA2dpDriver::Audio

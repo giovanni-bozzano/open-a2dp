@@ -72,11 +72,22 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	WDF_OBJECT_ATTRIBUTES attrs;
 	WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
 	attrs.ParentObject = ctx->Device;
+	// One shot, armed for the end of the packet being played (ArmAudioTimerLocked). High
+	// resolution, because a packet lasts a few milliseconds and a completion one clock tick late
+	// starves an engine buffer that short.
+	WDF_TIMER_CONFIG audioConfig;
+	WDF_TIMER_CONFIG_INIT(&audioConfig, OnAudioTimer);
+	audioConfig.UseHighResolutionTimer = WdfTrue;
+	NTSTATUS status = WdfTimerCreate(&audioConfig, &attrs, &ctx->AudioTimer);
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
 	// One-shot: ends the unplug window that makes Windows rebuild the endpoint after an
 	// endpoint format change (AudioRestartRenderStream).
 	WDF_TIMER_CONFIG flapConfig;
 	WDF_TIMER_CONFIG_INIT(&flapConfig, OnJackFlapTimer);
-	NTSTATUS status = WdfTimerCreate(&flapConfig, &attrs, &ctx->JackFlapTimer);
+	status = WdfTimerCreate(&flapConfig, &attrs, &ctx->JackFlapTimer);
 	if (!NT_SUCCESS(status))
 	{
 		return status;
@@ -88,17 +99,6 @@ NTSTATUS AudioInitialize(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return status;
 	}
-	// The copy and the ACX packet completions run here, woken by the engine's own callbacks and by
-	// the media path. A work item rather than a timer: there is no clock to poll, and ACX must not
-	// be called back from inside one of its callbacks, which a PASSIVE_LEVEL worker avoids.
-	WDF_WORKITEM_CONFIG tickWorkConfig;
-	WDF_WORKITEM_CONFIG_INIT(&tickWorkConfig, OnAudioTickWorkItem);
-	status = WdfWorkItemCreate(&tickWorkConfig, &attrs, &ctx->AudioTickWorkItem);
-	if (!NT_SUCCESS(status))
-	{
-		return status;
-	}
-
 	PACXCIRCUIT_INIT circuitInit = AcxCircuitInitAllocate(ctx->Device);
 	if (circuitInit == nullptr)
 	{

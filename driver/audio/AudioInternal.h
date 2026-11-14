@@ -28,6 +28,11 @@ DECLARE_CONST_UNICODE_STRING(RenderCircuitName, L"Speaker0");
 // Moves the PCM the clock has consumed from the RT buffer into the PCM ring and bounds the
 // backlog. Caller holds AudioLock.
 void CopyConsumedLocked(DEVICE_CONTEXT* ctx, ULONGLONG position);
+// Arms AudioTimer for the end of the packet that is playing at `position`; while the packet size
+// or format is not known yet it wakes after AudioFallbackWakeMs instead, so a running stream is
+// never left without a clock. Caller holds AudioLock and has checked AudioRunning.
+void ArmAudioTimerLocked(DEVICE_CONTEXT* ctx, ULONGLONG position);
+constexpr ULONG AudioFallbackWakeMs = 10;
 
 struct STREAM_CONTEXT
 {
@@ -67,11 +72,12 @@ EVT_ACX_STREAM_GET_HW_LATENCY OnGetHwLatency;
 EVT_ACX_STREAM_SET_RENDER_PACKET OnSetRenderPacket;
 EVT_ACX_STREAM_GET_CURRENT_PACKET OnGetCurrentPacket;
 EVT_ACX_STREAM_GET_PRESENTATION_POSITION OnGetPresentationPosition;
+EVT_WDF_TIMER OnAudioTimer;
 EVT_WDF_TIMER OnJackFlapTimer;
 EVT_WDF_WORKITEM OnJackFlapWorkItem;
-EVT_WDF_WORKITEM OnAudioTickWorkItem;
 EVT_WDF_OBJECT_CONTEXT_DESTROY OnStreamDestroy;
 
+void OnAudioTimer(_In_ WDFTIMER timer);
 ULONGLONG QpcNow(ULONGLONG* frequency);
 ULONGLONG CurrentPositionLocked(DEVICE_CONTEXT* ctx, ULONGLONG* qpc);
 NTSTATUS OnCreateStream(_In_ WDFDEVICE device, _In_ ACXCIRCUIT circuit, _In_ ACXPIN, _In_ PACXSTREAM_INIT streamInit,

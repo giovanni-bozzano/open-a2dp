@@ -248,11 +248,6 @@ static void ArmMediaTimer(DEVICE_CONTEXT* ctx)
 void OnMediaWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
-	// The copy and the render-side completion notifications have no clock of their own: this wake
-	// is one of their two events (the engine releasing a packet is the other), and it happens
-	// before the media lock because the audio path only needs AudioLock. Bounded and skipped
-	// while no stream runs, so a stop in progress costs one locked read.
-	AudioTick(ctx);
 	// A stop in progress clears MediaActive before it waits for MediaLock. Checking it
 	// here, without the lock, means a stream that is being stopped never competes with
 	// the stopper for the lock again, however the lock happens to be handed out.

@@ -9,7 +9,7 @@ Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales 
 | Stage | Set by | Typical |
 |---|---|---|
 | Windows engine buffer | ACX RT packets; size and count chosen by the engine, bounded by `AudioMaxBufferBytes` (`AudioInternal.h`) | 2 × 10 ms = 20 ms |
-| Driver copy granularity | `AudioTickWorkItem` (`AudioPosition.cpp`), woken by the engine releasing a packet, by its position queries and by every media wake: the copy follows events, not a period | one event, whatever the engine picked |
+| Driver copy granularity | `AudioTimer` (`AudioPosition.cpp`), a one-shot high-resolution timer armed for the end of each engine packet: one copy and one completion per packet, whatever size the engine picked | one packet |
 | PCM ring backlog | the lead plus `LatencyBudget::kPcmSlackMs`, `Ioctl::kPcmRingBytes` = 256 KB (sized by time at 96 kHz stereo 24-in-32, where it holds about 340 ms) | under 10 ms |
 | Encoder pacing lead | `Ioctl::kPrerollMs = 60` as the default, overridable per sink through `Preference.prerollMs` (20–200 ms) | 60 ms, or as configured |
 | Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`), or fewer with `Preference.sbcFramesPerPacket`; AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
@@ -85,9 +85,9 @@ single largest fixed part of it.
    `fifoSize` is 0 because the buffered audio is the delay, not a separate FIFO.
 6. **The engine's buffer shape is its own choice.** A packet count above the old limit of 2
    was refused, which fails the endpoint for a stream that asks for more (ACX's timer-driven
-   mode does); the allocation is bounded by bytes instead, and the copy also runs when the
-   engine releases a packet, so a buffer shorter than the 10 ms tick is no longer copied once
-   per tick and dropped in between.
+   mode does); the allocation is bounded by bytes instead, and the copy wakes at each packet
+   boundary, so a buffer shorter than 10 ms is copied once per packet instead of being dropped
+   between fixed ticks.
 7. **The trims are a shared rule, not two constants.** `LatencyBudget::RingLimitMs` is the
    lead plus a slack, and both rings use it; `CommonTests` walks the whole 20-200 ms range and
    checks the limit always exceeds the lead, covers a packet or a record at the shortest lead,

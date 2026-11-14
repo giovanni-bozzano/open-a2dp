@@ -104,11 +104,10 @@ NTSTATUS OnStreamReleaseHardware(_In_ ACXSTREAM stream)
 	ctx->AudioCompletedPackets = 0;
 	ctx->AudioStream = nullptr;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	// A tick that already read the stream reports packet completion to ACX after it drops the
-	// lock, so this is what stopping the old timer with a wait used to guarantee: the run has to
-	// finish before ACX frees the stream. Any tick that starts after the release sees
-	// AudioRunning clear and calls ACX for nothing. Bounded: one copy of what the clock consumed.
-	WdfWorkItemFlush(ctx->AudioTickWorkItem);
+	// A wake that already read the stream reports completion to ACX after it drops the lock, so it
+	// has to finish before ACX frees the stream; one that starts later sees AudioRunning clear
+	// and neither notifies nor re-arms.
+	WdfTimerStop(ctx->AudioTimer, TRUE);
 	if (wasRunning != FALSE)
 	{
 		// Released without a pause - a playback that stopped, or the format change that rebuilds
@@ -158,6 +157,7 @@ NTSTATUS OnStreamRun(_In_ ACXSTREAM stream)
 	ctx->AudioRunning = TRUE;
 	ctx->AudioHeard = 0;
 	ctx->AudioSkippedBytes = 0;
+	ArmAudioTimerLocked(ctx, ctx->AudioBasePosition);
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
 
 	SignalingOnAudioRun(ctx);
@@ -173,6 +173,7 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 	ctx->AudioRunning = FALSE;
 	const ULONGLONG dropped = ctx->AudioDroppedBytes;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	WdfTimerStop(ctx->AudioTimer, TRUE);
 
 	// Cumulative, like the counters a soak reads: the loss is reported once on the pause and kept
 	// in status until the counters are reset.
