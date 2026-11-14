@@ -84,6 +84,7 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 
 		file->Registered = TRUE;
 		file->CodecMask |= bit;
+		file->Generation = static_cast<ULONG>(InterlockedCompareExchange(&ctx->ServiceGeneration, 0, 0));
 		// A new service session starts with no latched events. Anything left over
 		// belongs to the previous handle (for example kEventDeviceGone latched when
 		// it closed) and must not be delivered to this one.

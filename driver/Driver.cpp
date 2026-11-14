@@ -97,7 +97,9 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 	}
 	KeSetEvent(&ctx->StopEvent, IO_NO_INCREMENT, FALSE);
 	MediaStop(ctx);
-	ServiceStop(ctx);
+	// The control device stays: OnSelfManagedIoStart re-enables it, and a create here would race
+	// the copy it is replacing while the service still holds the link.
+	ServiceQuiesce(ctx);
 	L2capUnregisterServer(ctx);
 	WdfWorkItemFlush(ctx->DisconnectWorkItem);
 	L2capCloseSignalingChannel(ctx);

@@ -34,6 +34,9 @@ struct SERVICE_FILE_CONTEXT
 	// The Ioctl::EncoderBit mask this handle registered, so its cleanup clears only those and
 	// leaves a codec another handle owns registered.
 	LONG CodecMask;
+	// ctx->ServiceGeneration when it registered: a handle from before a power transition owns
+	// nothing after it, so its cleanup must clear nothing.
+	ULONG Generation;
 };
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SERVICE_FILE_CONTEXT, GetServiceFileContext)
 

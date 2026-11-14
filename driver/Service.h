@@ -11,12 +11,19 @@
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS ServiceInitialize(_In_ DEVICE_CONTEXT* ctx);
 
-// Creates/deletes the per-device control device that exposes the interface. Called
-// from self-managed IO start/suspend, so the interface only exists while the device
-// is started.
+// Creates the per-device control device that exposes the interface, or re-enables the one a
+// power transition left in place. Called from self-managed IO start, so the object and its
+// link exist from the first start until the device is removed.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ServiceStart(_In_ DEVICE_CONTEXT* ctx);
 
+// Stops serving and keeps the control device for the next start. Called when the device leaves
+// D0: the object is not recreated on the way back, which is what keeps its name and link from
+// colliding with a copy of themselves that is still being destroyed.
+_IRQL_requires_(PASSIVE_LEVEL)
+void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx);
+
+// Final teardown for device removal and unload: quiesces, then deletes the control device.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ServiceStop(_In_ DEVICE_CONTEXT* ctx);
 

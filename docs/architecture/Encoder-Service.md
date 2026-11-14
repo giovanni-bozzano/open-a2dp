@@ -60,9 +60,12 @@ Rules:
 - The IOCTLs live on a per-device **control device**, not on the PnP/ACX device object:
   ACX owns the KS request path there, and the PnP object must keep its default security
   descriptor so the audio engine can open it. The control device carries the restrictive
-  SDDL and its own queue. It is created at self-managed IO start with an address-based
-  named link (section 6) and deleted at suspend/removal. Rundown and an FDO reference
-  protect outstanding handlers/handles; removal delivers device-gone state.
+  SDDL and its own queue. It is created at the first self-managed IO start with an
+  address-based named link (section 6), quiesced when the device leaves D0 and deleted only
+  at removal or unload: recreating it on the way back from D0 races the copy whose handles
+  are still open, and a name that loses that race is gone for the rest of the boot. Rundown
+  and an FDO reference protect outstanding handlers/handles; removal delivers device-gone
+  state.
 - `MediaLock` still serializes `MediaStart`/`MediaStop`/the media work item. The frame
   ring is only touched by the media work item (consumer) and the service (producer), so
   no additional kernel lock is needed.
@@ -227,8 +230,8 @@ symbolic link `\DosDevices\OpenA2dpCtl-<address>`):
 
 1. `QueryDosDevice(NULL, ...)` to enumerate the `OpenA2dpCtl-<12 hex address>` links,
    at start, on every `kControlArrivalInterface` arrival (`CM_Register_Notification`;
-   the driver enables that interface on its PnP device only while the control device
-   exists) and when a worker ends. There is no polling.
+   the driver enables that interface on its PnP device while the control device is serving,
+   and again when the device returns to D0) and when a worker ends. There is no polling.
 2. `CreateFile` on `\\.\OpenA2dpCtl-<address>`.
 3. `GET_VERSION`; refuse to continue on an ABI mismatch.
 4. `REGISTER_ENCODER` once per codec the service provides (AAC, aptX, aptX HD, LDAC), with the

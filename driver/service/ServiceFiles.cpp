@@ -21,10 +21,13 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 		return;
 	}
 
+	// A handle that registered before a power transition no longer speaks for the device: the
+	// quiesce cleared its codec bits, and a handle registered since may own them now.
+	const ULONG generation = static_cast<ULONG>(InterlockedCompareExchange(&ctx->ServiceGeneration, 0, 0));
 	// Release a parked WAIT_EVENT first: the closing thread must not block on it.
 	// Only the registered handle owns the wait; closing another handle is unrelated.
 	// The event is not latched: it belongs to the handle that is going away.
-	if (file->Registered)
+	if (file->Registered && file->Generation == generation)
 	{
 		ReleaseWait(ctx, Ioctl::kEventDeviceGone);
 		file->Registered = FALSE;
@@ -47,6 +50,8 @@ void OnFileCleanup(WDFFILEOBJECT fileObject)
 		// happens in the signaling work item because this path holds the control lock.
 		SignalingOnEncoderUnregistered(ctx);
 	}
+	file->Registered = FALSE;
+	file->CodecMask = 0;
 	file->Mapped = FALSE;
 	UnmapRings(ctx, fileObject);
 	LeaveControl(control);

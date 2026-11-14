@@ -48,10 +48,35 @@ NTSTATUS ServiceInitialize(_In_ DEVICE_CONTEXT* ctx)
 	return STATUS_SUCCESS;
 }
 
+// The control device is named, linked and initialized: point it at this device and wake the
+// service, which then finds the link; nothing polls for it.
+static void PublishControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
+{
+	GetControlDeviceContext(control)->Device = ctx;
+	InterlockedExchange(&ctx->ServiceActive, 1);
+	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, TRUE);
+}
+
+// A start that follows a power transition has the device object from before the D0 exit: the
+// rundown waited on at the quiesce refuses every new handler until it is reinitialized.
+static void ResumeControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
+{
+	ExReInitializeRundownProtection(&GetControlDeviceContext(control)->Rundown);
+	PublishControl(ctx, control);
+}
+
 void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 {
-	if (ctx->ControlDevice != nullptr || ctx->ServiceRawBase == nullptr)
+	if (ctx->ServiceRawBase == nullptr)
 	{
+		return;
+	}
+	// The object and its link outlive a D0 exit, so there is nothing to create here; creating a
+	// second one would collide with the name and the link the first one still holds.
+	if (ctx->ControlDevice != nullptr)
+	{
+		ResumeControl(ctx, static_cast<WDFDEVICE>(ctx->ControlDevice));
+		OA2DP_INFO(ctx, "Service", "control device resumed");
 		return;
 	}
 
@@ -120,7 +145,6 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 		}
 		return;
 	}
-	GetControlDeviceContext(control)->Device = ctx;
 	// Keeps DEVICE_CONTEXT memory alive until the control device is destroyed;
 	// dropped in OnControlDeviceDestroy, which also runs on the failure paths below.
 	{
@@ -162,14 +186,47 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	WdfControlFinishInitializing(control);
 
 	ctx->ControlDevice = control;
-	InterlockedExchange(&ctx->ServiceActive, 1);
+	PublishControl(ctx, control);
 	OA2DP_INFO(ctx, "Service", "control device ready at %ws", linkName);
-	// Wakes the service, which then finds the link; nothing polls for it.
-	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, TRUE);
+}
+
+void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx)
+{
+	WDFDEVICE control = ctx->ControlDevice;
+	if (control == nullptr)
+	{
+		return;
+	}
+
+	// Stop serving but keep the object: the service's next arrival is the interface state below,
+	// and a name that is never released cannot collide with a recreate on the way back to D0.
+	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
+	InterlockedExchange(&ctx->ServiceActive, 0);
+	LatchEvents(ctx, Ioctl::kEventDeviceGone);
+
+	// Wait for every IOCTL and cleanup handler that is already running (none of them
+	// blocks for long) and refuse new ones; after this nothing but a WAIT_EVENT cancel
+	// routine can reach the device through the control device, and ServiceStart's resume
+	// path is what reopens it.
+	ExWaitForRundownProtectionRelease(&GetControlDeviceContext(control)->Rundown);
+	// A handler that ran during the wait may have registered and parked a new WAIT_EVENT.
+	LatchEvents(ctx, Ioctl::kEventDeviceGone);
+	UnmapRings(ctx);
+	// The registrations belonged to handles of the session that just ended; a handle that is
+	// still open keeps its own state but no longer speaks for the device.
+	InterlockedIncrement(&ctx->ServiceGeneration);
+	InterlockedExchange(&ctx->EncoderRegistered, 0);
+	OA2DP_INFO(ctx, "Service", "control device quiesced; the link stays");
 }
 
 void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
 {
+	if (ctx->ControlDevice == nullptr)
+	{
+		return;
+	}
+	ServiceQuiesce(ctx);
+
 	// Claim the handle so the framework's cleanup callback cannot delete it twice.
 	WDFDEVICE control = static_cast<WDFDEVICE>(
 		InterlockedExchangePointer(reinterpret_cast<PVOID volatile*>(&ctx->ControlDevice), nullptr));
@@ -178,24 +235,8 @@ void ServiceStop(_In_ DEVICE_CONTEXT* ctx)
 		return;
 	}
 
-	// The next ServiceStart re-enables it, which is the service's next arrival.
-	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
-	InterlockedExchange(&ctx->ServiceActive, 0);
-	LatchEvents(ctx, Ioctl::kEventDeviceGone);
-
-	// Wait for every IOCTL and cleanup handler that is already running (none of them
-	// blocks for long) and refuse new ones; after this nothing but a WAIT_EVENT cancel
-	// routine can reach the device through the control device.
-	CONTROL_DEVICE_CONTEXT* cc = GetControlDeviceContext(control);
-	ExWaitForRundownProtectionRelease(&cc->Rundown);
-	cc->Device = nullptr;
-	// A handler that ran during the wait may have registered and parked a new WAIT_EVENT.
-	LatchEvents(ctx, Ioctl::kEventDeviceGone);
-	UnmapRings(ctx);
-	InterlockedExchange(&ctx->EncoderRegistered, 0);
-
 	// The control device's parent is the driver object, so it can outlive this
-	// FDO's start/stop cycle; with Device cleared its handlers no longer touch ctx.
+	// FDO's start/stop cycle; quiesced, no handler of it touches ctx any more.
 	WdfObjectDelete(control);
 	OA2DP_INFO(ctx, "Service", "control device removed");
 }

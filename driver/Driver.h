@@ -548,6 +548,9 @@ struct DEVICE_CONTEXT
 	volatile LONG EncoderRegistered;
 	volatile LONG RingsMapped;
 	volatile LONG ServiceActive;
+	// Bumped when the control device is quiesced: a handle that registered before a power
+	// transition must not clear the registration a later handle owns.
+	volatile LONG ServiceGeneration;
 	// Codec preference. Written by SET_PREFERENCE and read by the negotiation under
 	// PreferenceLock (a spin lock), so neither side ever waits on SessionLock.
 	KSPIN_LOCK PreferenceLock;
