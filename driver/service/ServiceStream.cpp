@@ -86,8 +86,8 @@ ULONG ServiceReadFrame(_In_ DEVICE_CONTEXT* ctx, _Out_ const UCHAR** payload, _O
 
 void ServiceFlushRings(_In_ DEVICE_CONTEXT* ctx)
 {
-	// Only the frame ring: the driver is its consumer. The PCM ring's consumer is the
-	// service, which discards buffered audio itself when it sees kEventStreamStart.
+	// Only the frame ring: the driver is its consumer. Which PCM is still playback is decided
+	// once, where the stream starts (AudioDropStalePcm).
 	if (ctx->FrameRingHeader != nullptr)
 	{
 		RingBufferView frames(ctx->FrameRingHeader, ctx->FrameRingData);

@@ -191,19 +191,25 @@ NTSTATUS OnStreamPause(_In_ ACXSTREAM stream)
 // already in the ring - it is the beginning of playback, captured after the endpoint's first
 // sample, not audio from before the session - as long as it was captured at the format this
 // stream plays. Anything else is stale and dropped.
-bool AudioPcmRingHoldsPlayback(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytesPerFrame)
+ULONG AudioDropStalePcm(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytesPerFrame)
 {
+	const ULONG playbackFormat = (sampleRate << 16) | bytesPerFrame;
+	ULONG dropped = 0;
 	KIRQL irql;
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
-	const bool heard = ctx->AudioHeard != 0;
-	const ULONG capturedFormat = ctx->PcmRingFormat;
-	KeReleaseSpinLock(&ctx->AudioLock, irql);
-	if (!heard || bytesPerFrame == 0 || sampleRate == 0 || capturedFormat == 0)
+	const bool keep = ctx->AudioHeard != 0 && sampleRate != 0 && bytesPerFrame != 0 &&
+		ctx->PcmRingFormat == playbackFormat;
+	if (!keep)
 	{
-		return false;
+		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
+		dropped = ring.ReadableBytes();
+		if (dropped != 0)
+		{
+			ring.Skip(dropped);
+		}
 	}
-	const ULONG playbackFormat = (sampleRate << 16) | bytesPerFrame;
-	return capturedFormat == playbackFormat;
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return dropped;
 }
 
 bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx)

@@ -8,17 +8,14 @@ using namespace OpenA2dpDriver::Audio;
 // 24-in-32 (when aptX HD is available), in which case the kernel encoder still takes 16-bit
 // samples: the top 16 bits of each left-justified sample are the value, so the wide form is
 // truncated down rather than refused.
-ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames)
+// Caller holds AudioLock, so the format is read as one set and the copy cannot trim the ring
+// while this reads it.
+static ULONG ReadPcmLocked(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames)
 {
 	RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-	// One snapshot of the format: a format change updates the three fields together, and a
-	// depth read apart from its stride would decode the ring at the wrong layout.
-	KIRQL irql;
-	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	const ULONG channels = ctx->PinChannels;
 	const ULONG frameBytes = ctx->PinBytesPerFrame;
 	const USHORT validBits = ctx->PinValidBits;
-	KeReleaseSpinLock(&ctx->AudioLock, irql);
 	if (frameBytes == 0 || channels == 0)
 	{
 		// Nothing can be read, but the caller encodes the whole buffer: leave silence rather than
@@ -85,4 +82,13 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 			(frames - written) * destinationFrameBytes);
 	}
 	return written;
+}
+
+ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels) INT16* pcm, _In_ ULONG frames)
+{
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->AudioLock, &irql);
+	const ULONG read = ReadPcmLocked(ctx, pcm, frames);
+	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	return read;
 }

@@ -64,16 +64,7 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	// keeps that much (bounded to the lead) for exactly this. Anything else predates the stream -
 	// another format, or a run that never played - and is dropped here, before any codec queues
 	// it.
-	ULONG flushed = 0;
-	if (!AudioPcmRingHoldsPlayback(ctx, pin.sampleRate, pin.bytesPerFrame))
-	{
-		RingBufferView ring(ctx->PcmRingHeader, ctx->PcmRingData);
-		flushed = ring.ReadableBytes();
-		if (flushed != 0)
-		{
-			ring.Skip(flushed);
-		}
-	}
+	const ULONG flushed = AudioDropStalePcm(ctx, pin.sampleRate, pin.bytesPerFrame);
 	if (codec == Avdtp::CodecType::Aac)
 	{
 		StartAac(ctx, ie, ieLength);

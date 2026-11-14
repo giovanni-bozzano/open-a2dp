@@ -431,8 +431,9 @@ struct DEVICE_CONTEXT
 	INT16 PcmBuffer[16 * 8 * 2];
 	UCHAR MediaBuffer[MediaMaxMtu];
 
-	// ACX render stream (audio/). AudioLock (spin lock) guards the RT buffer and position
-	// state; the PCM ring is SPSC (audio timer -> encoder).
+	// ACX render stream (audio/). AudioLock (spin lock) guards the RT buffer, the position state
+	// and every kernel move of the PCM ring's read side, so the copy's trims and the SBC reader
+	// never both advance it; the ring is SPSC (audio timer -> encoder).
 	KSPIN_LOCK AudioLock;
 	// The render clock: a one-shot high-resolution timer armed for the end of the packet being
 	// played. Its callback copies that packet into the PCM ring and reports it complete, which is
@@ -824,10 +825,12 @@ ULONG AudioReadPcm(_In_ DEVICE_CONTEXT* ctx, _Out_writes_(frames * AudioChannels
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool AudioStreamRunning(_In_ DEVICE_CONTEXT* ctx);
 
-// True when the audio already in the PCM ring was captured at this format and the endpoint has
-// played since its run: a stream starting now sends it as the beginning of playback instead of
-// discarding it as audio from before the session.
-bool AudioPcmRingHoldsPlayback(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytesPerFrame);
+// Prepares the PCM ring for a stream about to start at this format. Audio captured at this
+// format since the endpoint was heard in this run is the beginning of playback and is kept;
+// anything else predates the stream and is dropped. Done under AudioLock, so the copy's own
+// trims never move the read side at the same time. Returns the bytes dropped.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+ULONG AudioDropStalePcm(_In_ DEVICE_CONTEXT* ctx, ULONG sampleRate, USHORT bytesPerFrame);
 
 // True while the render stream runs and has rendered audio that is not silence in this run.
 // The AVDTP stream follows this, so a run Windows makes only to rebuild the endpoint does not
