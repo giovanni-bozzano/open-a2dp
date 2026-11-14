@@ -590,6 +590,11 @@ static void ContinueCodecSwitch(DEVICE_CONTEXT* ctx)
 // settles the session runs this again.
 static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 {
+	// Claimed before the endpoint is read: an edge that lands after this sets the request again
+	// and re-queues the work item, whereas clearing it after the read would erase an edge - the
+	// first audio arriving just after `playing` was read - and leave the session silent. Every
+	// path that is not done with the request puts it back.
+	InterlockedExchange(&ctx->EndpointStreamPending, 0);
 	const Avdtp::SessionState state = ctx->Session.State();
 	const bool playing = AudioStreamPlaying(ctx);
 	// A running stream keeps streaming even before its first audio: that is a resume, and
@@ -599,7 +604,6 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		AudioStreamRunning(ctx) || InterlockedCompareExchange(&ctx->PauseGrace, 0, 0) != 0;
 	if (state == Avdtp::SessionState::Streaming && !keepStreaming)
 	{
-		InterlockedExchange(&ctx->EndpointStreamPending, 0);
 		OA2DP_INFO(ctx, "AVDTP", "suspending stream, the endpoint stayed paused");
 		Transmit(ctx, ctx->Session.Suspend(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		if (ctx->Session.State() != Avdtp::SessionState::Suspending)
@@ -622,9 +626,9 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		if (ctx->MediaChannel == nullptr || ctx->ReconfigurePhase != ReconfigureNone ||
 			ctx->Session.HasPendingCommand())
 		{
+			InterlockedExchange(&ctx->EndpointStreamPending, 1);
 			return;
 		}
-		InterlockedExchange(&ctx->EndpointStreamPending, 0);
 		// Every return to Open asks for this, so a sink that refuses START or a media path that
 		// fails again at once would be restarted forever; a run or a renegotiation re-arms it.
 		const LONG attempt = InterlockedIncrement(&ctx->EndpointStartAttempts);
@@ -653,9 +657,9 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		// what brings the stream back. A close or a media retry in flight rediscovers by itself.
 		if (ctx->CodecSwitchClosing || ctx->MediaOpenRetry || ctx->Session.HasPendingCommand())
 		{
+			InterlockedExchange(&ctx->EndpointStreamPending, 1);
 			return;
 		}
-		InterlockedExchange(&ctx->EndpointStreamPending, 0);
 		const LONG attempt = InterlockedIncrement(&ctx->EndpointStartAttempts);
 		if (attempt > kEndpointStartAttempts)
 		{
@@ -676,9 +680,9 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 		(state == Avdtp::SessionState::Open && !playing);
 	const bool unusable = state == Avdtp::SessionState::Idle || state == Avdtp::SessionState::Failed ||
 		state == Avdtp::SessionState::Closing || state == Avdtp::SessionState::Aborting;
-	if (settled || unusable)
+	if (!settled && !unusable)
 	{
-		InterlockedExchange(&ctx->EndpointStreamPending, 0);
+		InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	}
 }
 
