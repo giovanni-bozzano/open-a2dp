@@ -1,407 +1,234 @@
-# OpenA2dp — encoder service boundary
+# Encoder service
 
-## 1. Scope
+[Architecture index](README.md) | [Protocol and codecs](Protocol-and-Codecs.md) | [Latency](Latency.md)
 
-`OpenA2dpSvc.exe` encodes the service-side codecs: AAC-LC, classic aptX, aptX HD and LDAC.
-SBC stays in the kernel and must keep working with no service installed, running or reachable.
+## Role
 
-v1 assumptions:
+`OpenA2dpSvc.exe` encodes the codecs that do not run in the kernel: AAC-LC,
+classic aptX, aptX HD and LDAC. SBC stays in the driver and works with no service
+installed, running or reachable.
 
-- one service process per machine, one registration per codec per sink device instance;
-- AAC-LC, MPEG-2/4, 32/44.1/48 kHz, stereo, CBR at 96/128/160/192/256/320 kbps (the rates and
-  bitrates the Media Foundation encoder accepts; the 895-byte media MTU carries 256 kbps at
-  44.1 kHz, 320 kbps at 48 kHz and 192 kbps at 32 kHz);
-- aptX HD at 44.1/48 kHz stereo, 24-in-32 input, one record of ten milliseconds per RTP
-  packet (110 or 111 six-byte frames at 44.1 kHz, 120 at 48 kHz; the samples a frame cannot
-  hold are carried into the next record, as for classic aptX);
-- classic aptX at 44.1/48 kHz stereo, one record of ten milliseconds per RTP packet (110 or
-  111 four-byte frames at 44.1 kHz, 120 at 48 kHz; the odd sample per span is carried into
-  the next record so the clock does not drift). Its encoder takes 16-bit input, so a
-  24-in-32 ring is narrowed per sample with the kernel SBC path's rounding;
-- LDAC at 44.1, 48, 88.2 or 96 kHz stereo. The encoder takes 128 samples per channel and
-  returns a whole media packet at a time - two transport frames at 44.1/48 kHz, about 5.8 ms -
-  so a record covers the 256 samples those frames hold, and nothing is carried between
-  records. Its payload is the encoder's own frame sequence, headers included, and it needs the
-  679-byte 2-DH5 payload, so a link whose media MTU cannot carry that never selects it. The
-  quality mode (990, 660 or 330 kbps) is local and is not negotiated;
-- one AAC LATM `AudioMuxElement` per RTP packet, 1024 PCM samples per record;
-- the ACX endpoint lists 16-bit formats at every rate the codecs take (16 kHz to 96 kHz), and
-  24-in-32 while aptX HD or LDAC can run; the encoders follow the rate Windows opened the
-  stream with. AAC keeps 16-bit input: Media Foundation
-  rejects 24-bit, 32-bit and float PCM (`0xC00D36B4`), so a 24-in-32 ring is narrowed with
-  the rounded downconvert first ([PCM depth](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd)).
+The split is deliberate:
 
-Invariants:
+- Media Foundation's AAC encoder is a user-mode transform and cannot be loaded in
+  the kernel. The tree drives `CLSID_AACMFTEncoder` and owns the LATM framing, so
+  no AAC encoder is distributed or maintained here.
+- The aptX, aptX HD and LDAC encoders are user-mode AOSP code. Keeping them out
+  of the kernel keeps CPU-heavy code and codec implementations out of the driver.
+- A service crash is contained. The driver loses the encoder, not the transport,
+  and SBC remains available.
 
-1. SBC never depends on the service. All three local SEPs remain advertised; AAC and HD
-   selection is refused while their provider is absent, so negotiation falls back to a
-   codec that can run.
-2. The service never receives kernel pointers. The driver allocates the rings and maps
-   them into the caller; the service only sees one user-mode base address.
-3. Losing the service (crash, kill, hang) must not hang the driver, leak a mapping or
-   block teardown. The worst case is a suspended stream that reconnects as SBC.
-4. Each ring has exactly one producer and one consumer. The PCM ring's producer (the driver)
-   may also drop the oldest unread audio after a stall, so `RingBufferView` moves the tail
-   with a compare-and-swap on both sides and the consumer commits a read only if no drop
-   happened under its copy; no lock spans the two processes.
+The cost is the shared-memory boundary below, a control interface and the failure
+modes at the end of this document. The driver keeps ownership of the A2DP
+transport and RTP; the service turns PCM into encoded records on its own pump
+clock.
 
-## 2. Components and threads
+## Shared memory
 
-| Component | IRQL | Responsibility |
-|---|---|---|
-| Signaling work item (`driver/signaling/`) | PASSIVE | SEP list, selection, stream lifecycle, AAC fallback |
-| ACX audio timer (`driver/audio/`) | DISPATCH | Produces PCM into the PCM ring |
-| Media work item (`driver/media/`) | PASSIVE | SBC encoding or service frame drain (AAC, aptX, aptX HD), RTP send, `WAIT_EVENT` ticks |
-| Control device (`driver/service/`) | PASSIVE | Parallel IOCTL queue; one parked `WAIT_EVENT`; separate registration/mapping protection |
-| Service main loop | user mode | `WAIT_EVENT` -> pull PCM -> encode -> write frames |
+The driver allocates one contiguous non-paged block per device and maps it once
+into the process that calls `MAP_RINGS`:
 
-Rules:
-
-- The IOCTLs live on a per-device **control device**, not on the PnP/ACX device object:
-  ACX owns the KS request path there, and the PnP object must keep its default security
-  descriptor so the audio engine can open it. The control device carries the restrictive
-  SDDL and its own queue. It is created at the first self-managed IO start with an
-  address-based named link (section 6), quiesced when the device leaves D0 and deleted only
-  at removal or unload: recreating it on the way back from D0 races the copy whose handles
-  are still open, and a name that loses that race is gone for the rest of the boot. Rundown
-  and an FDO reference protect outstanding handlers/handles; removal delivers device-gone
-  state.
-- `MediaLock` still serializes `MediaStart`/`MediaStop`/the media work item. The frame
-  ring is only touched by the media work item (consumer) and the service (producer), so
-  no additional kernel lock is needed.
-- `WAIT_EVENT` ticks come from the passive media work item; lifecycle events also
-  release waits. `WaitLock` protects the parked request against cancellation.
-- The service worker registers with MMCSS (Pro Audio) for its whole life, falling back to
-  highest thread priority if registration fails and logging which of the two is in force.
-  The worker has one record per 10 ms to produce, and ordinary-priority load would otherwise
-  hold it off long enough for the driver to count a 200 ms gap as an underrun.
-- The driver stops waking the service while the frame ring is over its trim limit
-  (`LatencyBudget::RingLimitMs`): a record written then would only be trimmed away, so the
-  stall costs one gap instead of a gap plus an encode, and the backlog stops growing at the
-  expensive stage.
-- Registration uses an interlocked claim; `RingLock` serializes map/unmap and records
-  the owning file. Control-device rundown protects IOCTL handlers against teardown.
-
-## 3. Shared memory
-
-The driver allocates one contiguous non-paged block per device and maps it once, into
-the process that called `MAP_RINGS`:
-
-```
-offset 0                      RingHeader PCM      (192 bytes, 64-byte aligned)
-offset 192                    PCM data            (256 KiB, power of two)
-offset 192 + 256 KiB          RingHeader frames   (192 bytes)
-offset 192 + 256 KiB + 192    Frame data          (64 KiB, power of two)
+```text
+PCM ring header
+PCM data
+Frame ring header
+Frame data
 ```
 
-`SharedRings` (the `MAP_RINGS` output) carries the offsets, capacities and the user-mode
-base address, so the service builds two `RingBufferView`s without hard-coding the layout.
-`pcmHeaderOffset`/`frameHeaderOffset` point at the `RingHeader`; the data offset is the
-byte ring base. All offsets are 64-byte aligned.
+`SharedRings` carries the offsets, capacities and user-mode base address, so the
+service builds its two ring views without hard-coding the layout. Headers and
+data are aligned for direct access.
 
-Lifetime:
-
-- The block is a child of the device (`WdfMemoryCreate`), so it survives as long as the
-  device instance and is freed with it.
-- The mapping (`IoAllocateMdl` + `MmBuildMdlForNonPagedPool` +
-  `MmMapLockedPagesSpecifyCache(..., UserMode, ...)`) belongs to the file handle. It is
-  unmapped with `MmUnmapLockedPages` and the MDL freed in `EvtFileCleanup`, which also
-  clears the registration. A crashed service is therefore detected by the IO manager,
-  not by a timeout. The mapping keeps a reference to the process that called
-  `MAP_RINGS`; if teardown runs in a system thread, the driver attaches to that process
-  before unmapping (a user mapping must be released in its own process context) and skips
-  the unmap if the process already exited.
-- Only one handle may hold a mapping per device; a second `MAP_RINGS` returns
-  `STATUS_DEVICE_BUSY`.
-- The mapping is cached and the rings are not paged, so the service may touch them at
-  any time while the handle is open.
-
-At stream start the driver flushes the frame ring before it latches
-`kEventStreamStart`, so the service never sends a stale encoded frame. The PCM ring is
-the driver's to decide: `MediaStart` drops it when it predates the stream (another format,
-or a run that never played) and keeps it when it is the beginning of playback, so the
-service encodes what is there instead of discarding it: its first pump sends what the
-preroll asks for beyond that buffered PCM as silence in front of it, and skips any clock
-past the lead that the encoder's own start-up took (`LatencyBudget::RestartAt`).
-Each record reports the PCM the service had to zero-fill after that lead
-(`silenceSamples`), which is a gap and not the lead.
-
-## 4. Frame records
-
-The service writes variable-length records into the frame ring. A record is
-`FrameRecordHeader` followed by the LATM payload; `size` is exact, so the payload length
-is `size - sizeof(FrameRecordHeader)` and records are never padded:
-
-| Field | Meaning |
+| Property | Contract |
 |---|---|
-| `magic` | `kFrameRecordMagic` |
-| `size` | whole record including the header |
-| `samples` | PCM samples the payload covers (1024 for AAC-LC) |
-| `silenceSamples` | PCM samples in `samples` the service had to zero-fill because the ring was short (the start-up lead is not counted) |
-| `skippedSamples` | clock the service skipped right before this record when it restarted its lead (at its start, or after a stall); the driver moves the RTP timestamp past it |
-| `flags` | `kFrameFlagDiscontinuity` after a gap |
+| Mapping | One handle per device; a second `MAP_RINGS` returns `STATUS_DEVICE_BUSY` |
+| Lifetime | The block is a device child; the mapping belongs to the file handle and is released in file cleanup |
+| Process context | Teardown releases a user mapping in the process that created it, and skips it if that process has exited |
+| Paging | The rings are non-paged and cached while the handle is open |
+| Producers | PCM: driver. Frames: service. Each ring has exactly one consumer |
 
-Write and read are atomic per record:
+The service never writes the PCM ring. The driver may drop the oldest unread PCM
+after a stall, so a read commits only if no drop happened under its copy; no lock
+spans the two processes.
 
-- the service builds header + payload in a 2 KiB stack buffer and calls
-  `RingBufferView::Write` once; if it does not fit, the record is dropped and counted
-  (never a partial record);
-- the driver peeks the 20-byte header and validates `magic` and `size`. If the payload
-  (`size - sizeof(FrameRecordHeader)`) is larger than `kMaxFramePayload` the driver skips
-  the record (`Skip(size)`) and counts it (`framesDropped`); otherwise it peeks the whole
-  record into its scratch buffer and sends the payload;
-- a corrupt header (bad magic or size) is not repairable from the consumer side: the
-  driver stops consuming, counts an error, stops media and requests SUSPEND. The stream
-  reconnects (as SBC if the service is still unhealthy); the service must reset its own
-  producer index when it sees `kEventStreamStart`.
+## Control interface
 
-The driver adds the RTP header itself: one record = one RTP packet, `payloadType` 96,
-sequence incremented per packet, timestamp advanced by `samples`. It never packs two
-records into one packet and never fragments a record (see section 12).
+The interface is an IOCTL surface on the per-device control device, not on the
+PnP/ACX object. The control device allows SYSTEM and Administrators, has a
+parallel queue and validates every input; the audio engine never opens it.
 
-## 5. IOCTLs
+| IOCTL | Purpose |
+|---|---|
+| `GET_VERSION` | Driver version and limits; works without registration |
+| `REGISTER_ENCODER` | Claim one codec for this handle; returns frame and PCM limits |
+| `MAP_RINGS` | Map the shared rings into the calling process |
+| `WAIT_EVENT` | Park until a stream event or the next media tick |
+| `GET_STATUS` | Session, counters and negotiated parameters |
+| `GET_PREFERENCE` | The stored codec parameters the next negotiation uses |
+| `SET_PREFERENCE` | Store codec choice and parameters for this sink |
+| `GET_ENDPOINT_FORMAT` | The PCM format each codec's streams use |
+| `SET_ENDPOINT_FORMAT` | Pin or clear one codec's format |
 
-All IOCTLs are `METHOD_BUFFERED` with `FILE_ANY_ACCESS`; access control is the control
-device's SDDL (`D:P(A;;GA;;;SY)(A;;GA;;;BA)`), and the driver validates every input
-struct.
+Registration enables selection of a codec; it does not advertise its SEP. All
+SEPs stay advertised, so a sink can always fall back to a codec whose provider is
+present.
 
-| IOCTL | In | Out | Notes |
-|---|---|---|---|
-| `GET_VERSION` | – | `VersionInfo` | Works without registration; used by the service and the config UI |
-| `REGISTER_ENCODER` | `RegisterEncoderIn` | `RegisterEncoderOut` | One registration per codec (`kCodecAac`, `kCodecAptxHd`) per device; `STATUS_DEVICE_BUSY` if that codec is taken, `STATUS_REVISION_MISMATCH` on ABI mismatch |
-| `MAP_RINGS` | – | `SharedRings` | Requires registration on the same handle (`STATUS_INVALID_DEVICE_STATE`); `STATUS_DEVICE_BUSY` if already mapped |
-| `WAIT_EVENT` | – | `WaitEventOut` | One pending request; a second returns `STATUS_DEVICE_BUSY`. Completed on lifecycle events or on the next media tick, cancelled via `STATUS_CANCELLED` |
-| `GET_STATUS` | – | `Status` | Always available; used by `OpenA2dpCtl` and the config UI (M9). Reports the negotiated codec, the preference, the media MTU with the AAC bitrate it carries and the counters |
-| `GET_PREFERENCE` | – | `Preference` | Always available; returns the preference the next negotiation uses, including the SBC bitpool, block length, subbands and allocation, and the AAC bitrate. The CLI reads it before a change so a codec switch keeps the parameters |
-| `SET_PREFERENCE` | `Preference` | – | Stored in the sink's `%ProgramData%\OpenA2dp\devices\<addr>.ini` (`[general]`, `[sbc]`, `[aac]`, `[ldac]`) and restored at device start (`driver/config/`). A forced codec must be SBC, AAC, aptX or aptX HD or LDAC, and `ldacQuality` is 0..2; an SBC bitpool is 0 or 2..250, blocks 0/4/8/12/16, subbands 0/4/8, allocation 0/loudness/SNR. A forced codec is refused with `STATUS_NOT_SUPPORTED` if the discovered sink lacks it. Changing the codec CLOSEs and rediscovers; changing a parameter keeps the codec and uses SUSPEND/RECONFIGURE/START. There are no rate/channel preference fields; codec settings never narrow Windows' list |
-| `GET_ENDPOINT_FORMAT` | – | `EndpointFormat` | Always available; the PCM format each codec's streams are played at, one entry per codec (`kCodec*`). 0/0 is automatic for that codec, otherwise its pinned rate and channel count |
-| `SET_ENDPOINT_FORMAT` | `EndpointFormat` | – | Stored per sink in `%ProgramData%\OpenA2dp\devices\<address>.ini` and applied by rebuilding the listed formats in place, which makes Windows re-query the endpoint. Automatic (`0`/`0`) or a rate with 1 or 2 channels, judged per codec; a format that codec cannot play from the sink's advertisement is refused with `STATUS_NOT_SUPPORTED`. Windows plays the first listed format and ignores the Sound-settings pick, so a pinned format is listed alone while its codec runs |
-
-The control queue is parallel, so a parked `WAIT_EVENT` does not block
-`GET_STATUS`/`SET_PREFERENCE` on the same device (the CLI and the service both use them).
-`Status` carries `negotiatedCodec` (valid before streaming starts), `preferenceFlags` and
-`preferenceCodec`; `GET_STATUS` reads published atomic session snapshots rather than
-waiting on `SessionLock`. `Preference` carries the SBC bitpool, block length, subbands,
-allocation and AAC bitrate. `Status.mediaMtu`/`bitrateLimit` report the AAC bitrate one
-media packet carries at the current endpoint rate; `sinkRates`/`sinkChannels` report the
-sink's SBC PCM capabilities, `sinkCodecs` its advertised codecs, and
-`endpointRate`/`endpointChannels` the endpoint format setting. A forced codec the sink does
-not advertise is refused. Negotiation follows the actual Windows stream format.
-
-ABI 7 is the current development baseline, not compatibility with an earlier layout.
-Obsolete format preferences and fallback fields are removed, not reserved: `Preference`
-is 44 bytes, `EndpointFormat` 48 bytes (one entry per codec), `Status` 336 bytes,
-`RegisterEncoderOut` 32 bytes and `WaitEventOut` 40 bytes. The endpoint format is its own
-setting, not a preference field. Always rebuild and install the driver, tools and service together; older
-development layouts are incompatible even when their version number matches.
-
-`REGISTER_ENCODER` enables selection of that codec, not SEP advertisement. `MAP_RINGS` is
-a separate call; if mapping fails, the service must close its handle to clear registration.
-
-The registration returns the authoritative `maxFramePayload` (883 bytes), the PCM rate
-and channel count, and `pcmValidBits` (16, or 24 for 24-in-32). `WAIT_EVENT` repeats the
-depth, because the endpoint format can change between registration and stream start. The
-service must reject a bitrate whose frames do not fit and reduce it, or report the failure
-to the user.
+The registration reply carries the authoritative frame payload limit, PCM rate,
+channel count and depth. `WAIT_EVENT` repeats the depth because the endpoint
+format can change between registration and stream start. The service must reject
+or reduce a bitrate whose frames do not fit.
 
 `WAIT_EVENT` semantics:
 
-- latched events are returned immediately; otherwise the request is parked;
-- the media timer completes it with `kEventTick` while a service-encoded codec streams,
-  which is the service's clock (no polling, no shared event handle). It is completed only
-  when a whole access unit is due beyond what the service has already produced, judged from
-  the sample count in its records and the ones still queued, so a wake always has audio to
-  encode: AAC (1024 samples) wakes about every 21 ms instead of every tick, aptX (a record
-  per tick) keeps the tick rate;
-- `kEventStreamStart`/`kEventStreamStop` carry the negotiated parameters in the same
-  struct (`codec`, rate, channels, bitrate, object type, `pcmValidBits`), so the service
-  configures its encoder before the first tick (a reconfigure while streaming stops and
-  starts the media path, so it arrives as this pair);
-- `kEventDeviceGone` is delivered from `EvtFileCleanup`/device removal; the service then
-  closes the handle and retries;
-- the service waits with a 500 ms timeout and re-checks `GET_STATUS`, so a lost event
+- A latched event returns immediately; otherwise the request parks.
+- While a service-encoded codec streams, the media timer completes it with
+  `kEventTick`. It is raised only when a whole access unit is due beyond what the
+  service has already produced, so a wake always has audio to encode.
+- `kEventStreamStart` and `kEventStreamStop` carry the negotiated codec, rate,
+  channels, bitrate and depth. The service configures its encoder before the
+  first tick.
+- A reconfigure while streaming stops and starts the media path, so it arrives as
+  a start/stop pair.
+- `kEventDeviceGone` is delivered on file cleanup or device removal; the service
+  closes the handle and retries.
+- The service waits with a timeout and re-checks `GET_STATUS`, so a lost event
   cannot wedge it.
 
-## 6. Lifecycle
+The queue is parallel, so a parked wait does not block `GET_STATUS` or a
+preference query on the same device.
 
-Service start (once per control device; device interfaces are not supported on
-control devices, so each one is named `\Device\OpenA2dpCtl<address>` with the
-symbolic link `\DosDevices\OpenA2dpCtl-<address>`):
+## Lifecycle
 
-1. `QueryDosDevice(NULL, ...)` to enumerate the `OpenA2dpCtl-<12 hex address>` links,
-   at start, on every `kControlArrivalInterface` arrival (`CM_Register_Notification`;
-   the driver enables that interface on its PnP device while the control device is serving,
-   and again when the device returns to D0) and when a worker ends. There is no polling.
-2. `CreateFile` on `\\.\OpenA2dpCtl-<address>`.
-3. `GET_VERSION`; refuse to continue on an ABI mismatch.
-4. `REGISTER_ENCODER` once per codec the service provides (AAC, aptX, aptX HD, LDAC), with the
-   service frame limit. AAC is required; each aptX codec is optional.
-5. `MAP_RINGS`; build the two `RingBufferView`s.
-6. `WAIT_EVENT` loop.
+Service start, once per control device:
 
-Stream start (driver, from the signaling work item):
+1. Enumerate the address-named control links at start, on control-interface
+   arrival and when a worker ends. No polling.
+2. Open the device.
+3. Check the driver version and refuse a different build.
+4. Register each codec the service provides.
+5. Map the rings and build the two views.
+6. Enter the `WAIT_EVENT` loop.
 
-1. `AacConfig::Select` produced the configured IE and the service is registered, so the
-   session reaches `Configured` with `SelectedCodec() == Aac`.
-2. `MediaStart` sets `MediaState::WaitingForEncoder`, flushes the frame ring, latches
-   `kEventStreamStart` with the parameters, and starts the media timer.
-3. The service receives the event, configures MF (rate, channels, bitrate, object type),
-   prerolls ~60 ms of PCM (same target-sample formula as SBC) and starts writing records.
-4. The driver sends whatever complete records exist on each tick. If the frame ring is
-   empty it sends nothing; that is a jitter-buffer underrun, not an error.
+Stream start, from the driver's signaling path:
 
-Stream stop: `MediaStop` stops the timer, latches `kEventStreamStop`, resets the frame
-ring, and leaves the PCM ring to the ACX endpoint.
+1. Media start sets `WaitingForEncoder`, flushes the frame ring, latches the
+   start event with the stream parameters and starts the media timer.
+2. The service configures its encoder, sends the pacing lead as silence in front
+   of the first audio as needed, and begins writing records.
+3. The driver sends whatever complete records exist on each tick. An empty frame
+   ring sends nothing; that is a jitter-buffer underrun, not an error.
 
-Service crash or `CloseHandle` while streaming: the file cleanup clears the registration
-and mapping, stops media, requests AVDTP SUSPEND, and closes the stream. The next
-connection selects a codec whose provider is registered, down to SBC (all SEPs remain
-advertised).
-No driver wait depends on the service.
+Stream stop stops the timer, latches the stop event, resets the frame ring and
+leaves the PCM ring to the ACX endpoint.
 
-## 7. Pacing and timestamps
+When the service releases the handle while streaming, file cleanup clears the
+registration and mapping, stops media, requests a suspend and closes the stream.
+The next connection selects a codec whose provider is registered, down to SBC. No
+driver wait depends on the service.
 
-The service owns the media clock for AAC and both aptX codecs. `elapsed * rate + preroll`
-(the formula the SBC path uses today) says how much audio must have been encoded by now.
-The first pump sends what that asks for beyond the PCM already buffered as silence in front
-of it, so from then on the ring holds exactly what the clock asks for. A whole 1024-sample
-block is then encoded once its PCM is in the ring (`LatencyBudget::UnitReady`): encoding it
-as soon as one sample is due would zero-fill audio that is a copy tick away and play it as
-a gap. Only a block a whole block plus `kPcmSlackMs` overdue is padded, which is a real
-underrun and is reported. A stream that falls further behind than the lead with its audio
-gone - the service was held off and the driver trimmed the ring meanwhile
-(`LatencyBudget::Stalled`) - restarts its lead the way it started instead: the clock skips
-the gap and the next record's `skippedSamples` carries it, because padding it would reach
-the sink as a burst of silence it plays late for the rest of the stream. A record always
-covers 1024 samples: reading just the samples due
-since the last tick and padding the rest would insert silence into the middle of the audio
-at the tick rate. The driver no
-longer computes a target for AAC; it only drains the frame ring, one packet per
-media-clock tick or send completion, and advances the RTP timestamp by each record's
-`samples`. The aptX encoders follow the same clock with ten-millisecond records of whole
-four-sample frames; classic aptX carries the 0..3 samples a frame cannot cover into the
-next record, so the clock advances by the full span while a record's `samples` is what it
-actually encoded.
+The service worker registers with MMCSS (Pro Audio) for its lifetime, falling
+back to highest thread priority and logging which is in force. The driver stops
+waking the service while the frame ring is over its trim limit: a record written
+then would only be trimmed away.
 
-Consequences:
+## Frame records
 
-- no drift between the ACX endpoint and the RTP clock, because both are derived from the
-  same PCM;
-- the frame ring stays near-empty in steady state (one tick of encoded audio);
-- latency is roughly one encode tick plus the driver tick (10-20 ms), on top of the
-  existing ~60 ms preroll.
+The service writes variable-length records into the frame ring. A record is a
+fixed header followed by the codec payload; `size` is exact, and records are
+never padded.
 
-## 8. Negotiation
-
-`Avdtp::SourceSession` now holds a small array of local SEPs:
-
-- SEID 1: SBC, always present (mandatory fallback);
-- SEID 2: AAC, always advertised; selectable only while its provider is registered;
-- SEID 3: aptX HD (vendor `0x000000D7` / codec `0x0024`), always advertised; selectable
-  only while its provider is registered, in 24-bit stereo at the endpoint's rate;
-- SEID 4: classic aptX (vendor `0x0000004F` / codec `0x0001`), always advertised; selectable
-  only while its provider is registered, in 16-bit stereo at the endpoint's rate;
-- SEID 5: LDAC (vendor `0x0000012D` / codec `0x00AA`), always advertised; selectable only
-  while its provider is registered, in 16- or 24-in-32 stereo at the endpoint's rate and only
-  on a link whose media payload carries LDAC's 679 bytes.
-
-The session answers DISCOVER with every local SEP, answers GET_CAPABILITIES per SEID,
-validates `acpSeid` against the matching local SEP, and keeps the sink-initiated
-`SET_CONFIGURATION` check working for every codec (vendor capabilities are matched to a
-local SEP by their vendor and codec IDs; SBC is checked inside the session, other codecs
-through the `ConfigValidator` callback).
-
-Policy: forced codec (if available) > LDAC > aptX HD > aptX > AAC > SBC. `driver/signaling/SignalingCodec.cpp`'s
-`SelectConfig` has the AAC branch (`AacConfig::Select`, the endpoint rate, highest bitrate the
-sink accepts) and one vendor branch that tells the codecs apart by their IDs, scoring LDAC 5,
-HD 4, aptX 3, AAC 2 and SBC 1. Every scored sink SEP is kept as a candidate in descending order; when the sink
-rejects a `SET_CONFIGURATION`, the session configures the next candidate for the same sink
-SEP, so a capable sink that refuses the best codec falls back without a reconnect.
-`AvdtpSourceTests` covers the fallback, the vendor SEP selection and the all-rejected failure.
-
-`MediaStart` dispatches on `SelectedCodec()`: SBC keeps the current kernel encoder; AAC
-validates the IE with `AacConfig::ParseConfiguredIe` and enters the service path; a vendor
-configuration is parsed as LDAC, aptX HD or classic aptX and checked against the pin's depth
-in stereo, then enters the same service path with `ActiveCodec` set to `kCodecLdac`,
-`kCodecAptxHd` or `kCodecAptx`, so `WAIT_EVENT` names the codec the service must encode. The
-event also carries the stored LDAC quality, which is the only codec parameter the service
-cannot read from the IE.
-
-## 9. Failure handling and counters
-
-| Failure | Driver action |
+| Field | Meaning |
 |---|---|
-| No service registered at negotiation | Refuse AAC/aptX/aptX HD selection; retain SBC fallback |
-| Service closes the handle while streaming | Stop media, request SUSPEND, close the stream |
-| No frame for 200 ms while the endpoint runs | Count `underruns`, log once per second; no state change (encoder loss is the file-cleanup event). A paused endpoint produces no frames by design and counts nothing |
-| Oversize record | Skip and count `framesDropped`; suspend after 100 consecutive |
-| Corrupt record header (bad magic/size) | Stop media and request SUSPEND immediately; count an error |
-| Media send failure | Reported by the send completion: stop media, request SUSPEND |
-| PCM ring full | Existing `AudioDroppedBytes` counter; the service is behind |
+| `magic` | Record marker |
+| `size` | Whole record, header included |
+| `samples` | PCM samples the payload covers |
+| `silenceSamples` | Samples inside `samples` that were zero-filled because the ring was short |
+| `skippedSamples` | Clock skipped just before this record when the lead was restarted |
+| `flags` | Discontinuity after a gap |
 
-`GET_STATUS` exposes the counters above (`underruns`, `framesDropped`, `packetsSent`,
-`sendFailures`) with `lastError` carrying the NTSTATUS of the last media failure, plus the
-losses no state change announces: `pcmTrimmedBytes` with `framesTrimmed` for audio dropped to
-stay near live, `pcmDroppedBytes` for endpoint PCM that never reached the ring (the driver's
-`AudioDroppedBytes`), and `serviceSilenceSamples` for PCM the service had to zero-fill. The
-config UI and `dbgprint` triage therefore agree.
+A record is written in one call. If it does not fit, it is dropped and counted;
+a partial record is never written.
 
-## 10. Security
+The driver validates the header before using it. A payload above the negotiated
+frame limit is skipped and counted; a corrupt header stops consumption, stops
+media and requests a suspend, because the producer cannot be repaired from the
+consumer side. The service resets its producer index on the next stream start.
 
-- The control device is SYSTEM + Administrators only; the PnP/ACX device object keeps its
-  default security descriptor because the audio engine opens it, so service access is
-  restricted without touching the validated audio path.
-- The driver never accepts a user-mode pointer for shared memory: it allocates, locks and
-  maps its own pages, so there is no `ProbeForRead`/`ProbeForWrite` surface and no
-  double-mapping of arbitrary user memory.
-- Input structs are validated for size, `abiVersion` and value ranges: the codec, the SBC
-  bitpool and frame parameters through
-  `Ioctl::ValidPreference`; `maxFramePayload` is clamped to `kMaxFramePayload`.
-- The service runs as LocalSystem (it must open the interface), reads PCM from the
-  mapping only and never writes the PCM ring; the driver never trusts `samples` beyond
-  `kAacSamplesPerFrame`.
+One record becomes one RTP packet. The driver adds the 12-byte RTP header, keeps
+one packet in flight, advances the sequence per packet and advances the timestamp
+by the record's `samples`. It never packs two records into one packet and never
+fragments a record.
 
-## 11. Why the encoder is Windows'
+## Pacing
 
-`codecs/aac/AacCodec.cpp` is a client of `CLSID_AACMFTEncoder`, not an AAC implementation.
-The service exists because that encoder is a user-mode Media Foundation transform: it
-cannot be loaded in the kernel, so the driver cannot call it, and the PCM ring, the frame
-ring and the `WAIT_EVENT` handshake (sections 3 to 6) are the price of using it. No AAC
-encoder is compiled into this tree; what the tree owns is the IE negotiation and the LATM
-framing around the encoder.
+The service paces its own pump for its codecs. For each pump it computes how much
+audio must have been encoded from elapsed time, the PCM rate and the lead, then
+encodes whole access units:
 
-What that buys:
+- AAC: one 1024-sample block per record.
+- aptX HD: a ten-millisecond record of four-sample frames.
+- aptX: the same record length, carrying the 0 to 3 samples a frame cannot cover
+  into the next record, so the clock does not drift.
+- LDAC: the encoder consumes 128 samples per channel and returns a whole media
+  packet; a record covers the samples those transport frames hold.
 
-- the bitstream is the one Windows itself sends over A2DP AAC, so a sink that works with
-  the inbox stack works here, and there is no second encoder to keep in step with the OS
-  decoder it will be compared against;
-- no encoder code or binary is distributed with this project, which keeps the AAC
-  obligation where `Codec-Licensing.md` records it: calling the OS encoder rather than
-  shipping one;
-- encoder fixes and OS-version behaviour arrive with Windows Update, not with a release
-  of this tree.
+A block is encoded once its PCM is in the ring. Encoding as soon as one sample is
+due would zero-fill audio that is a copy tick away and play it as a gap. Only a
+block that is a whole block plus the copy slack overdue is padded, and that is
+reported. A stream that falls further behind than the lead with its audio gone
+restarts its lead: the clock skips the gap and the next record's
+`skippedSamples` carries it, so the sink hears one gap instead of a burst of
+silence that plays late for the rest of the stream.
 
-What it costs:
+The driver only drains the frame ring, one packet per media-clock tick or send
+completion. Both sides derive the clock from the same PCM, so the endpoint and
+RTP do not drift. In steady state the frame ring holds about one tick of encoded
+audio. [Latency](Latency.md) covers the resulting budget and the trim policy.
 
-- the service, its rings, its IOCTLs and the failure modes in section 9; an in-kernel
-  encoder would be a shorter data path, but not an available one;
-- the OS encoder's parameter surface: 16-bit PCM input only (`0xC00D36B4` otherwise) and
-  the rate/bitrate set in section 1, with no quality or afterburner knobs;
-- the encoder must exist on the installed OS build. If `CoCreateInstance` fails,
-  initialization fails, the service never registers, and negotiation stays on SBC; there
-  is deliberately no in-tree fallback.
+## Failure handling
 
-Bundling an AAC encoder would be a licensing decision before it is a code change: an
-encoder this project ships is what the AAC pool licenses per unit (see
-`Codec-Licensing.md`). If one is ever wanted — for a quality knob Media Foundation does
-not expose, or for an OS build without the encoder — it becomes another `IA2dpEncoder`
-created by `AacCodec::CreateEncoder` inside the service. It does not change this boundary.
+| Failure | Driver response |
+|---|---|
+| No service registered at negotiation | Refuse its codecs; SBC remains available |
+| Service releases the handle while streaming | Stop media, request SUSPEND, close the stream |
+| No frame for the underrun interval while the endpoint runs | Count `underruns` and log; no state change |
+| Oversize record | Skip and count; suspend after a sustained run |
+| Corrupt record header | Stop media and request SUSPEND immediately |
+| Media send failure | Stop media and request SUSPEND |
+| PCM ring full | Count the dropped endpoint PCM; the service is behind |
 
-## 12. Not in v1
+`GET_STATUS` exposes the counters, the last media error and the losses that cause
+no state change: trimmed PCM, trimmed records, endpoint PCM that never reached
+the ring, and service zero-fill. [Diagnostics](../DIAGNOSTICS.md) explains them.
 
-- Fragmentation of AAC frames larger than the media MTU: the selector caps the bitrate to
-  what one packet carries (256 kbps at 44.1 kHz, 320 kbps at 48 kHz for the 895-byte MTU),
-  and oversize records are dropped and counted.
-- VBR, mono and rates the encoders do not take (AAC below 32 kHz and above 48 kHz).
-- More than one service or more than one registration per device.
-- AVRCP absolute volume and the config UI (D4, M6/M9).
+## Security
+
+- The control device is SYSTEM and Administrators only. The PnP/ACX object keeps
+  its default descriptor because the audio engine opens it.
+- The driver allocates, locks and maps its own pages. It accepts no user-mode
+  pointer for shared memory, so there is no probe surface and no double mapping.
+- Input structures are checked for size, version and range. The frame payload
+  limit is clamped to the driver's maximum.
+- The service runs as LocalSystem, reads PCM and writes frames only, and the
+  driver does not trust a record's sample count beyond the codec's frame size.
+
+## Limits
+
+- One service process per machine and one registration per codec per device.
+- AAC sends one access unit per packet, with no fragmentation. The bitrate is
+  capped to what one media packet carries.
+- AAC runs where the Media Foundation encoder is available; without it the
+  service does not register AAC and the sink stays on a codec that works.
+- Codec payloads are not split across packets and packets are not aggregated.
+
+## Code map
+
+| Area | Files |
+|---|---|
+| Service host, enumeration and workers | `service/main.cpp` |
+| Control device and IOCTL dispatch | `driver/service/ServiceControl.cpp`, `ServiceIoctl.cpp` |
+| Rings, mapping and file cleanup | `driver/service/ServiceRings.cpp`, `ServiceFiles.cpp` |
+| Event waits and cancellation | `driver/service/ServiceEvents.cpp`, `ServiceRundown.cpp` |
+| Frame records and draining | `common/include/OpenA2dp/FrameRecord.h`, `driver/service/ServiceStream.cpp`, `driver/media/MediaAac.cpp` |
+| Service codecs | `codecs/aac/`, `codecs/aptx/`, `codecs/ldac/` |
+| ABI | `common/include/OpenA2dp/Ioctl.h` |

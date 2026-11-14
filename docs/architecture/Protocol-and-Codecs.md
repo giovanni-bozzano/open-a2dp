@@ -1,68 +1,149 @@
-# Protocol and codec contracts
+# Protocol and codecs
 
-Canonical definitions: `common/include/OpenA2dp/{Avdtp,AvdtpSource,Rtp,SbcConfig,AacConfig}.h`. Consult these instead of duplicating wire constants here.
+[Architecture index](README.md) | [Encoder service](Encoder-Service.md) | [Configuration](Codec-Configuration.md)
 
-## Negotiation
-- Source flow: DISCOVER -> GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START; SUSPEND, CLOSE and ABORT release stream state. The state machine also accepts sink-initiated configuration.
-- Local SEID 1 (SBC), SEID 2 (AAC), SEID 3 (aptX HD), SEID 4 (classic aptX) and SEID 5 (LDAC) are always advertised. AAC, the aptX codecs and LDAC are selected/accepted only while their encoder provider is registered; a late registration closes a streaming lower-quality session and rediscovers (initiator role only).
-- Prefer a forced codec when available, otherwise LDAC > aptX HD > aptX > AAC > SBC. Keep scored sink candidates and fall back after rejected configuration rather than requiring reconnect.
-- Both aptX codecs are vendor codecs: SEP 3 carries vendor `0x000000D7` / codec `0x0024`, SEP 4 carries vendor `0x0000004F` / codec `0x0001`, and a sink capability is matched to a SEP by those IDs in its IE, because AVDTP has one codec type for every vendor codec. HD is selectable only as 24-bit stereo and classic only as 16-bit stereo, at 44.1 or 48 kHz. HD needs the pin at 24-in-32 (a 16-bit pin falls back to a codec that fits instead of converting); classic also takes a 24-in-32 pin, because its stream encoder narrows it the way the kernel SBC path narrows the same ring. Their IEs share the layout in `VendorAptx.h`: four-byte vendor ID, two-byte codec ID and the rate/mode byte; HD appends four reserved bytes.
-- LDAC is the third vendor codec: SEP 5, vendor `0x0000012D` / codec `0x00AA`, and an eight-octet IE that carries a rate mask and a channel-mode mask in separate octets. It plays 44.1, 48, 88.2 and 96 kHz stereo and is selected only when the endpoint's rate is one of those and the link's media payload reaches the 679 bytes its 2-DH5 framing needs; its quality mode is local rather than negotiated.
-- Driver SBC capabilities cover 16, 32, 44.1 and 48 kHz with every channel mode, and the endpoint offers a 16-bit format at each of those rates. Default selection uses 16 blocks, 8 subbands, joint stereo/loudness and bitpool capped at 53, subject to sink support.
-- AAC runs at 32, 44.1 and 48 kHz: those are the rates the Media Foundation encoder sets types for, and it refuses the rest of the IE's rate field (8 to 24 and 64 to 96 kHz) with `MF_E_INVALIDMEDIATYPE`. Format/payload limits: [service boundary](Encoder-Service.md). Endpoint format pinning and the per-codec parameter overrides are described in [codec configuration](Codec-Configuration.md).
+Canonical definitions live in `common/include/OpenA2dp/`: `Avdtp.h`,
+`AvdtpSource.h`, `Rtp.h`, `SbcFrame.h`, `SbcConfig.h`, `AacConfig.h`,
+`VendorAptx.h`, `Aptx.h`, `AptxHd.h` and `Ldac.h`. This document explains how
+they are used; the headers are authoritative.
+
+## AVDTP source flow
+
+The source drives:
+
+```text
+DISCOVER -> GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START
+```
+
+`SUSPEND`, `CLOSE` and `ABORT` release stream state. The session also accepts a
+sink-initiated configuration: a sink that already knows what it wants can
+configure the stream without a discovery from the PC.
+
+| Local SEID | Codec | Advertised | Selectable when |
+|---|---|---|---|
+| 1 | SBC | Always | Always |
+| 2 | AAC | Always | The AAC encoder is registered |
+| 3 | aptX HD | Always | The aptX HD encoder is registered and the pin can carry 24-bit stereo |
+| 4 | aptX | Always | The aptX encoder is registered and the pin can carry stereo |
+| 5 | LDAC | Always | The LDAC encoder is registered, the link carries its payload, and the pin is 44.1 kHz or above in stereo |
+
+Every SEP stays advertised so the sink can always configure a codec whose
+provider is present. Registration controls selection, not advertisement.
+
+## Selection policy
+
+A forced codec wins when it is available. Otherwise the order is:
+
+```text
+LDAC > aptX HD > aptX > AAC > SBC
+```
+
+The session scores the sink's candidate SEPs in that order. A sink that rejects a
+`SET_CONFIGURATION` moves to the next candidate on the same connection, so a
+capable sink that refuses the best codec falls back without a reconnect.
+
+A codec the sink does not advertise, or whose provider is not registered, is not
+selectable. A late provider registration closes a streaming lower-quality session
+and rediscovers; a forced codec is left alone.
+
+Sink-initiated configurations are validated against the matching local SEP. SBC
+is checked inside the session. Vendor capabilities are matched by their vendor and
+codec IDs, because AVDTP has one codec type for every vendor codec.
+
+Configuration the endpoint cannot serve is refused during negotiation, not at
+media start: `NotSupportedSamplingFrequency`, `NotSupportedChannelMode`,
+`NotSupportedChannels` or `NotSupportedBitRate`. The media-start format check is a
+safety net, not the normal path.
+
+## Codec capabilities
+
+| Codec | Rates | Channels | Input depth | Packet payload |
+|---|---|---|---|---|
+| SBC | 16, 32, 44.1, 48 kHz | mono, dual, stereo, joint stereo | 16-bit | RTP + one-byte SBC header + whole frames |
+| AAC-LC | 32, 44.1, 48 kHz | 1 or 2 | 16-bit; 24-in-32 narrowed | RTP + one LATM `AudioMuxElement` |
+| aptX | 44.1, 48 kHz | stereo | 16-bit; 24-in-32 narrowed | RTP + concatenated 4-byte frames |
+| aptX HD | 44.1, 48 kHz | stereo | 24-in-32 | RTP + concatenated 6-byte frames |
+| LDAC | 44.1, 48, 88.2, 96 kHz | stereo | 16-bit or 24-in-32 | RTP + the encoder's frame sequence |
+
+- **SBC** uses 16 blocks, 8 subbands, joint stereo or loudness by default, with
+  the bitpool capped at 53 and the sink's range. At 44.1 kHz that is a 119-byte
+  frame; seven frames fit a typical media packet.
+- **AAC** runs at the three rates the Media Foundation encoder accepts. It sends
+  one access unit per packet, so the bitrate is capped by what one packet carries
+  at the endpoint rate and the negotiated MTU.
+- **aptX** carries ten milliseconds of audio per record: 120 frames at 48 kHz, or
+  110 or 111 at 44.1 kHz. The 0 to 3 samples a frame cannot cover are carried into
+  the next record, so the clock does not drift. Bitrate is 384 kbps at 48 kHz and
+  352.8 kbps at 44.1 kHz.
+- **aptX HD** also carries ten milliseconds per record, 120 frames at 48 kHz or
+  110 or 111 at 44.1 kHz, at 576 kbps and 529.2 kbps.
+- **LDAC** runs stereo only. Each encode call consumes 128 samples per channel;
+  the encoder returns a whole media packet after two calls at 44.1 or 48 kHz, so
+  a record covers 256 samples, about 5.8 ms. Its 2-DH5 framing needs a 679-byte
+  media payload, so a link that cannot carry that never selects LDAC. Quality
+  mode is local: 990, 660 or 330 kbps at 48 kHz, and 909, 606 or 303 at 44.1 kHz.
 
 ## Packetization
-- RTP: 12-byte header, version 2, payload type 96; sequence advances per packet and timestamps in PCM samples.
-- SBC adds a one-byte payload header with frame count; pack whole frames within media MTU. Example: 44.1 kHz joint stereo, 16 blocks, 8 subbands, bitpool 53 yields 119-byte frames.
-- AAC uses one LATM AudioMuxElement per record/RTP packet with inline stream configuration. No oversized-frame fragmentation; the negotiated bitrate is capped to what one packet carries (256 kbps at 44.1 kHz, 320 kbps at 48 kHz for the 895-byte MTU).
-- Both aptX codecs keep the RTP header (12 bytes, payload type 96) and carry concatenated frames with no codec-specific payload header. HD frames are six bytes (three per channel) for four samples, so a 10 ms record is 120 frames at 48 kHz and 110 at 44.1 kHz, 576 kbps at 48 kHz. Classic frames are four bytes (two per channel) for four samples, 384 kbps at 48 kHz and 352.8 kbps at 44.1 kHz; 10 ms of 44.1 kHz is 441 samples, so the service carries 0..3 samples into the next record and a record holds 110 or 111 frames. The driver sends a record whole, as it does an AAC access unit.
-- Kernel SBC uses integer-only `SbcFixed`; it and the codec library's floating-point `SbcEncoder` allocate bits with the shared `SbcAllocation` solver and write the same `SbcFrame` header, CRC and tail padding; only the filterbank, scale-factor search and quantizer stay per-encoder. No production path selects the codec library's SBC encoder (the driver encodes SBC in the kernel, the service encodes AAC, aptX and aptX HD): it is the reference implementation the tests pin frame layout against. The independent test decoder is a sanity reference, not external interoperability proof; synthesis gain is `-M`, with 73/37-sample delay for 8/4 subbands.
 
-## PCM depth and 24-bit aptX HD
+Every path sends RTP version 2 with dynamic payload type 96 and a 12-byte header.
+The sequence advances per packet; the timestamp advances by the PCM samples the
+packet covers. One packet is in flight at a time per stream.
 
-**Decision: 24-bit is native end to end.** No 16->24 expansion adapter goes into a codec
-wrapper. The HD encoder already consumes 24-bit samples, so a pad would feed zeroed low
-bits to its predictor and be deleted again when the real path lands, after the interface,
-both encoders, both test fakes and every call site had been touched twice. SBC, AAC and
-classic aptX keep their own 16-bit input; the endpoint tells the service which depth the PCM ring
-carries (`RegisterEncoderOut`/`WaitEventOut.pcmValidBits`).
+- SBC adds a one-byte payload header carrying the frame count, then whole frames.
+  The packet is filled up to the media MTU unless the stored frames-per-packet
+  cap is lower.
+- AAC carries exactly one LATM `AudioMuxElement` per packet, with the stream
+  configuration inline. Records are never fragmented.
+- aptX and aptX HD carry concatenated frames with no codec-specific payload
+  header.
+- LDAC carries the encoder's own frame sequence, headers included.
+- A service record becomes one packet. The driver never packs two records into
+  one packet and never splits a record.
 
-- Endpoint: 24-in-32, PCM subformat, `wBitsPerSample = 32`, `wValidBitsPerSample = 24`,
-  valid bits left-justified with the low byte zero. That is the Windows convention and it
-  keeps whole bytes in the ring; packed 3-byte 24 is legal but rarely accepted.
-- Ring: the depth comes from the actual stream format, so `PinBytesPerFrame` is channels
-  times the container size and `AudioReadPcm`, `ctx->PcmBuffer` and the render format table
-  become depth aware. The PCM ring is sized by time at the widest format, 96 kHz stereo in
-  24-in-32, so it holds the longest lead a preference allows (200 ms) at every rate.
-- Encoder seam: `PcmFormat` carries the depth and `Encode` takes bytes. SBC, AAC and
-  classic aptX declare 16 and reject anything else; HD declares 24-in-32.
-- HD input: `aptxhdbtenc_encodestereo(state, pcmL[4], pcmR[4], out[2])` wants four 24-bit
-  samples per channel as `int32`, sign-extended in the low 24 bits, and returns 6 bytes (3
-  per channel) per call. AOSP's own glue expands packed 24-bit into that layout; from
-  24-in-32 the conversion is one arithmetic shift right by 8 per sample.
-- Depth is not a setting and adds no `Preference`/`EndpointFormat` field: it follows the
-  codec, because the Windows stream format is an input to `SelectConfig`, not its result.
-  24-in-32 is listed only while aptX HD can actually run: its provider is registered, the
-  current discovery found the codec, the user has not forced another codec, and the sink
-  advertises that rate. A forced HD pins the list to 24-bit. Otherwise 16-bit entries stay,
-  and they follow either the sink's SBC formats or its classic aptX formats, because either
-  codec can play them; forcing classic aptX narrows them to the formats it can run.
+## Media MTU
 
-Sequencing, together with the aptX HD milestone rather than before it:
+The driver requests the largest media MTU and negotiates before the media channel
+exists. If the sink grants less, the driver suspends and reconfigures once per
+connection at the highest bitrate the reported MTU carries. A second mismatch
+leaves the stream silent instead of retrying. The accepted MTU is kept for the
+rest of the connection, so a later codec switch is already capped by it, and it
+is dropped when the connection ends.
 
-1. Vendor `encoder_for_aptxhd` and build the wrapper against the encoder's native input,
-   with tests for 24-in-32 to `int32`. Done.
-2. Add the depth dimension to the render format table and `AudioValidatePinFormat`, and
-   take `PinBytesPerFrame` from the stream instead of the channel count. Done.
-3. Pick 24-in-32 in `AudioApplyEndpointFormats` from the codec preference and the sink's
-   advertised HD capabilities. Done: `DesiredFormats` follows the HD capability byte and
-   the registered provider, and the 24-bit list leads the endpoint.
-4. Widen `IA2dpEncoder`/`PcmFormat`, then add the 24->16 rounded downconvert on the 16-bit
-   codec path only. Done: `Pcm::Narrow24To16` rounds and saturates, used by the kernel
-   SBC reader and by `AacStreamEncoder` when the ring is 24-in-32.
+## PCM depth
 
-Two limits stay, and neither is in the HD path: a configuration that falls back from HD
-may leave a 24-bit stream for SBC or AAC, which are 16-bit by definition and get the
-rounded downconvert; and shared mode is a float mix, so 24-in-32 makes `audiodg` convert
-to 24 bits instead of 16 rather than making delivery bit-exact - aptX HD is still a lossy
+24-bit audio is native end to end. The endpoint lists 24-in-32 while aptX HD or
+LDAC can run, and the PCM ring carries the depth of the stream Windows opened:
+
+- **Endpoint format:** PCM subformat, `wBitsPerSample = 32`,
+  `wValidBitsPerSample = 24`, valid bits left-justified with the low byte zero.
+  This is the Windows convention and keeps whole bytes in the ring.
+- **Ring:** bytes per frame follow the actual stream format, not the channel
+  count, and the PCM ring is sized by time at the widest supported format.
+- **Encoder seam:** `PcmFormat` carries the depth and `Encode` takes bytes. SBC,
+  AAC and classic aptX declare 16-bit input; aptX HD declares 24-in-32.
+- **Conversion:** aptX HD consumes four 24-bit samples per channel as
+  sign-extended `int32`, and returns 6 bytes per call; from 24-in-32 that is one
+  arithmetic shift right by 8 per sample. A 24-bit stream that negotiates SBC,
+  AAC or classic aptX is narrowed with a rounded, saturating conversion.
+
+Depth is not a setting. It follows the codec, because the Windows stream format
+is an input to codec selection, not its result. A forced aptX HD pins the endpoint
+list to 24-in-32; forcing classic aptX narrows it to 16-bit.
+
+Shared mode mixes in float, so a 24-in-32 stream makes `audiodg` convert to 24
+bits instead of 16; it does not make delivery bit-exact. aptX HD remains a lossy
 576 kbps bitstream.
+
+## Code map
+
+| Area | Files |
+|---|---|
+| AVDTP types and source session | `common/include/OpenA2dp/Avdtp.h`, `AvdtpSource.h` |
+| SBC capabilities, frame layout and selection | `common/include/OpenA2dp/SbcConfig.h`, `SbcFrame.h`, `SbcAllocation.h` |
+| AAC capabilities and LATM | `common/include/OpenA2dp/AacConfig.h`, `codecs/aac/` |
+| aptX and aptX HD vendor IEs | `common/include/OpenA2dp/VendorAptx.h`, `Aptx.h`, `AptxHd.h` |
+| LDAC capabilities | `common/include/OpenA2dp/Ldac.h` |
+| RTP header | `common/include/OpenA2dp/Rtp.h` |
+| PCM depth conversion | `common/include/OpenA2dp/PcmDepth.h` |
+| Negotiation and media dispatch | `driver/signaling/SignalingCodec.cpp`, `driver/media/MediaStream.cpp` |
+| Packet assembly | `driver/media/MediaPackets.cpp` |

@@ -12,11 +12,10 @@ commit.
 - `AptxHdCodec.cpp`, `AptxHdStreamEncoder.cpp` and `../../include/OpenA2dp/AptxHdCodec.h` are
   this repository's wrapper, not part of the vendored drop.
 - `SHA256SUMS` records the LF form of every vendored file, so a CRLF checkout verifies
-  unchanged. `scripts/check-vendored-aptx.ps1` checks it and exits non-zero on a change;
-  `-Update` rewrites it after a deliberate re-vendor.
+  unchanged. `scripts/check-vendored-encoders.ps1` checks all three drops and exits
+  non-zero on a change; `-Update` rewrites the manifests after a deliberate re-vendor.
 
 Qualcomm contributed these encoders to AOSP under Apache-2.0 with a contributor patent
-grant, which is why they are the only aptX implementation this project can ship; see
-[codec licensing](../../../docs/architecture/Codec-Licensing.md). Distributing binaries also
-requires shipping the Apache-2.0 licence text, and aptX branding or certification stays with
-Qualcomm.
+grant; see [codec licensing](../../../docs/architecture/Codec-Licensing.md). Distributing
+binaries also requires shipping the Apache-2.0 licence text, and aptX branding or
+certification stays with Qualcomm.

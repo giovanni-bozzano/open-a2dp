@@ -1,50 +1,53 @@
 # Hardware test procedure
 
-Manual tests for behaviour host tests cannot cover: the Bluetooth transport, PnP/power,
-the encoder service and the event-driven signaling (see
-[event model](architecture/Event-Model.md)). A test passes only when every "Expect"
-holds and the [log check](#4-log-check-after-every-test) is clean.
+These are the tests host code cannot cover: the Bluetooth transport, PnP and
+power, the encoder service and the event-driven signaling (see
+[timing and events](architecture/Event-Model.md)). A test passes only when every
+"Expect" holds and the [log check](#4-log-check-after-every-test) is clean.
 
 ## Contents
 
-- [1. Setup](#1-setup-once): log capture, Verifier, uninstall check, baseline
+- [1. Setup](#1-setup-once): log capture, Verifier, restore check, baseline
 - [2. Tools](#2-tools-used-in-the-steps)
-- [3. Tests](#3-tests), by area: connection T1-T5, teardown T6-T10, power T11-T14, service
-  T15-T16, AAC and settings T17-T19 and T21-T23, window T24, handover T25-T28, latency T29-T33,
-  driver switching T34, soak T20
+- [3. Tests](#3-tests): connection T1-T5, teardown T6-T10, power T11-T14, service
+  T15-T16, AAC and settings T17-T19 and T21-T23, window T24, handover T25-T28, latency
+  T29-T33, driver switching T34, soak T20
 - [4. Log check](#4-log-check-after-every-test)
 - [5. Reporting](#5-reporting)
 
 ## 1. Setup (once)
 
-Use the test VM (`scripts/deploy.ps1 -Vm -Build`) or a test-signing machine with a kernel
-debugger attached; `scripts/deploy.ps1 -Build` deploys on this machine. The deploy trusts the
-test certificate in the machine's Root store only, which is the one place a signature chain is
-decided, and the restore check takes it back out. Never enable Verifier on a machine you cannot recover: a Verifier
-bugcheck repeats on every boot until it is turned off.
+Use the test VM (`scripts/deploy.ps1 -Vm -Build`) or a test-signing machine with a
+kernel debugger attached. `scripts/deploy.ps1 -Build` deploys on this machine; see
+[Build and deploy](BUILD.md). Never enable Verifier on a machine you cannot recover:
+a Verifier bugcheck repeats on every boot until it is turned off.
 
 ### 1.1 Kernel log capture
-The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per record:
+
+The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one record per line:
 `OpenA2dp <LEVEL> [<sink> (<address>)] <Category>: <message>`.
 
 1. Elevated prompt: `reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Debug Print Filter" /v IHVDRIVER /t REG_DWORD /d 0xF /f`, then reboot.
    With WinDbg attached you can instead run `ed nt!Kd_IHVDRIVER_Mask 0xF` (no reboot).
 2. Capture with either:
-   - WinDbg: `.logopen C:\OpenA2dp\logs\<test-id>.txt` before the test, `.logclose` after; or
+   - WinDbg: `.logopen <file>` before the test, `.logclose` after; or
    - Sysinternals DebugView as administrator: enable *Capture Kernel* and *Enable Verbose
-     Kernel Output*, clear, run the test, save as `<test-id>.log`.
-3. Service lines: the service writes them to the debugger (`[svc]`), so the WinDbg or
-   DebugView capture carries them; there is no service log file.
+     Kernel Output*, clear, run the test, save the log.
+3. Service lines: the service writes `[svc]` lines to the debugger, so the WinDbg or
+   DebugView capture carries them. There is no service log file.
+
+[Diagnostics](DIAGNOSTICS.md) explains the record format, levels and triage.
 
 ### 1.2 Driver Verifier
+
 1. Elevated prompt:
    ```
    verifier /standard /driver OpenA2dp.sys
    ```
    `/standard` includes deadlock detection, special pool, pool tracking (leaks at
-   unload), forced IRQL checking, I/O verification and DDI compliance checking. When
-   Verifier is on for a KMDF driver, the KMDF verifier is enabled too.
-2. Optional, stronger KMDF handle checks (diagnoses leaked or over-released WDF objects):
+   unload), forced IRQL checking, I/O verification and DDI compliance checking. For a
+   KMDF driver, the KMDF verifier is enabled too.
+2. Optional, stronger KMDF handle checks:
    ```
    reg add HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters\Wdf /v VerifierOn /t REG_DWORD /d 1 /f
    reg add HKLM\SYSTEM\CurrentControlSet\Services\OpenA2dp\Parameters\Wdf /v TrackHandles /t REG_MULTI_SZ /d "*" /f
@@ -53,17 +56,18 @@ The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one line per rec
    `DbgBreakOnError` breaks into the debugger on a framework error; only set it with a
    debugger attached.
 3. Reboot, then confirm: `verifier /querysettings` lists `OpenA2dp.sys`, and
-   `verifier /query` shows it as loaded once a sink is paired.
+   `verifier /query` shows it loaded once a sink is paired.
 4. During and after tests: `verifier /query` shows counters; any violation is a
-   bugcheck (typically `0xC4`, `0xC9`, `0x10D` for KMDF). In WinDbg run `!analyze -v`,
-   then `!verifier 0x3`, `!deadlock` (lock-order report) and
-   `!wdfkd.wdflogdump OpenA2dp`. Keep the dump with the test id.
+   bugcheck (typically `0xC4`, `0xC9` or `0x10D` for KMDF). In WinDbg run `!analyze -v`,
+   `!verifier 0x3`, `!deadlock` and `!wdfkd.wdflogdump OpenA2dp`. Keep the dump with the
+   test id.
 5. Turn it off when finished: `verifier /reset`, delete the `Parameters\Wdf` values,
    reboot.
 
-### 1.3 Uninstall check
-The deploy script doubles as the restore check and needs no package, so it can run against
-whatever the VM has installed:
+### 1.3 Restore check
+
+The deploy script doubles as the restore check and needs no package, so it can run
+against whatever the machine has installed:
 
 ```
 scripts/deploy.ps1 -Uninstall            # this machine
@@ -71,60 +75,54 @@ scripts/deploy.ps1 -Vm -Uninstall        # the test VM
 ```
 
 It stops the service and the tools, removes every `opena2dp.inf` package with
-`pnputil /delete-driver oem<N>.inf /uninstall`, then deletes both `OpenA2dpSvc` and the
-kernel `OpenA2dp` service entry - `pnputil` leaves that one behind - and waits up to 30 s
-for a node bound to `BthA2dp`. The guest log is streamed as it runs.
+`pnputil /delete-driver oem<N>.inf /uninstall`, deletes both the encoder service and the
+kernel `OpenA2dp` service entry, and waits for a node bound to `BthA2dp`. The guest log
+is streamed as it runs.
 
-The `BthA2dp` half needs the sink paired **and connected**: a paired but powered-off sink
-has no node, and the check cannot tell that apart from a failed restore, so it fails with
-`pair and connect the sink, then rerun`.
+The `BthA2dp` half needs the sink paired **and connected**: a powered-off sink has no
+node, and the check cannot tell that apart from a failed restore. It reports
+`pair and connect the sink, then rerun` in that case.
 
-Expect `removing driver package oem<N>.inf` (or `no OpenA2dp package in the driver store`),
-a `BthA2dp: <name> status=...` line, `OpenA2dpCtl list: No OpenA2dp devices found`, then
-`RESTORED` and `Restore check passed` on the host.
+Expect `removing driver package oem<N>.inf` (or `no OpenA2dp package in the driver
+store`), a `BthA2dp: <name> status=...` line, `OpenA2dpCtl list: No OpenA2dp devices
+found`, then `RESTORED` and `Restore check passed` on the host.
 
 The check fails while any of these is still true: an `OpenA2dp` device node exists;
 `sc query OpenA2dp` or `sc query OpenA2dpSvc` does not answer 1060; `Win32_SystemDriver`
 lists `OpenA2dp`; `pnputil /enum-drivers` still shows `opena2dp.inf`;
-`C:\Windows\System32\drivers\OpenA2dp.sys` exists; nothing is bound to `BthA2dp`;
-`OpenA2dpCtl list` still finds a control device. Rerunning it on an already restored VM
-repeats the checks without removing anything.
+`%SystemRoot%\System32\drivers\OpenA2dp.sys` exists; nothing is bound to `BthA2dp`;
+`OpenA2dpCtl list` still finds a control device. Rerunning it on an already restored
+machine repeats the checks without removing anything.
 
-Then play audio to the sink: the Microsoft A2DP path must work again, without a reboot. If
-the sink has not reconnected yet, the script says so - reconnect it and rerun.
+Then play audio to the sink: the Microsoft A2DP path must work again without a reboot.
+If the sink has not reconnected yet, the script says so; reconnect it and rerun.
 
 ### 1.4 Baseline before each session
-1. Deploy the build under test and note the commit (`git log -n 1 --oneline`).
+
+1. Deploy the build under test and note its commit (`git log -n 1 --oneline`).
 2. Pair the sink; `OpenA2dpCtl list` (elevated) shows it.
 3. `sc query OpenA2dpSvc` is `RUNNING` unless the test says otherwise.
 4. Start log capture; in a second window run `OpenA2dpCtl status --watch`.
 
 ## 2. Tools used in the steps
-- `OpenA2dpCtl status|list|codec <auto|sbc|aac|aptx|aptxhd|ldac> [--bitrate bps] [--bitpool n]
-  [--blocks n] [--subbands n] [--allocation loudness|snr] [--preroll ms] [--frames n]
-  [--ldac-quality high|standard|mobile]`, and
-  `OpenA2dpCtl format <codec> [auto|<rate> <1|2>]`
-  (elevated). `status` shows AVDTP state, media state, codec, encoder registration and
-  counters; the audio and loss lines are `latency`, `latency peak`, `worst gaps`,
-  `pacing lead`, `buffered`, `underruns`, `trimmed`, `not copied` and `service silence`
-  (see [Latency](architecture/Latency.md); the last two are endpoint PCM that never reached
-  the ring and PCM the service zero-filled).
-- `OpenA2dpCtl reset-counters` (elevated): zeroes the counters `status` reports - packets,
-  drops, underruns, send failures, trimmed audio, refused streams and jack flaps - without
-  stopping the stream or clearing the per-stream peaks, so a measurement window starts from
-  zero on a driver that has been running.
-- `OpenA2dpCtl driver [opena2dp|windows]` (elevated): one line per A2DP node with its source
-  driver, or a switch of this sink's node to the other driver; T34 uses it.
-- `OpenA2dpConfig` (elevated): the settings window over the same IOCTLs. It lists the
-  sinks, refreshes the status every second, stores the codec preference and switches a sink
-  between the two drivers.
-- Service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
-- Device node: Device Manager, or `pnputil /enum-devices /class MEDIA` /
-  `pnputil /disable-device <id>` / `pnputil /enable-device <id>`.
-- Sleep: `rundll32 powrprof.dll,SetSuspendState 0,1,0` (or the Start menu) and wake.
-- Pool leaks: `poolmon -b` and watch tag `OAdp` (driver pool tag `'pdAO'`).
-- Scripted procedure: `tests\HardwareTests\` holds one script per test below, with the same
-  steps and the "Expect" lines asserted; `Invoke-HardwareTests.ps1 -List` names them.
+
+| Tool | Use here |
+|---|---|
+| `OpenA2dpCtl` | Status, codec and format settings, counters, driver switching. Run it elevated. [Command reference](USING.md#the-command-line) |
+| `OpenA2dpConfig` | The same settings and report in a window; T24 and T34 use it. Run it elevated. [Window reference](USING.md#the-settings-window) |
+| Kernel debugger | Log capture, Verifier reports and hang analysis |
+| `tests/HardwareTests/` | One script per test, with the same steps and "Expect" lines asserted. [Harness](TESTING.md#hardware-tests) |
+
+Other commands the procedures use:
+
+- Encoder service: `sc stop OpenA2dpSvc`, `sc start OpenA2dpSvc`.
+- Device node: Device Manager, or `pnputil /enum-devices /class MEDIA`,
+  `pnputil /disable-device <id>` and `pnputil /enable-device <id>`.
+- Sleep: `rundll32 powrprof.dll,SetSuspendState 0,1,0`, then wake.
+- Pool leaks: `poolmon -b`, watching tag `OAdp` (driver pool tag `'pdAO'`).
+- Scripted run: `tests/HardwareTests/Invoke-HardwareTests.ps1 -List` names the tests.
+
+The report lines and their meaning are in [Diagnostics](DIAGNOSTICS.md#report-sections).
 
 ## 3. Tests
 
@@ -310,10 +308,11 @@ it), reattach.
    *Sound settings > the endpoint > Advanced* offers every format the sink advertises.
    Pick another one there and play: the stream still runs at the first listed format
    (`endpoint format ... (actual stream)`), because the picker does not reach the driver.
-2. While streaming, `OpenA2dpCtl format 48000 2`.
+2. While streaming, `OpenA2dpCtl format <codec> 48000 2`, where `<codec>` is the
+   codec the sink is running.
 - Expect `endpoint format set to 48000 Hz 2 ch`, `endpoint formats 48000 Hz 2 ch 16-bit`,
   `jack unplugged for 80 ms so Windows rebuilds the endpoint`, then within a second
-  `status` reporting `codec SBC, 48000 Hz, 2 ch`. No `rediscovering`, no sink reconnect;
+  `status` reporting the running codec at `48000 Hz, 2 ch`. No `rediscovering`, no sink reconnect;
   the sink's own display follows to 48 kHz. Audio pauses for the length of the flap and
   resumes when the player reopens its stream.
 3. *Advanced* now offers that one format only. Choose `16 bit, 44100 Hz` there and play:
@@ -331,9 +330,8 @@ it), reattach.
    to that one.
 8. `format sbc 48000 2` on a 44.1-only sink is refused with the advertised masks, nothing is
    stored, and the endpoint keeps its previous list.
-9. `OpenA2dpCtl reset`: `codec preference reset to auto (aptX HD > aptX > AAC > SBC), endpoint format reset
-   to automatic (every format the sink supports)`, and both settings stay there after a
-   reconnect.
+9. `OpenA2dpCtl reset`: `codec preference reset to auto (LDAC > aptX HD > aptX > AAC > SBC)`
+   and `endpoint format reset to automatic`, and both settings stay there after a reconnect.
 10. A sink that configures the stream itself with another rate or channel count
    (non-compliant, one format only) is rejected: our SET_CONFIGURATION response carries
    0xC4 (sampling frequency), 0xC6 (channel mode) or 0xD9 (channels) and the sink should

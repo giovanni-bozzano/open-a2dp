@@ -1,31 +1,154 @@
-# Driver lifecycle and invariants
+# Kernel driver
 
-## PnP and transport
-- Bind to remote A2DP sink service UUID `0x110B`; use `BTH_PROFILE_DRIVER_INTERFACE` and L2CAP PSM `0x0019` for signaling/media. Do not replace the core/radio stack.
-- Start creates the service control endpoint, registers incoming L2CAP handling and opens signaling. Remote Class of Device determines headphones versus speaker category; endpoint name includes `<sink> [OpenA2DP]`.
-- Suspend attempts courtesy AVDTP CLOSE (ABORT where necessary), stops media, sets the stop barrier and drains/cancels work/channels. Preserve the exact ordering in `Driver.cpp`; do not reboot to hide a teardown failure.
-- Lock order: `SessionLock` -> `MediaLock`. `FormatLock` is a leaf: the negotiation
-  rebuilds the pin's format list under it (`SessionLock` -> `FormatLock`) and the control
-  IOCTL takes it alone. No lock is held across an unbounded transport wait.
-- Control BRBs and send slots own requests, BRBs and packet copies independently of a waiting caller. Timeout must not leave the transport using stack memory. Late successful opens/accepts close their own channels after teardown.
-- Never re-use an in-flight read request. Completion signals read-idle on success and failure; stop also flushes the reader's work item.
-- Control-device rundown and an FDO reference protect service handlers; `RingLock` serializes map/unmap ownership. See [service lifetime](Encoder-Service.md#3-shared-memory).
+[Architecture index](README.md) | [Timing and events](Event-Model.md) | [Encoder service](Encoder-Service.md)
 
-## ACX audio
-- Render circuit `Speaker0`: PCM stereo at 16, 32, 44.1, 48, 88.2 or 96 kHz, 16-bit and 24-in-32 while [aptX HD or LDAC can run](Protocol-and-Codecs.md#pcm-depth-and-24-bit-aptx-hd), whichever format the ACX stream opened with.
-- Accept one or two RT packets; page-round and zero buffers. Report the pacing lead as the presentation delay with no FIFO in front of the ring, so the audio engine adds no latency of its own and the sink's own buffering is all that is left outside the report.
-- The ACX stream drives the AVDTP stream: the first non-silent audio of a run starts it (Windows also runs the stream with nothing to play around an endpoint rebuild), and a pause or an unpaused release suspends it once it has lasted `PauseGraceMs` (3 s; the pacer sends silence meanwhile, so a short pause resumes without a START round trip), so nothing plays into a paused endpoint and its silence is never counted as an underrun. Edges, media-channel opens and every session transition to Open or Streaming are requests (`EndpointStreamPending`), because SUSPEND only exists from Streaming and START only from Open, and because the sink or a media failure can move the session by itself; a request that lands mid-handshake is applied when the response settles the session. At most three STARTs are sent per run or renegotiation, so a sink that refuses them is not retried forever. While it is suspended `status` calls the media `Suspended` rather than `Idle`, because the configured stream is what a resume restarts.
-- An endpoint format change unplugs the jack briefly whether or not a stream is open, so Windows drops the format it cached; a change inside that window extends it.
-- Windows software volume/mute remains active; ACX/AVRCP absolute-volume integration is deferred.
+`OpenA2dp.sys` is a KMDF driver with an ACX audio endpoint. It is the A2DP source
+function driver for one remote sink and owns everything on the host side of that
+stream: binding, AVDTP, L2CAP, the render endpoint, PCM handoff, SBC encoding and
+RTP.
 
-## Driver binding
-- Windows gives each remote sink its own BTHENUM node for the AudioSink service (`0x110B`), and that node's function driver is the A2DP source: the inbox `BthA2dp` or `OpenA2dp`. Both packages match the same id, so a sink moves between them by installing the other package on that one node; the other sinks keep the driver they are on.
-- The package to install is the compatible one whose matching id is the service id itself, `BTHENUM\{0000110b-...}` with nothing after the closing brace. A node's list also holds entries matched through `..._GENERIC` (`bth.inf`, the enumerator's catch-all for every profile) and the node's own `..._LOCALMFG&nnnn`, and neither is an A2DP driver. Taking "the first package that is not OpenA2dp" put the catch-all on the node and left it without one.
-- `tools/common/SinkDriver.*` reads the binding from the node (`SPDRP_SERVICE`, its instance id, the packages in its compatible list) and switches it with `DiInstallDevice` on that entry, which takes one package for one node rather than a hardware id and an INF. `UpdateDriverForPlugAndPlayDevicesW` cannot be used here: by id it would install on every sink, and with `INSTALLFLAG_FORCE` it installs an INF's first model even when none of that INF's models matches the device. The install needs an elevated prompt and restarts that node, so its endpoints, stream and control device go with it.
-- A switch is not trusted from the install call: `ApplyPackage` reads the node's bound service (`SPDRP_SERVICE`) and its problem code back, so a package that installs and loses the bind, or that binds a driver which never starts, is a failed switch. The sink is then put back on the driver it came from - the previous package is installed on the same node after enabling it, in case the restart was what failed - and the error names where the sink ended. A sink left with no A2DP source at all would otherwise need the user to notice and repair it.
-- A sink address reaches its node through the instance id, in natural or byte-reversed order (`MatchesAddress`): BTHENUM writes it either way. The same reference names the control device, which is what ties a sink in the tools to a sink in PnP.
-- A sink on `BthA2dp` has no control device, so `EnumerateSinkNodes` lists A2DP nodes from PnP alone. `OpenA2dpCtl driver` and the `OpenA2dpConfig` sink list both start from it, which is the only way to reach a sink this driver does not own.
+## Binding
+
+Windows creates a BTHENUM node for each paired sink's AudioSink service
+(`0x110B`). Its function driver is the A2DP source. OpenA2dp matches the node and
+binds to it with:
+
+- the remote A2DP sink service UUID `0x110B`,
+- `BTH_PROFILE_DRIVER_INTERFACE`, and
+- L2CAP PSM `0x0019` for signaling and media.
+
+The radio, `bthport`, HFP and AVRCP are untouched. A sink that OpenA2dp does not
+bind keeps the inbox source.
+
+The A2DP package is the one whose compatible id is the service id itself,
+`BTHENUM\{0000110b-...}` with no suffix. A node's compatible list also contains
+entries matched through `..._GENERIC` (the enumerator's catch-all) and the node's
+own `..._LOCALMFG&nnnn`; neither is an A2DP source.
+
+## Driver switching
+
+A sink moves between `BthA2dp` and `OpenA2dp` one node at a time.
+`tools/common/SinkDriver.*` reads the node's bound service, its instance id and
+its compatible list, then calls `DiInstallDevice` on the package entry for that
+node. The install restarts the node, so its endpoints, stream and control device
+go with it; the sink stays paired.
+
+The switch is verified, not trusted: the tool reads the bound service and the
+node's problem code back. A package that installs but loses the bind, or that
+binds a driver which never starts, is a failed switch. The previous package is
+installed on the same node again, and the error names where the sink ended.
+
+A sink on `BthA2dp` has no control device, so node enumeration comes from PnP
+alone. `OpenA2dpCtl driver` and the window's sink list both start there, which is
+how a sink the driver does not own can be reached and switched.
+
+The address in the BTHENUM instance id appears in natural or byte-reversed order,
+so matching accepts both. The same reference names the control device, which ties
+a sink in the tools to a sink in PnP.
+
+## Start and teardown
+
+Start creates the control device, registers incoming L2CAP handling and opens the
+signaling channel. The remote Class of Device selects the headphone or speaker
+endpoint category; the endpoint name is `<sink> [OpenA2DP]`.
+
+Suspend attempts a courtesy AVDTP CLOSE (ABORT where the session cannot close),
+stops media, sets the stop barrier, then drains and cancels the work items and
+channels in that order. The order matters: a channel stopped before its work item
+can deliver a completion into freed state, and a driver stop must return even when
+the Bluetooth stack never completes. Teardown is not allowed to depend on a
+reboot.
+
+Late successful opens and accepts close their own channels after teardown. A read
+request is never reused while in flight; its completion, success or failure,
+signals read-idle, and stop flushes the reader's work item.
+
+## Audio endpoint
+
+The render circuit is a single stereo endpoint:
+
+| Property | Value |
+|---|---|
+| Rates | 16, 32, 44.1, 48, 88.2 and 96 kHz |
+| Depths | 16-bit, and 24-in-32 while aptX HD or LDAC can run |
+| Channels | 1 or 2 |
+| Buffer shape | One or two RT packets, accepted as the engine offers them |
+
+The endpoint reports the pacing lead as its presentation delay and declares no
+FIFO of its own. The audio engine therefore adds no latency the driver does not
+account for; the sink's own buffering is the only part outside the report.
+
+The ACX stream drives the AVDTP stream:
+
+- The first non-silent audio of a run starts an idle session. Windows also runs
+  the stream briefly around an endpoint rebuild, which must not count as
+  playback.
+- A pause, or a release that is not followed by a resume, suspends the stream
+  once it has lasted `PauseGraceMs`. The pacer sends silence meanwhile, so a short
+  pause resumes without a START round trip.
+- Stream edges, media-channel opens and every session transition to `Open` or
+  `Streaming` are applied as requests. SUSPEND exists only from `Streaming` and
+  START only from `Open`, and the sink or a media failure can move the session on
+  its own. A request that lands mid-handshake is applied when the response settles
+  the session.
+- START is retried a bounded number of times per run or renegotiation. A sink
+  that keeps refusing it is not retried forever.
+- While suspended, `status` reports the media as `Suspended`, not `Idle`: the
+  configured stream is what a resume restarts.
+
+A format change unplugs the jack briefly whether or not a stream is open, so
+Windows drops the format it cached. A change inside that window extends it.
+Volume and mute use the Windows software volume path.
+
+## Concurrency
+
+| Rule | Reason |
+|---|---|
+| Lock order is `SessionLock` then `MediaLock` | Session transitions may need the media path; the reverse would invert |
+| `FormatLock` is a leaf | Negotiation takes `SessionLock` then `FormatLock`; the format IOCTL takes it alone |
+| Completions and timers never take `SessionLock` or `MediaLock` | They run up to DISPATCH_LEVEL; they publish an interlocked flag and enqueue the owning work item |
+| Work items never wait on the transport while holding a lock | A stalled lower transport would otherwise hold a session lock through an unbounded wait |
+| The media work item never takes `SessionLock` | It requests a suspend through the signaling path instead |
+| Every message owns its request and buffer | Timeout cannot leave the transport using stack memory, and a late completion has a home |
+
+Teardown sets `StopEvent`, cancels, waits bounded on the operation's idle event
+with no lock held, then flushes work items. Event waits clear the event before
+re-checking state under the lock, so a transition between check and wait is not
+lost.
+
+[Timing and events](Event-Model.md) covers the timer policy and why the render
+clock is not replaceable by an engine callback.
+
+## Control device lifetime
+
+The IOCTL surface lives on a separate control device, not on the PnP/ACX object.
+The control device has its own restrictive descriptor and parallel queue, and is
+created at the first managed IO start. It is quiesced when the device leaves D0
+and deleted only at removal or unload: a copy with open handles can outlive a
+power transition, and a name recreated too early loses the race for the rest of
+the boot.
+
+Rundown and an FDO reference protect outstanding handlers and handles. Removal
+delivers a device-gone event to any parked service wait. `RingLock` serializes
+ring map and unmap ownership; the mapping belongs to the file handle and is
+released in its cleanup. [Encoder service](Encoder-Service.md) describes the
+shared-memory side.
 
 ## Diagnostics
-- Driver logs use `OA2DP_INFO/WARN/ERROR` with level, device tag and category. Tags are prepared as ANSI before high-IRQL callbacks; do not print `%ws` there.
-- Use targeted native WinDbg MCP tools for hangs. Bounded waits do not prove lower-transport cancellation completed.
+
+Driver records use `OA2DP_INFO`, `OA2DP_WARN` and `OA2DP_ERROR`, with level, device
+tag and category. Tags are prepared as ANSI before high-IRQL callbacks. The record
+format, log capture and triage are in [Diagnostics](../DIAGNOSTICS.md).
+
+## Code map
+
+| Area | Files |
+|---|---|
+| Entry, PnP, control-device creation and teardown order | `driver/Driver.cpp` |
+| Endpoint, formats, render clock, PCM copy | `driver/audio/` |
+| Channel setup, BRBs, sends, incoming accepts | `driver/l2cap/` |
+| AVDTP session, codec choice, stream transitions | `driver/signaling/` |
+| RTP assembly, SBC and service pacing | `driver/media/` |
+| Control device, IOCTLs, rings, service lifetime | `driver/service/` |
+| Stored settings | `driver/config/` |
+| Per-file responsibilities | `driver/README.md` |

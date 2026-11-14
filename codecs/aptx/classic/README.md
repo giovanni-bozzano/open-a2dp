@@ -2,7 +2,7 @@
 
 Vendored from AOSP `platform/packages/modules/Bluetooth`, directory
 `system/embdrv/encoder_for_aptx/`, at commit `745ee92b87ed62b5a8a1bac47d5df8cad623bf59`
-(2026-11-10). The sibling directory `codecs/aptx` holds the aptX HD drop from the same commit.
+(2026-11-10). The sibling directory `../hd` holds the aptX HD drop from the same commit.
 
 - Copyright (C) 2022 The Android Open Source Project, Apache-2.0. Every file keeps its own
   licence header; the licence text is in `LICENSE-APACHE-2.0.txt`.
@@ -14,11 +14,10 @@ Vendored from AOSP `platform/packages/modules/Bluetooth`, directory
   the 24-bit `_HD` variants), so both trees are compiled. Quoted includes keep each drop on
   its own headers.
 - `SHA256SUMS` records the LF form of every vendored file, so a CRLF checkout verifies
-  unchanged. `scripts/check-vendored-aptx.ps1` checks both drops and exits non-zero on a
-  change; `-Update` rewrites the manifests after a deliberate re-vendor.
+  unchanged. `scripts/check-vendored-encoders.ps1` checks all three drops and exits
+  non-zero on a change; `-Update` rewrites the manifests after a deliberate re-vendor.
 
 Qualcomm contributed these encoders to AOSP under Apache-2.0 with a contributor patent
-grant, which is why they are the only aptX implementation this project can ship; see
-[codec licensing](../../../docs/architecture/Codec-Licensing.md). Distributing binaries also
-requires shipping the Apache-2.0 licence text, and aptX branding or certification stays with
-Qualcomm.
+grant; see [codec licensing](../../../docs/architecture/Codec-Licensing.md). Distributing
+binaries also requires shipping the Apache-2.0 licence text, and aptX branding or
+certification stays with Qualcomm.

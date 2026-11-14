@@ -1,165 +1,138 @@
-# Latency budget and control plan
+# Latency
 
-How much audio sits between Windows' render packet and the sink's speaker, which of those
-stages can grow without bound, and what was changed to keep the total under control.
-Numbers are for a 44.1 kHz stereo stream unless stated otherwise; 48 kHz scales by 8 %.
+[Architecture index](README.md) | [Using OpenA2dp](../USING.md) | [Testing](../TESTING.md)
 
-## Where the audio waits
+The driver adds a bounded, reported delay between the Windows render packet and
+the signal leaving the PC. The sink's own buffering is outside that number and
+outside software control.
 
-| Stage | Set by | Typical |
+Typical values below are for a 44.1 kHz stereo stream; 48 kHz scales by about
+8 percent.
+
+## The budget
+
+| Stage | Controlled by | Typical |
 |---|---|---|
-| Windows engine buffer | ACX RT packets; size and count chosen by the engine, bounded by `AudioMaxBufferBytes` (`AudioInternal.h`) | 2 × 10 ms = 20 ms |
-| Driver copy granularity | `AudioTimer` (`AudioPosition.cpp`), a one-shot high-resolution timer armed for the end of each engine packet or 10 ms (`AudioCopyIntervalMs`), whichever is sooner: one completion per packet, and the ring never trails the clock by more than 10 ms whatever packet size the engine picked | one packet, at most 10 ms |
-| PCM ring backlog | the lead plus `LatencyBudget::kPcmSlackMs`, `Ioctl::kPcmRingBytes` = 256 KB (sized by time at 96 kHz stereo 24-in-32, where it holds about 340 ms) | under 10 ms |
-| Encoder pacing lead | `Ioctl::kPrerollMs = 60` as the default, overridable per sink through `Preference.prerollMs` (20–200 ms) | 60 ms, or as configured |
-| Packetization | SBC 7 frames × 128 samples at bitpool 53 (`SbcFrame::FramesPerPacket`), or fewer with `Preference.sbcFramesPerPacket`; AAC 1024 samples; aptX HD 10 ms | 10–23 ms |
-| Transport | one send in flight per stream (`MediaSendReady`), L2CAP | link dependent |
-| Sink buffer | not ours | 50–200 ms |
+| Windows engine buffer | The engine; bounded by bytes, not a packet count | 2 x 10 ms |
+| Driver copy granularity | `AudioTimer`, at the packet boundary or 10 ms, whichever is sooner | one packet, at most 10 ms |
+| PCM ring backlog | The lead plus the copy slack; the ring is sized by time at the widest format | under 10 ms |
+| Encoder pacing lead | `PrerollMs`, default 60 ms | 60 ms, or the stored value |
+| Packetization | Codec record size, SBC frames per packet | 10 to 23 ms |
+| Transport | One send in flight per stream | link dependent |
+| Sink buffer | Not ours | 50 to 200 ms or more |
 
-The driver adds roughly 100–120 ms before the sink's own buffer, and the pacing lead is the
-single largest fixed part of it.
+The driver-side total is roughly 100 to 120 ms at the default lead. The pacing
+lead is the single largest fixed part of it.
 
-## How the budget is held
+## Design rules
 
-1. **The rings trim instead of shifting the stream late.** Both were plain FIFOs: a stall
-   dropped the *new* audio and kept the old, and the encoder went on draining the backlog at
-   real time, so a 500 ms transport stall meant 500 ms (up to 371 ms of PCM, 1.6 s of frames)
-   of permanent offset. The render copy now drops the oldest frames past
-   `LatencyBudget::RingLimitMs` of backlog, and `FrameRecord::Trim` drops encoded records past
-   that same limit; the RTP timestamp moves past the dropped span, so the sink hears one
-   gap rather than old audio. The PCM drop is safe against the encoder service reading
-   the ring at the same moment (`RingBufferView` validates every read), and a consumer that
-   finds itself further behind than the lead with the audio gone - the kernel SBC pacer or
-   the service encoder (`LatencyBudget::Stalled`) - picks up at the lead instead of padding
-   the gap (`LatencyBudget::RestartAt`; the service passes the skip to the RTP timestamp in
-   the next record's `skippedSamples`). Without that the pacer would send the gap as a burst
-   of silence when the stall ended, which a sink plays late for the rest of the stream. Both
-   are counted and reported (`trimmed`: PCM bytes and encoded records) and logged once per
-   second, so a stall on the service-encoded codecs is visible in the panel too. The excess
-   has to persist to be dropped - `LatencyBudget::TrimNow` requires it on two consecutive
-   observations, `kTrimStrikes` - because a copy tick landing while the pacer sits between
-   packets is a wobble the lead absorbs, and a trim there would be a gap for nothing. What a
-   trim drops back to is the lead itself rather than the limit, so the one gap it costs buys
-   an interval of headroom instead of leaving the ring on the edge.
-2. **The lead is a stored setting.** `Preference.prerollMs` (the sink's file,
-   `[general] prerollMs`, `OpenA2dpCtl codec --preroll`) sets the pacing lead for every
-   codec, 20–200 ms or 0 for the default. `MediaStart` resolves it once, the kernel pacer and
-   the service's records both use it, the presentation position subtracts the same value, and
-   `status.pacingLeadMs` reports it; a low-latency profile asks for 30 ms, the default stays
-   60 ms for sinks that need the margin. The whole range is honoured on both paths: the trims
-   bound what the rings hold past the lead, and a pacer with less PCM than its lead pads
-   silence in front, so 200 ms means 200 ms and not the trim constant.
-   The lead has a floor, `LatencyBudget::LeadFloorMs`: one access unit of the running codec
-   (the MTU's SBC frames, one AAC frame, or one service record) plus the copy slack. Below it
-   the pacer would ask for a packet before the producer had the interval to fill it, so every
-   packet would be padded - an underrun neither the sink nor the CPU could avoid. At 44.1 kHz
-   that floor is 41 ms for an MTU-filled SBC packet, 44 ms for AAC and 30 ms for aptX, so a
-   stored 20 ms runs at the floor; the report shows the raised value and the stored one.
-3. **The latency is measurable.** `status.pcmBufferedMs` and `status.frameBufferedMs` derive
-   the buffered duration from the ring fills (PCM by the depth it carries, frames by the codec
-   bitrate). The report's `latency` line adds the two to the pacing lead - the audio the driver
-   holds ahead of live - and says so, because the sink's own buffering is not reported by any
-   A2DP profile. Both the CLI status and the settings window's session panel show it, next to
-   `underruns` (silence sent where the ring ran dry) and `trimmed` (old audio dropped after a
-   stall) - the two ways a lead that is too short for this sink shows up - so a growing backlog
-   and the effect of a shorter lead are visible before they are audible. Both totals are
-   cumulative for the endpoint and never reset: a new stream, a pause or a codec change leaves
-   them alone, so a fault that happened in an earlier stream is still on the count, and zeroing
-   them means recreating the endpoint or reloading the driver.
-   Next to it the report shows `latency peak`: the worst lead-plus-rings value sampled on the
-   audio copy tick since the stream started (`status.latencyPeakMs`, reset by the next
-   `MediaStart`). A stall that trimmed the backlog before anyone polled still leaves that
-   number behind, which is what makes a transient spike diagnosable after the fact.
-   `status.underruns` counts the SBC audio the media clock asked for that the PCM ring did not
-   have - they are sent as silence, so the stream keeps its place on the timeline - and the
-   driver logs it at most once a second with the silence duration. `LatencyBudget::UnderrunSamples`
-   is that rule, pinned by `LatencyBudget_UnderrunOnlyCountsDueAudio`, and it applies only while
-   the endpoint runs (`AudioStreamRunning`): a paused endpoint suspends the stream instead (see
-   [driver lifecycle](Driver-Lifecycle.md#acx-audio)), so its silence is a pause, not a gap.
-   Only the due window counts:
-   the lead a stream starts with is silence sent on purpose in front of its first audio
-   (`LatencyBudget::RestartAt`), not a short read, and the frames a packet carries
-   past the target are normal; counting either would make the number noise. After the lead
-   every packet waits for its own PCM (`LatencyBudget::UnitReady`) and is padded only once it
-   is a packet plus `kPcmSlackMs` overdue, so a silence that is counted is one the listener
-   hears. That is the number the exit
-   gate below means: without it a lead too short for a sink was audible but invisible on the
-   codec the driver uses by default.
-4. **The presentation position matches the ear.** The stream is sent `PacingLeadMs` ahead of
-   the media clock, so `OnGetPresentationPosition` subtracts that lead (clamped at the start)
-   instead of claiming audio the sink is still buffering. Without it, an app syncing video to
-   the position led the audio by 60 ms; the sink's own buffer remains unknown to us.
-5. **The reported hardware latency is the lead.** ACX measures `OnGetHwLatency`'s delay from
-   `NotifyPacketComplete` to the moment that packet's last sample is heard, which for this
-   stream is exactly the pacing lead; it was reported as 0 and a 128-byte FIFO that nothing
-   behind it corresponded to. Windows' own latency estimate now agrees with the driver's, and
-   `fifoSize` is 0 because the buffered audio is the delay, not a separate FIFO.
-6. **The engine's buffer shape is its own choice.** A packet count above the old limit of 2
-   was refused, which fails the endpoint for a stream that asks for more (ACX's timer-driven
-   mode does); the allocation is bounded by bytes instead, and the copy wakes at each packet
-   boundary and at least every 10 ms, so a buffer shorter than 10 ms is copied once per packet
-   instead of being dropped between fixed ticks, and a longer one never reaches the ring in
-   bursts bigger than the copy slack.
-7. **The trims are a shared rule, not two constants.** `LatencyBudget::RingLimitMs` is the
-   lead plus a slack, and both rings use it; `CommonTests` walks the whole 20-200 ms range and
-   checks the limit always exceeds the lead, covers a packet or a record at the shortest lead,
-   and fits the ring at 48 kHz stereo. A fixed limit sized for the 60 ms default had silently
-   capped every longer lead on both paths, which is exactly the drift a shared rule prevents.
-8. **Packetization has a setting.** SBC takes a cap (`Preference.sbcFramesPerPacket`,
-   `OpenA2dpCtl codec --frames`, the settings window's `SBC frames` field), so a profile can
-   trade packets per second for a shorter packet; the default stays MTU-filled. AAC and both
-   aptX codecs carry one access unit per packet, so they are already at their shortest.
+### Trim to stay live
 
-9. **The service is protected and not over-driven.** Its worker runs at MMCSS pro-audio
-   priority, so ordinary CPU load cannot delay a record past the 200 ms the driver allows; and
-   the driver does not ask for a record while the frame ring is over its limit, so a transport
-   stall is drained instead of being re-encoded and trimmed.
-10. **The report shows the margin that was needed, not only what it cost.** `worst gaps`
-   (`status.worstRenderGapMs`, `status.worstServiceGapMs`, `status.worstSendMs`) is the longest
-   interval the render path, the encoder service and a media send each held audio off for since
-   the stream started. They are measured where those producers are already observed - the audio
-   copy, the record the driver consumed, the run that finds the send slot idle again - so no
-   timer or poll was added. A lead at or above the largest of them has margin; one below it has
-   the `underruns` and `trimmed` growth to explain it.
+Both rings drop old audio past a bounded backlog instead of letting the stream
+run permanently late. The limit is the lead plus the copy slack, shared by the
+kernel and service paths.
 
-## What software cannot settle
+- The render copy drops the oldest PCM, and the frame path drops the oldest
+  records. The RTP timestamp moves past the dropped span, so the sink hears one
+  gap rather than stale audio followed by a permanent offset.
+- A consumer that finds itself further behind the lead with its audio gone
+  restarts at the lead instead of padding the gap. The service carries the skipped
+  samples in the next record so the timestamp follows.
+- The excess has to persist across two observations before it is dropped, because
+  a copy tick landing between packets is a wobble the lead absorbs.
+- A trim drops back to the lead, not to the limit, so the one gap buys an interval
+  of headroom.
 
-Every software lever in this document is in place; what is left needs a sink and ears.
+### The lead is a setting with a floor
 
-1. **The sink's own buffering is invisible.** No A2DP profile reports it; measuring the
-   audible delay needs a hardware loopback (a click track against the sink's output), and T30
-   is the procedure that derives it from the measured delay minus the driver-side figure.
-2. **The trim policy is tested, its effect is not.** The limits and their arithmetic are
-   covered in user mode (`LatencyBudget_*`, `FrameRecord_Trim*`, `PcmBacklog_*`); whether the
-   sink hears one gap rather than a dropout after a stall needs hardware.
-3. **A long lead costs start-up silence.** A stream with a 200 ms lead sends up to 200 ms of
-   silence before the first real sample: the lead minus whatever audio the ring kept from the
-   endpoint's first sample, sent in front of that audio. That is the lead working as
-   configured, not a fault, but it is why the default stays at 60 ms.
-4. **The sink's buffer still starts where ours ends.** The delay we report covers the lead we
-   hold; how much the sink adds before it plays is unmeasured and unmeasurable in software, so
-   Windows' latency figure is a lower bound rather than the audible total.
+`PrerollMs` is stored per sink and can be 20 to 200 ms. `MediaStart` resolves it
+once; the kernel pacer, the service pacing and the presentation position all use
+the same value.
 
-## What the report has to show
+The lead has a floor of one access unit of the running codec plus the copy slack.
+Below that, a packet would be requested before the producer had time to fill it,
+so every packet would be padded. At 44.1 kHz the floor is about 30 ms for aptX,
+41 ms for a full SBC packet and 44 ms for AAC. A stored value below the floor is
+raised, and the report says so.
 
-Each expectation is read from a report line rather than an internal field. The procedure that
-takes them is [T29-T33](../HARDWARE-TESTS.md#latency), which also measures the audible delay
-against the source - the one number no report line can supply.
+### Report the driver side, not the whole path
 
-- `latency`'s buffered term (`pcmBufferedMs + frameBufferedMs`) stays under 100 ms in steady
-  state at the default 60 ms lead. A longer lead makes the rings legitimately hold more, so the
-  expectation is stated per lead, not once for every configuration.
-- After a forced 500 ms transport stall, `trimmed` grows once and then stops, and `latency peak`
-  comes back down to the lead plus a packet: the stream recovered to live audio instead of
-  playing late.
-- `underruns` stays 0 at 44.1 and 48 kHz stereo with the default lead, and rises as the lead is
-  shortened past what the sink needs - that curve is the per-sink measurement T31 records. The
-  counters never reset, so the run starts from a freshly loaded driver, and the lead is floored
-  at one access unit, so the shortest a sweep can actually run is that floor. Asking for less
-  changes the reported `pacing lead` and nothing else, and the report says it was raised.
-- `worst gaps`' render and frames terms stay under the lead in steady state. A term above it
-  means the next `underruns` or `trimmed` increase is already earned; the send term can exceed
-  the lead without costing anything while the pacer sits between packets, because the transport
-  is not ours to schedule.
-- A/V offset within ±20 ms, measured on hardware with a loopback. No report line carries it:
-  it compares the sink's output with the source, so it belongs to the test, not the driver.
+`status` derives the latency from the actual ring fills:
+
+```text
+latency = pacing lead + PCM buffered + frames buffered
+```
+
+The report labels it as driver-side and states that the sink adds its own. The
+presentation position subtracts the same lead, so an application syncing to the
+position is not told the audio is 60 ms earlier than it is. The hardware latency
+reported to ACX is the lead, and the declared FIFO is zero: the buffered audio is
+the delay.
+
+Two extra figures make a transient visible after it ended:
+
+| Line | Meaning |
+|---|---|
+| `latency peak` | Worst lead-plus-rings value sampled during this stream; resets at the next `MediaStart` |
+| `worst gaps` | Longest interval the render path, the encoder service or a send held audio off during this stream |
+
+`underruns` counts packets that had to be filled with silence because PCM was
+late. Only the due window counts; the intentional lead at stream start is not an
+underrun, and a paused endpoint asks for no audio. `trimmed` counts the audio
+dropped to return to live. `not copied` and `service silence` cover PCM that never
+reached the ring and PCM the service had to zero-fill.
+
+### Protect the producer
+
+The service worker runs at MMCSS Pro Audio priority, so ordinary CPU load cannot
+hold a record past the underrun interval. The driver stops waking the service
+while the frame ring is over its trim limit: a record written then would be
+trimmed away, so the stall costs one gap instead of a gap plus an encode.
+
+### Let packetization be a choice
+
+SBC normally fills the media MTU. `--frames` caps how many frames one packet
+carries: one frame is 2.9 ms, four frames 11.6 ms, a full packet about 20 ms.
+Fewer frames means more packets per second, which trades transport headroom for
+latency. AAC and both aptX codecs carry one access unit per packet and are already
+at their shortest. LDAC's record is its encoder packet.
+
+## What needs a sink
+
+- **The sink's buffer is measured, not reported.** A loopback recording against
+  the source yields the audible delay; subtracting the driver-side figure leaves
+  the sink's own buffering.
+- **A trim is judged by ear.** The arithmetic is covered on the host; whether a
+  sink hears one gap rather than a dropout belongs to a hardware run.
+- **A long lead sends start-up silence.** A 200 ms lead sends up to 200 ms of
+  silence before the first real sample. That is the lead working as configured,
+  and why the default stays at 60 ms.
+- **The reported total is a lower bound.** The sink starts playing when its own
+  buffer says so, after the part we report.
+
+## Measuring it on hardware
+
+The procedures in [Hardware tests](../HARDWARE-TESTS.md#latency) cover:
+
+- reading `latency`, `latency peak` and `worst gaps` at several leads;
+- measuring audible delay against a loopback and subtracting the driver figure,
+  which yields the sink's buffering;
+- sweeping the lead down to the lowest value this sink tolerates without
+  `underruns` or `trimmed` growth;
+- recovering from a forced stall;
+- comparing the short-packet SBC profile with the default.
+
+A/V offset is measured in the same loopback procedure; no report line carries it.
+
+## Code map
+
+| Area | Files |
+|---|---|
+| Shared budget arithmetic | `common/include/OpenA2dp/LatencyBudget.h` |
+| PCM backlog and trimming | `common/include/OpenA2dp/PcmBacklog.h`, `RingBuffer.h` |
+| Record trimming | `common/include/OpenA2dp/FrameRecord.h` |
+| Render copy and clock | `driver/audio/AudioPosition.cpp`, `AudioRead.cpp` |
+| Kernel pacer | `driver/media/MediaPacing.cpp` |
+| Service pacing | `codecs/*/` stream encoders, `service/main.cpp` |
+| Presentation position and hardware latency | `driver/audio/AudioStream.cpp` |
+| Report lines | `tools/common/StatusReport.cpp` |
