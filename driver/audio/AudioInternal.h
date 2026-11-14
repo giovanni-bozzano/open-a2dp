@@ -10,8 +10,6 @@ using namespace OpenA2dp;
 // Subsystem-private declarations; not a public driver interface.
 namespace OpenA2dpDriver::Audio
 {
-// The PCM ring holds the lead the pacer is streaming plus LatencyBudget::kPcmSlackMs; the pacer
-// pads silence when it has less, so the ring's fill is audio the sink has not heard yet.
 // How long the jack reports unplugged while Windows is made to rebuild the endpoint after a
 // format change; long enough for the audio engine to close the stream it was using.
 constexpr ULONG AudioJackFlapMs = 80;
@@ -97,9 +95,9 @@ NTSTATUS OnGetCurrentPacket(_In_ ACXSTREAM stream, _Out_ PULONG currentPacket);
 NTSTATUS OnGetPresentationPosition(_In_ ACXSTREAM stream, _Out_ PULONGLONG positionInBlocks, _Out_ PULONGLONG qpcPosition);
 NTSTATUS OnRetrieveJackPresence(_In_ ACXJACK jack, _Out_ PBOOLEAN isConnected);
 NTSTATUS AddSinkJack(_In_ DEVICE_CONTEXT* ctx, _In_ ACXPIN pin);
-// Unplugs the jack for AudioJackFlapTicks so Windows closes the render stream and rebuilds
-// the endpoint, which is the only way it re-reads the offered formats; the audio timer plugs
-// it back in. No-op without a jack.
+// Unplugs the jack for AudioJackFlapMs so Windows closes the render stream and rebuilds the
+// endpoint, which is the only way it re-reads the offered formats; JackFlapTimer plugs it back
+// in. No-op without a jack.
 void AudioRestartRenderStream(_In_ DEVICE_CONTEXT* ctx);
 // Creates the ACX format objects for RenderFormats, parented to the streaming pin, so
 // they can be listed and unlisted as the sink capabilities change.
