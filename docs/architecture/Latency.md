@@ -33,13 +33,14 @@ single largest fixed part of it.
    the service encoder (`LatencyBudget::Stalled`) - picks up at the lead instead of padding
    the gap (`LatencyBudget::RestartAt`; the service passes the skip to the RTP timestamp in
    the next record's `skippedSamples`). Without that the pacer would send the gap as a burst
-   of silence when the stall ended, which a sink plays late for the rest of the stream. Both are counted and reported (`trimmed`: PCM bytes and encoded
-   records) and logged once per second, so a stall on the service-encoded codecs is visible in
-   the panel too. The excess has to persist to be dropped - `LatencyBudget::TrimNow` requires it
-   on two consecutive observations, `kTrimStrikes` - because a copy tick landing while the pacer
-   sits between packets is a wobble the lead absorbs, and a trim there would be a gap for
-   nothing. What a trim drops back to is the lead itself rather than the limit, so the one gap
-   it costs buys an interval of headroom instead of leaving the ring on the edge.
+   of silence when the stall ended, which a sink plays late for the rest of the stream. Both
+   are counted and reported (`trimmed`: PCM bytes and encoded records) and logged once per
+   second, so a stall on the service-encoded codecs is visible in the panel too. The excess
+   has to persist to be dropped - `LatencyBudget::TrimNow` requires it on two consecutive
+   observations, `kTrimStrikes` - because a copy tick landing while the pacer sits between
+   packets is a wobble the lead absorbs, and a trim there would be a gap for nothing. What a
+   trim drops back to is the lead itself rather than the limit, so the one gap it costs buys
+   an interval of headroom instead of leaving the ring on the edge.
 2. **The lead is a stored setting.** `Preference.prerollMs` (the sink's file,
    `[general] prerollMs`, `OpenA2dpCtl codec --preroll`) sets the pacing lead for every
    codec, 20–200 ms or 0 for the default. `MediaStart` resolves it once, the kernel pacer and
