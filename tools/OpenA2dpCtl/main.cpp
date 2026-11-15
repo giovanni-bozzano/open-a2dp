@@ -88,11 +88,12 @@ Commands:
             the automatic codec order and every sink-supported PCM format
             apply again.
   reset-counters
-            Clear the counters status reports - packets, drops, underruns, send
-            failures, trimmed audio, refused streams and jack flaps - so a
-            measurement window starts from zero. They otherwise accumulate
-            across streams; the stream, its settings and the per-stream peaks
-            are untouched, so this can be done while the sink is playing.
+            Clear every counter status reports - packets, drops, underruns, send
+            failures, trimmed audio, refused streams, jack flaps, the latency
+            peak and the worst gaps - so a measurement window starts from zero.
+            They otherwise accumulate across streams; the stream and its
+            settings are untouched, so this can be done while the sink is
+            playing.
   version   Show the driver ABI and version.
 
 Options:

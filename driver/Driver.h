@@ -597,23 +597,24 @@ struct DEVICE_CONTEXT
 	// MediaStart. The kernel pacer and the service both use it, and the presentation position
 	// subtracts it.
 	volatile ULONG PacingLeadMs;
-	// Worst driver-side latency (lead plus both ring fills) seen since this stream started,
-	// sampled on the audio copy tick. A transport or service stall shows up here even after the
-	// stream trimmed back to live.
+	// Worst driver-side latency (lead plus both ring fills) seen since the counters were reset,
+	// sampled on the audio copy tick. It accumulates across streams, so a transport or service
+	// stall stays visible after the stream trimmed back to live.
 	volatile LONG LatencyPeakMs;
-	// Worst gaps this stream has seen, measured where each producer is observed: the interval
-	// between two PCM copies that carried audio, between two encoded records the pacer consumed,
-	// and how long one media send stayed with the transport. These are the need; the underrun and
-	// trim counters are what a lead too short for it cost.
+	// Worst gaps seen since the counters were reset, measured where each producer is observed:
+	// the interval between two PCM copies that carried audio, between two encoded records the
+	// pacer consumed, and how long one media send stayed with the transport. These are the need;
+	// the underrun and trim counters are what a lead too short for it cost.
 	volatile LONG WorstRenderGapMs;
 	volatile LONG WorstServiceGapMs;
 	volatile LONG WorstSendMs;
 	// The worst send's two halves (LatencyBudget::SplitSendGap): transport time is the link,
-	// resume time is the media work item being scheduled late. Same per-stream reset.
+	// resume time is the media work item being scheduled late. Cleared only by RESET_COUNTERS,
+	// like the other counters.
 	volatile LONG WorstSendTransportMs;
 	volatile LONG WorstSendResumeMs;
 	// Timestamps those gaps are measured from and the send in flight: LastRenderTime is guarded by
-	// AudioLock, the rest by MediaLock. 0 means nothing has been measured for this stream yet.
+	// AudioLock, the rest by MediaLock. 0 means nothing has been measured for this run yet.
 	ULONGLONG LastRenderTime;
 	ULONGLONG LastRecordTime;
 	ULONGLONG MediaSendStarted;
@@ -659,9 +660,10 @@ inline const char* OA2dpTagOf(const DEVICE_CONTEXT* ctx)
 	return ctx != nullptr ? ctx->LogTag : "-";
 }
 
-// Tracks the worst interval between two observations since a stream started: the margin a pacing
-// lead has to cover when the producer or the transport holds audio off for that long. The first
-// observation of a stream only anchors the timestamp, and a peak never shrinks on its own.
+// Tracks the worst interval between two observations since the counters were reset: the margin a
+// pacing lead has to cover when the producer or the transport holds audio off for that long. The
+// first observation after a stream start or a reset only anchors the timestamp, and a peak never
+// shrinks on its own.
 inline void OA2dpNoteGapMs(ULONGLONG& last, volatile LONG& worstMs, ULONGLONG now)
 {
 	if (last != 0 && now > last)
@@ -675,7 +677,7 @@ inline void OA2dpNoteGapMs(ULONGLONG& last, volatile LONG& worstMs, ULONGLONG no
 	last = now;
 }
 
-// Keeps the worst millisecond figure a stream has seen; every figure starts at 0.
+// Keeps the worst millisecond figure seen since the counters were reset; every figure starts at 0.
 inline void OA2dpNoteWorstMs(uint32_t ms, volatile LONG& worstMs)
 {
 	if (ms > static_cast<uint32_t>(worstMs))

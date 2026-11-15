@@ -56,7 +56,6 @@ void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength)
 	ctx->ActiveObjectType = 0;
 	ctx->ActiveLdacQuality = quality;
 	ctx->RtpSequence = 0;
-	ctx->PacketsSent = 0;
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	ctx->MediaStartTime = KeQueryInterruptTime();

@@ -73,10 +73,12 @@ Two extra figures make a transient visible after it ended:
 
 | Line | Meaning |
 |---|---|
-| `latency peak` | Worst lead-plus-rings value sampled during this stream; resets at the next `MediaStart` |
-| `worst gaps` | Longest interval the render path, the encoder service or a send held audio off during this stream; a send also reports how much of it was transport time and how much was waiting for the media work item |
+| `latency peak` | Worst lead-plus-rings value since the counters were reset; a new stream keeps it |
+| `worst gaps` | Longest interval the render path, the encoder service or a send held audio off since the counters were reset; a send also reports how much of it was transport time and how much was waiting for the media work item |
 
-The send split is the one attribution the driver can make without a debugger.
+Both figures accumulate across streams like the loss counters below;
+`reset-counters` is the only thing that starts them over. The send split is the
+one attribution the driver can make without a debugger.
 Transport time is the Bluetooth link and controller; resume time is the passive
 media work item not having run. A lead above the total has margin, and which half
 is large says what to fix.
@@ -122,7 +124,8 @@ at their shortest. LDAC's record is its encoder packet.
 
 The procedures in [Hardware tests](../HARDWARE-TESTS.md#latency) cover:
 
-- reading `latency`, `latency peak` and `worst gaps` at several leads;
+- resetting the counters, then reading `latency`, `latency peak` and `worst gaps`
+  at several leads;
 - measuring audible delay against a loopback and subtracting the driver figure,
   which yields the sink's buffering;
 - sweeping the lead down to the lowest value this sink tolerates without

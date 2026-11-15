@@ -434,8 +434,9 @@ at the ear, not read from `status`. Each of these records commit, sink, codec, r
 measured delay and that number is the sink's buffering.
 
 **T29 Driver-side latency report (S/A)**
-1. `OpenA2dpCtl codec sbc --preroll 60`, connect, play a real stream. In a second window run
-   `OpenA2dpCtl status --watch`.
+1. `OpenA2dpCtl codec sbc --preroll 60`, connect, play a real stream. Once it is streaming,
+   run `OpenA2dpCtl reset-counters` so the peak and loss counters start with this run, then
+   `OpenA2dpCtl status --watch` in a second window.
 2. Expect `latency <60+N> ms (driver side: lead 60 + buffered N; the sink adds its own)` with
    N under 30 ms after 10 s, `pacing lead 60 ms ahead of the media clock`, `latency peak`
    above the lead by no more than one packet (SBC 20 ms, AAC 23 ms, aptX HD 10 ms) and flat,
@@ -481,11 +482,12 @@ a direct cable and subtracted.
 **T32 Stall recovery and the trims (S/A)**
 Anything that stops the driver sending for a moment exercises the trim policy: a link that
 hiccups, or a service that restarts.
-1. S (SBC, kernel path): play for 30 s, then attenuate the link for about half a second (sink
-   at the edge of range, or shielded by hand).
-2. Expect `trimmed` to grow once (PCM bytes) and then stop, `latency peak` to spike and settle
-   back to the lead plus a packet, and within ~2 s `buffered` under 30 ms with the sink back on
-   live audio: the T30 click track shows one gap, not a permanent offset.
+1. S (SBC, kernel path): play for 30 s, run `OpenA2dpCtl reset-counters`, then attenuate the
+   link for about half a second (sink at the edge of range, or shielded by hand).
+2. Expect `trimmed` to grow once (PCM bytes) and then stop, `latency peak` to record the spike
+   and stay there (only the next reset lowers it), `latency` to settle back to the lead plus a
+   packet, and within ~2 s `buffered` under 30 ms with the sink back on live audio: the T30
+   click track shows one gap, not a permanent offset.
 3. A (AAC or aptX): play for 30 s, `sc stop OpenA2dpSvc`, wait about a second, `sc start`.
 4. Expect `<codec> underrun (<n> ms without a frame)` while the service is away and the PCM
    backlog trimmed once; playback returns to live after it re-registers. A stop that lasts past

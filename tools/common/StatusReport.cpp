@@ -421,16 +421,16 @@ void AppendLatency(std::string& text, const Ioctl::Status& status)
 	AppendLine(text, "latency",
 			   Format("%u ms (driver side: lead %u + buffered %u; the sink adds its own)",
 					  status.pacingLeadMs + bufferedMs, status.pacingLeadMs, bufferedMs));
-	// The instantaneous value hides a spike that ended before the poll, so the worst case of
-	// this stream is reported next to it; it resets when the next stream starts.
+	// The instantaneous value hides a spike that ended before the poll, so the worst case
+	// since the counters were reset is reported next to it; a new stream keeps it.
 	AppendLine(text, "latency peak",
-			   Format("%u ms (worst since this stream started)", status.latencyPeakMs));
+			   Format("%u ms (worst since the counters were reset)", status.latencyPeakMs));
 	// What the lead had to cover: the longest the render path, the encoder service or a send
 	// held audio off. A lead at or above the largest of these has margin; one below it is what
 	// the underrun and trim counts below are paying for.
 	AppendLine(text, "worst gaps",
 			   Format("render %u ms, frames %u ms, send %u ms (%u ms in the transport, %u ms until "
-					  "the next run; worst since this stream started)",
+					  "the next run; worst since the counters were reset)",
 					  status.worstRenderGapMs, status.worstServiceGapMs, status.worstSendMs,
 					  status.worstSendTransportMs, status.worstSendResumeMs));
 	// Audio the driver could not deliver in time: silence where the stream ran dry is an

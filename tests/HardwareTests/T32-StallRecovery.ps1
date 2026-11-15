@@ -11,6 +11,8 @@ Start-HwTest -Id 'T32' -Title 'A transport stall: trim once, back to live' -Leve
         Start-Audio
         Assert-Streaming -Codec 'SBC' -TimeoutSec 45 | Out-Null
         Start-Sleep -Seconds 30
+        # The peak and the loss counters accumulate across streams; this window is this test's.
+        Assert-CtlOk (Invoke-Ctl 'reset-counters') 'starting the stall measurement from zero' | Out-Null
 
         Write-Step 'attenuate the link for about half a second'
         Prompt-Operator 'Attenuate the link for about half a second (sink at the edge of range, or shielded by hand).'

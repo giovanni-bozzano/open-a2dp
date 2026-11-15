@@ -287,11 +287,11 @@ struct Status {
 	uint32_t pcmBufferedMs;
 	uint32_t frameBufferedMs;
 	// Pacing lead the running stream is sent ahead of the media clock by, and the worst
-	// driver-side latency (lead plus both ring fills) seen since that stream started, so a
+	// driver-side latency (lead plus both ring fills) seen since the counters were reset, so a
 	// transient backlog spike is still visible after the stream trimmed back to live.
 	uint32_t pacingLeadMs;
 	uint32_t latencyPeakMs;
-	// Worst gaps since this stream started, on the same reset as latencyPeakMs: the interval
+	// Worst gaps since the counters were reset, on the same reset as latencyPeakMs: the interval
 	// between two PCM copies that carried audio, between two encoded records the pacer consumed,
 	// and how long one media send stayed with the transport. They are the margin the lead needed
 	// - a cause - where the counters below are what a margin that was too short cost.

@@ -42,8 +42,9 @@ covers the driver side.
 
 ## Counters
 
-The counters accumulate across streams until `OpenA2dpCtl reset-counters` or a
-driver reload. A new stream cannot hide an earlier fault.
+The counters, including `latency peak` and `worst gaps`, accumulate across
+streams until `OpenA2dpCtl reset-counters` or a driver reload. A new stream
+cannot hide an earlier fault.
 
 | Counter | Meaning |
 |---|---|
@@ -56,10 +57,12 @@ driver reload. A new stream cannot hide an earlier fault.
 | `service silence` | Samples the service had to zero-fill |
 | `refused streams` | Windows stream formats the endpoint could not serve |
 | `jack flaps` | Endpoint rebuilds caused by a format change |
+| `latency peak` | Worst lead-plus-rings value since the last reset |
+| `worst gaps` | Longest render, service or send gap since the last reset |
 | `last error` | NTSTATUS of the last media failure, or `none` |
 
-`reset-counters` leaves the stream, its settings and the per-stream latency peak
-alone, so it can run during playback. The peak resets when the next stream starts.
+`reset-counters` leaves the stream and its settings alone, so it can run during
+playback; every counter, the peaks included, starts from zero.
 
 Boundary cleanup is not a loss. PCM left from a previous run, or captured at a
 format that is ending, is discarded on purpose and does not move `not copied`;

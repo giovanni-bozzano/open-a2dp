@@ -12,6 +12,8 @@ Start-HwTest -Id 'T29' -Title 'Latency, peak, lead, underruns and trims' -Level 
         Prompt-Operator 'Connect the sink and start playback to the OpenA2dp endpoint.'
         Start-Audio
         Assert-Streaming -Codec 'SBC' -TimeoutSec 45 | Out-Null
+        # The peak and the loss counters accumulate across streams; this window is this test's.
+        Assert-CtlOk (Invoke-Ctl 'reset-counters') 'starting the latency measurement from zero' | Out-Null
 
         Write-Step "watching the steady state for $SettleSeconds s"
         Start-Sleep -Seconds $SettleSeconds

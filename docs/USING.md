@@ -68,7 +68,7 @@ OpenA2dpCtl help
 | `format` | Show or set the PCM format each codec's streams are played at. |
 | `driver` | Show the A2DP driver for each node, or switch this sink. |
 | `reset` | Clear the stored codec preference and endpoint format for this sink. |
-| `reset-counters` | Zero the status counters without stopping the stream or clearing per-stream peaks. |
+| `reset-counters` | Zero every status counter, including the latency peak and worst gaps, without stopping the stream. |
 | `version` | The driver's version information. |
 | `help` | The full command and option text. |
 
@@ -207,8 +207,8 @@ OpenA2dpCtl driver windows
 OpenA2dpCtl reset-counters
 ```
 
-Counters are cumulative until this command or a driver reload. The stream, its
-settings and the per-stream latency peak are untouched.
+Counters are cumulative until this command or a driver reload. The stream and
+its settings are untouched.
 
 ## Reading the report
 

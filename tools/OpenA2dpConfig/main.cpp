@@ -605,12 +605,11 @@ constexpr RowTip kRowTips[] = {
 	 L"Most of the delay between a click and hearing it. Shorter feels snappier; too "
 	 L"short and the sound starts stuttering."},
 	{"latency peak",
-	 L"The worst lead-plus-rings value sampled since this stream started, reset by the "
-	 L"next stream.\n\n"
+	 L"The worst lead-plus-rings value sampled since the counters were reset.\n\n"
 	 L"A number well above the lead means something stalled the audio for a moment, "
-	 L"even if it recovered before you noticed."},
+	 L"even if it recovered before you noticed. Reset counters starts it over."},
 	{"worst gaps",
-	 L"The longest each stage held audio off for since the stream started - render copies, "
+	 L"The longest each stage held audio off for since the counters were reset - render copies, "
 	 L"encoder service records, one media send.\n\n"
 	 L"How much buffer the machine actually needed. A gap larger than the lead explains "
 	 L"the underruns or trims below; nothing larger means the setting is fine.\n\n"
@@ -2532,8 +2531,8 @@ void ResetCounters(HWND hwnd)
 	// Read back, so the numbers the window shows are the driver's after the reset rather than
 	// the ones it reported just before it.
 	RefreshStatus(hwnd);
-	SetMessage(hwnd, L"Counters reset: packets, drops, underruns, send failures and trims start "
-					  L"from zero, and the stream was not touched.");
+	SetMessage(hwnd, L"Counters reset: packets, drops, underruns, send failures, trims, the "
+					  L"latency peak and the worst gaps start from zero, and the stream was not touched.");
 }
 
 void RestoreDefaults(HWND hwnd)

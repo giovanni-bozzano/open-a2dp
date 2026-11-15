@@ -607,9 +607,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 
 	case Ioctl::kIoctlResetCounters:
 	{
-		// The counters status reports are the evidence that a fault stopped, so they accumulate
-		// until asked to start over; only the counters are cleared, never the stream, its
-		// configuration or the worst-case figures that describe the stream that runs.
+		// Every counter status reports is cleared here and nowhere else: the loss counts, the
+		// latency peak and the worst gaps all accumulate across streams, so a new stream cannot
+		// hide an earlier fault and one reset starts every measurement window. The stream, its
+		// configuration and its settings are untouched.
 		InterlockedExchange64(&ctx->FramesDropped, 0);
 		InterlockedExchange64(&ctx->FramesTrimmed, 0);
 		InterlockedExchange64(&ctx->Underruns, 0);
@@ -617,13 +618,20 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		InterlockedExchange(&ctx->RefusedStreams, 0);
 		InterlockedExchange(&ctx->JackFlaps, 0);
 		// These are written by their own producer with plain increments (the audio timer under
-		// AudioLock), so a reset for them is a store: the worst case is losing the one increment
-		// that is in flight, which is what a reset means anyway.
+		// AudioLock) or plain maxima (the audio and media paths), so a reset for them is a store:
+		// the worst case is losing the one observation that is in flight, which is what a reset
+		// means anyway.
 		ctx->AudioTrimmedBytes = 0;
 		ctx->PacketsSent = 0;
 		ctx->AudioDroppedBytes = 0;
 		ctx->AudioRunDroppedBytes = 0;
 		InterlockedExchange64(&ctx->ServiceSilenceSamples, 0);
+		ctx->LatencyPeakMs = 0;
+		ctx->WorstRenderGapMs = 0;
+		ctx->WorstServiceGapMs = 0;
+		ctx->WorstSendMs = 0;
+		ctx->WorstSendTransportMs = 0;
+		ctx->WorstSendResumeMs = 0;
 		OA2DP_INFO(ctx, "Service", "counters reset");
 		WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, 0);
 		return;

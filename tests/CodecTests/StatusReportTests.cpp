@@ -160,7 +160,7 @@ TEST(StatusReport_ShowsTheDriverSideLatency)
 	// A spike that ended before the poll is only visible through the peak.
 	status.latencyPeakMs = 180;
 	const std::string spiked = Report(false, status, StreamingPreference());
-	CHECK(Contains(spiked, "latency peak    180 ms (worst since this stream started)"));
+	CHECK(Contains(spiked, "latency peak    180 ms (worst since the counters were reset)"));
 }
 
 // The gaps say what the lead had to cover, which is the cause the underrun and trim counts only
@@ -179,7 +179,7 @@ TEST(StatusReport_ShowsTheWorstGapsTheLeadHadToCover)
 	const std::string report = Report(false, status, StreamingPreference());
 	CHECK(Contains(report,
 			"render 12 ms, frames 30 ms, send 45 ms (12 ms in the transport, 33 ms until the "
-			"next run; worst since this stream started)"));
+			"next run; worst since the counters were reset)"));
 
 	// A send that never reached the split (an old completion, or a stream that just started)
 	// still prints the total, with zeroes where the two halves are unknown.

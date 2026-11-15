@@ -52,9 +52,6 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 		ctx->PacingLeadMs = Ioctl::EffectivePrerollMs(preferred);
 		ctx->SbcFramesPerPacket = framesPerPacket;
-		// The peak starts from the lead itself, so the report never claims less than the stream
-		// always carries, and a previous stream's worst case does not leak into this one.
-		ctx->LatencyPeakMs = static_cast<LONG>(ctx->PacingLeadMs);
 		ctx->SbcUnderrunPackets = 0;
 		ctx->SbcUnderrunLogTime = 0;
 	}
@@ -117,7 +114,6 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 	ctx->ActiveBitrate = SbcFixed::Bitrate(params);
 	ctx->ActiveObjectType = 0;
 	ctx->RtpSequence = 0;
-	ctx->PacketsSent = 0;
 	ctx->RtpTimestamp = 0;
 	ctx->MediaSamplesSent = 0;
 	MediaStatsReset(ctx);
@@ -149,7 +145,6 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		skipped = ctx->AudioSkippedBytes;
 		ctx->AudioSkippedBytes = 0;
 		ctx->PcmTrimStrikes = 0;
-		ctx->WorstRenderGapMs = 0;
 		ctx->LastRenderTime = 0;
 		runStamp = ctx->AudioRunStamp;
 		ctx->AudioRunStamp = 0;

@@ -92,16 +92,13 @@ ULONG BuildSbcPacket(DEVICE_CONTEXT* ctx, uint32_t dueSamples, uint32_t& samples
 ULONG BuildServicePacket(DEVICE_CONTEXT* ctx, uint32_t& samples);
 void TickSbc(DEVICE_CONTEXT* ctx, bool tick);
 void TickService(DEVICE_CONTEXT* ctx, bool tick);
-// Per-stream diagnostics start over with the stream: the peaks, the consecutive-over-limit count
-// and the timestamps they are measured from all describe one stream. Caller holds MediaLock; the
-// audio side resets its own pair under AudioLock.
+// Per-run bookkeeping starts over with the stream: the consecutive-over-limit count, the send
+// state and the timestamp a gap is measured from. The counter peaks do not: they accumulate
+// across streams and only RESET_COUNTERS clears them. Caller holds MediaLock; the audio side
+// resets its own timestamp and strike count under AudioLock.
 inline void MediaStatsReset(DEVICE_CONTEXT* ctx)
 {
 	ctx->FrameTrimStrikes = 0;
-	ctx->WorstServiceGapMs = 0;
-	ctx->WorstSendMs = 0;
-	ctx->WorstSendTransportMs = 0;
-	ctx->WorstSendResumeMs = 0;
 	ctx->LastRecordTime = 0;
 	ctx->MediaSendPending = FALSE;
 	ctx->MediaSendLogTime = 0;
