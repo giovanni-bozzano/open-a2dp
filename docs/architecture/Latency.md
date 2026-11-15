@@ -141,11 +141,11 @@ at their shortest. LDAC's record is its encoder packet.
 - **A long lead sends start-up silence.** A 200 ms lead sends up to 200 ms of
   silence before the first real sample. That is the lead working as configured,
   and why the default stays at 60 ms.
-- **A resume inside the grace still pays the slot if the link slept.** The
-  grace keeps the stream open, so the resume sends no START, but it cannot keep
-  the link awake once media stops. Pause for longer than a sniff interval,
-  resume, and read `link` and `worst gaps`: a send gap near a second says the
-  link slept anyway.
+- **The grace only keeps the link busy while the kernel paces it.** An SBC
+  stream keeps sending silence for the whole grace, so a resume inside it pays
+  neither START nor the sniff slot; a stream the encoder service paces sends
+  nothing while paused, and its resume can still wait for a slot. Pause, resume,
+  and read `link` and `worst gaps`: a send gap near a second says the link slept.
 - **The reported total is a lower bound.** The sink starts playing when its own
   buffer says so, after the part we report.
 
