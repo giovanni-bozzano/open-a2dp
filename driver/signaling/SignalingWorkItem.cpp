@@ -703,6 +703,13 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				"applying the endpoint formats after a provider change failed 0x%08X", status);
 		}
 	}
+	// A pause that keeps the stream Streaming (the grace) leaves START unsent, so the wake on
+	// that path never runs for the resume that follows. Done before the session lock: the
+	// request touches no session state and must not lengthen the wait behind it.
+	if (InterlockedExchange(&ctx->PauseWakePending, 0) != 0)
+	{
+		L2capRequestActiveMode(ctx);
+	}
 	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
 	ctx->SignalingWorkItemThread = KeGetCurrentThread();
 	PumpSignalSends(ctx);

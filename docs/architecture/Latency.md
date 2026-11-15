@@ -52,6 +52,16 @@ first sound. The driver asks the stack for active mode immediately before that
 START. The request is fire and forget, and a refusal only means the link keeps
 its power state.
 
+A pause asks for the same thing, when the grace keeps the stream open: that
+resume sends no START, so the wake on the START path would never run and the
+first packets after the pause would still queue behind a sniff slot.
+
+The request cannot skip the slot it waits for. On a link that already dropped
+into sniff the wake completes when the controller leaves it, which is the moment
+the START leaves too, so the two finish together and the start costs the sniff
+interval either way. Keeping the link out of sniff is the only way to remove
+that wait; the request just makes sure nothing else is added to it.
+
 The report's `link` line carries the state the stack reports and how long the
 last wake took, so a slow start can be attributed without a log capture. The
 state is read when the report is built, with a bound: a status poll never waits
@@ -131,6 +141,10 @@ at their shortest. LDAC's record is its encoder packet.
 - **A long lead sends start-up silence.** A 200 ms lead sends up to 200 ms of
   silence before the first real sample. That is the lead working as configured,
   and why the default stays at 60 ms.
+- **The pause wake only buys what the stack keeps.** Whether the link stays
+  active for the whole grace decides if a resume inside it is instant. Pause for
+  longer than a sniff interval, resume, and read `link` and `worst gaps`: a send
+  gap near a second says the link slept anyway.
 - **The reported total is a lower bound.** The sink starts playing when its own
   buffer says so, after the part we report.
 

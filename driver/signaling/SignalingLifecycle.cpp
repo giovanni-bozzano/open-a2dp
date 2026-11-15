@@ -203,6 +203,10 @@ void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx)
 	graceMs = Ioctl::EffectivePauseGraceMs(ctx->Preference.pauseGraceMs);
 	KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 	InterlockedExchange(&ctx->PauseGrace, 1);
+	// The stream may stay Streaming through the grace, and that resume sends no START: the
+	// work item wakes the link instead, so the first packets after the pause do not queue
+	// behind a sniff slot.
+	InterlockedExchange(&ctx->PauseWakePending, 1);
 	WdfTimerStart(ctx->PauseGraceTimer, WDF_REL_TIMEOUT_IN_MS(graceMs));
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);

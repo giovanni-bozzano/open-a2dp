@@ -88,6 +88,8 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 	// Nor may the pause grace suspend a stream this teardown already ended.
 	WdfTimerStop(ctx->PauseGraceTimer, TRUE);
 	InterlockedExchange(&ctx->PauseGrace, 0);
+	// The wake belongs to that stream: the next session asks for its own.
+	InterlockedExchange(&ctx->PauseWakePending, 0);
 	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
 	{
 		WdfWorkItemFlush(ctx->SignalingWorkItem);

@@ -306,6 +306,10 @@ struct DEVICE_CONTEXT
 	// sends silence), so playback that resumes within the grace needs no START round trip.
 	WDFTIMER PauseGraceTimer;
 	volatile LONG PauseGrace;
+	// Set by an endpoint pause. A resume inside the grace sends no START, so the wake on the
+	// START path never runs for it; the work item asks for active mode itself, outside the
+	// audio path where creating the request is not allowed.
+	volatile LONG PauseWakePending;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;
