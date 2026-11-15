@@ -40,6 +40,8 @@ void OnIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication, _In_ 
 	if (indication == IndicationRemoteDisconnect)
 	{
 		OA2DP_INFO(ctx, "L2CAP", "signaling channel remote disconnect, reason %d", static_cast<int>(parameters->Parameters.Disconnect.Reason));
+		InterlockedExchange(&ctx->DisconnectGeneration,
+			InterlockedCompareExchange(&ctx->SignalingGeneration, 0, 0));
 		WdfWorkItemEnqueue(ctx->DisconnectWorkItem);
 	}
 }
@@ -66,6 +68,10 @@ void OnOpenComplete(
 	}
 	else
 	{
+		// Capture the attempt before closing the state: an incoming connection can start as soon
+		// as the state is Closed, and the work item must not tear that newer channel down.
+		const LONG generation = InterlockedCompareExchange(&ctx->SignalingGeneration, 0, 0);
+		InterlockedExchange(&ctx->DisconnectGeneration, generation);
 		InterlockedExchange(&ctx->SignalingState, ChannelClosed);
 		OA2DP_ERROR(ctx, "L2CAP", "signaling channel open failed 0x%08X (L2CAP response %u/%u)",
 			status, ctx->OpenBrb.Response, ctx->OpenBrb.ResponseStatus);

@@ -26,7 +26,9 @@ void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx);
 
 // Publishes or withdraws the link the tools enumerate. A paired sink keeps its PnP node while
 // the Bluetooth link is down, so the link follows the AVDTP signaling channel instead: it is
-// withdrawn when the channel closes or its open fails, and published when it opens.
+// withdrawn when the channel closes or its open fails, and published when it opens. A disconnect
+// is tagged with its signaling generation, so a reconnect that overtakes a failed open keeps its
+// channel and link.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ServicePublishLink(_In_ DEVICE_CONTEXT* ctx, bool present);
 

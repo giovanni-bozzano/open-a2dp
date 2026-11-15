@@ -119,13 +119,28 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 void OnDisconnectWorkItem(_In_ WDFWORKITEM workItem)
 {
 	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	const LONG generation = InterlockedCompareExchange(&ctx->SignalingGeneration, 0, 0);
+	const LONG disconnect = InterlockedCompareExchange(&ctx->DisconnectGeneration, 0, 0);
+	// An open that is still in flight, or one that already replaced the attempt this disconnect
+	// belongs to, owns the channel and the link: closing either here is what left a reconnected
+	// sink with no control link. A failed new attempt queues the work again for its generation.
+	if (ctx->SignalingState == ChannelOpening || (disconnect != 0 && disconnect != generation))
+	{
+		OA2DP_INFO(ctx, "Service",
+			"stale disconnect for signaling generation %ld ignored (state %ld, now %ld)",
+			static_cast<long>(disconnect), static_cast<long>(ctx->SignalingState),
+			static_cast<long>(generation));
+		return;
+	}
 	L2capCloseSignalingChannel(ctx);
 	// A paired sink keeps its PnP node and control device when the Bluetooth link drops, so
 	// the link the tools enumerate is withdrawn here and put back when the channel reopens.
 	// SessionLock orders this against that publish, which the signaling work item does under
 	// the same lock: a reopened channel keeps its link rather than losing it to this close.
+	// The generation check after the close covers one that started while the old one closed.
 	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
-	if (ctx->SignalingState != ChannelOpen)
+	if (ctx->SignalingState != ChannelOpen &&
+		generation == InterlockedCompareExchange(&ctx->SignalingGeneration, 0, 0))
 	{
 		ServicePublishLink(ctx, false);
 	}

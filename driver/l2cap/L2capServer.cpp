@@ -142,6 +142,7 @@ void OnServerIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication,
 		RespondIncoming(ctx, parameters->ConnectionHandle, parameters->BtAddress, false);
 		return;
 	}
+	InterlockedIncrement(&ctx->SignalingGeneration);
 
 	OA2DP_INFO(ctx, "L2CAP", "incoming signaling connection");
 	InterlockedExchange(&ctx->SignalingIncoming, 1);

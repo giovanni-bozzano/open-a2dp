@@ -8,6 +8,7 @@ NTSTATUS L2capOpenSignalingChannel(_In_ DEVICE_CONTEXT* ctx)
 	{
 		return STATUS_SUCCESS;
 	}
+	InterlockedIncrement(&ctx->SignalingGeneration);
 
 	KeClearEvent(&ctx->OpenIdle);
 	InterlockedExchange(&ctx->SignalingIncoming, 0);

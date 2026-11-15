@@ -139,6 +139,13 @@ before publishing its arrival; a sink the start cannot reach loses it again when
 its open fails. The control device object and its `\Device` name stay put for
 the resume path.
 
+Each disconnect is tagged with the signaling generation that was current when it
+was raised. If a newer open attempt or channel exists when its work item runs, the
+disconnect is ignored: it belongs to a connection that is already gone, and
+closing the newer channel would take the link down with it. Only the current
+generation withdraws the link, so a sink that reconnects while a failed open is
+still unwinding keeps both its channel and its place in the tools.
+
 Rundown and an FDO reference protect outstanding handlers and handles. Removal
 delivers a device-gone event to any parked service wait. `RingLock` serializes
 ring map and unmap ownership; the mapping belongs to the file handle and is

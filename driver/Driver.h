@@ -232,8 +232,10 @@ struct DEVICE_CONTEXT
 	// Remote Class of Device from BTHENUM, 0 if unknown.
 	BTH_COD RemoteClass;
 
-	// AVDTP signaling channel.
+	// AVDTP signaling channel. SignalingGeneration names the open attempt that owns the
+	// channel, so a disconnect raised for an older attempt can tell that a newer one exists.
 	volatile LONG SignalingState;
+	volatile LONG SignalingGeneration;
 	L2CAP_CHANNEL_HANDLE SignalingChannel;
 	USHORT SignalingOutMtu;
 
@@ -244,6 +246,8 @@ struct DEVICE_CONTEXT
 	KEVENT OpenIdle;
 
 	WDFWORKITEM DisconnectWorkItem;
+	// The signaling generation the queued disconnect belongs to; 0 before the first attempt.
+	volatile LONG DisconnectGeneration;
 
 	// Signaled once device teardown has begun, after the courtesy CLOSE. Waits that
 	// would otherwise run to their timeout (control BRBs) end as soon as it is set,
