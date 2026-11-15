@@ -510,9 +510,9 @@ RowTone ToneForLabel(const std::string& label, const std::string& value)
 		return RowTone::Error;
 	}
 	// A stream that lost audio to a short lead is a warning, not a failure: it plays, but the
-	// listener heard the gap. The counts cover everything since the sink appeared and are never
-	// reset, so the tone says this sink has lost audio, and the count itself says whether it
-	// still is: a number that stopped growing is a fault that stopped.
+	// listener heard the gap. The counts cover the window since the last reset, so the tone
+	// says this headset has lost audio and the count says whether it still is: a number that
+	// stopped growing is a fault that stopped.
 	if ((label == "underruns" || label == "trimmed" || label == "not copied" ||
 		 label == "service silence") &&
 		!value.empty() && value[0] != '0')
@@ -548,11 +548,11 @@ std::wstring RowLabel(const std::string& label)
 	return Tools::Widen(capital);
 }
 
-// What a session row means, shown when the pointer rests on it. Every explanation has the same
-// two halves: what the value is, then what it does to what the listener hears. The labels are the
-// ones BuildStatusReport prints, so the text lives beside the row it explains instead of in a
-// help file that would drift. A row with no entry is left unexplained - the raw fields, which
-// exist to be copied into a bug report rather than read.
+// What a session row means, shown when the pointer rests on it. Every explanation says what the
+// value is, what normal looks like and what to change when it is not, in plain language for the
+// person using the headset. The labels are the ones BuildStatusReport prints, so the text lives
+// beside the row it explains instead of in a help file that would drift. A row with no entry is
+// left unexplained - the raw fields exist to be copied into a bug report rather than read.
 struct RowTip
 {
 	const char* label;
@@ -561,161 +561,199 @@ struct RowTip
 
 constexpr RowTip kRowTips[] = {
 	{"AVDTP",
-	 L"State of the A2DP signalling link with the sink. Every value it can show, in the order "
-	 L"they occur:\n\n"
-	 L"IDLE - no session; nothing has been negotiated, so nothing can play.\n"
-	 L"DISCOVERING - asking the sink which audio endpoints it offers.\n"
-	 L"GETTINGCAPABILITIES - reading the codecs and formats of one of them.\n"
-	 L"CONFIGURING - asking the sink to accept the codec and settings chosen for it.\n"
-	 L"CONFIGURED - the sink chose the stream and it was accepted; the sink opens the media "
-	 L"channel next.\n"
-	 L"OPENING - opening the media channel the audio travels on.\n"
-	 L"OPEN - the channel is open and the stream can start.\n"
-	 L"STARTING - asking the sink to start; waiting for its answer.\n"
-	 L"STREAMING - the sink accepted and is playing what this PC sends.\n"
-	 L"SUSPENDING - asking the sink to stop, keeping the session so a resume needs no "
-	 L"negotiation.\n"
-	 L"CLOSING - closing the session because playback ended.\n"
-	 L"ABORTING - tearing the session down without a clean close, after an error or a timeout.\n"
-	 L"FAILED - the link broke or the sink refused; the next connect starts over.\n\n"
-	 L"A sink that never reaches STREAMING plays nothing, and FAILED means the link is the "
-	 L"problem, not the audio format - no codec setting will help."},
+	 L"Where the Bluetooth audio connection is. A2DP is the audio streaming standard; AVDTP "
+	 L"is the channel that sets it up. The normal values, in order:\n\n"
+	 L"IDLE - not connected; nothing is negotiated.\n"
+	 L"DISCOVERING - asking the headset what audio it supports.\n"
+	 L"GETTINGCAPABILITIES - reading one of its audio endpoints.\n"
+	 L"CONFIGURING - asking it to accept a codec and settings.\n"
+	 L"CONFIGURED - accepted; the channel that carries audio opens next.\n"
+	 L"OPENING - opening that channel.\n"
+	 L"OPEN - ready to start.\n"
+	 L"STARTING - asking the headset to play.\n"
+	 L"STREAMING - sound is flowing.\n"
+	 L"SUSPENDING - pausing while keeping the connection for a quick resume.\n"
+	 L"CLOSING - ending playback cleanly.\n"
+	 L"ABORTING - tearing down after an error or timeout.\n"
+	 L"FAILED - the connection broke or the headset refused.\n\n"
+	 L"If it never reaches STREAMING, the problem is the connection or codec support; no "
+	 L"audio setting can fix FAILED. Reconnect the headset and check the logs."},
 	{"media",
-	 L"Where the audio path on this PC stands. Every value it can show:\n\n"
-	 L"IDLE - no audio is being sent: no stream has started, or the last one ended.\n"
-	 L"WAITINGFORENCODER - the codec is configured and the driver waits for the encoder "
-	 L"service's first frame.\n"
-	 L"STREAMING - audio is flowing to the sink.\n"
-	 L"SUSPENDED - the stream is configured but not sending, because Windows paused the "
-	 L"endpoint; playing again resumes it without negotiating anew.\n"
-	 L"FAILED - the stream hit a fault and stopped; the next playback starts a new one.\n\n"
-	 L"SUSPENDED while a player runs is silence you can see here but would not find "
-	 L"explained anywhere else."},
+	 L"What the audio path on this PC is doing. Every value:\n\n"
+	 L"IDLE - no stream is running.\n"
+	 L"WAITINGFORENCODER - the stream is set up and waiting for the encoder helper (the "
+	 L"service that compresses AAC, aptX or LDAC) to deliver its first frame.\n"
+	 L"STREAMING - audio is flowing.\n"
+	 L"SUSPENDED - ready but paused because Windows paused the endpoint.\n"
+	 L"FAILED - the stream hit an error and stopped.\n\n"
+	 L"SUSPENDED while a player is running means the player or Windows paused the endpoint, "
+	 L"not that Bluetooth dropped. FAILED starts a new stream on the next playback; check "
+	 L"Last error and the logs."},
 	{"endpoint",
-	 L"Whether Windows' render endpoint is running or paused.\n\n"
-	 L"Windows pauses the endpoint whenever nothing is playing, so paused with music "
-	 L"running means the player stopped, not the driver."},
+	 L"Whether Windows is sending audio to this endpoint.\n\n"
+	 L"Running - a player has it open. Paused - nothing is playing, or the player paused. "
+	 L"Paused is normal when music is stopped, so check this before blaming the driver."},
 	{"sink jack",
-	 L"The render jack is reported unplugged while an endpoint rebuild is in progress.\n\n"
-	 L"Windows opens no stream while it shows unplugged, so the song is silent for that "
-	 L"moment and comes back by itself."},
+	 L"Windows reports the headphone jack as unplugged while it rebuilds the endpoint.\n\n"
+	 L"This happens for a moment after a format change. No player can open a stream until "
+	 L"the jack returns, so expect a short silence and let the player resume. If it stays "
+	 L"unplugged, check Listed formats and Refused streams."},
 	{"latency",
-	 L"Audio the driver holds ahead of live - the pacing lead plus both ring fills. The "
-	 L"sink's own buffer adds on top and no A2DP profile reports it.\n\n"
-	 L"Most of the delay between a click and hearing it. Shorter feels snappier; too "
-	 L"short and the sound starts stuttering."},
+	 L"Delay added by the driver: the pacing lead plus the audio currently buffered.\n\n"
+	 L"The headset adds its own delay, which Bluetooth does not report, so the real "
+	 L"click-to-ear delay is higher than this. Lower feels snappier; too low causes gaps. "
+	 L"Watch this while tuning Pacing lead - it is the number that changes as the buffer "
+	 L"fills."},
 	{"latency peak",
-	 L"The worst lead-plus-rings value sampled since the counters were reset.\n\n"
-	 L"A number well above the lead means something stalled the audio for a moment, "
-	 L"even if it recovered before you noticed. Reset counters starts it over."},
+	 L"The highest driver-side latency seen since the last counter reset.\n\n"
+	 L"It catches a short stall that is already over. A little above the pacing lead is "
+	 L"normal; far above it means something held up the PC or the link for a moment, even if "
+	 L"you did not hear it. A new stream does not clear it - press Reset counters to start a "
+	 L"fresh measurement."},
 	{"worst gaps",
-	 L"The longest each stage held audio off for since the counters were reset - render copies, "
-	 L"encoder service records, one media send.\n\n"
-	 L"How much buffer the machine actually needed. A gap larger than the lead explains "
-	 L"the underruns or trims below; nothing larger means the setting is fine.\n\n"
-	 L"The send figure is split into time in the transport (the Bluetooth link and controller) "
-	 L"and time until the driver's media work item ran. Only the first is the link; a large "
-	 L"second value means the machine was too busy to run the driver."},
+	 L"The longest interruption each stage saw since the last counter reset.\n\n"
+	 L"Render is the audio engine delivering PCM late; frames is the encoder service falling "
+	 L"behind; send is one Bluetooth send taking too long. If a gap is larger than the pacing "
+	 L"lead, it explains the underruns or trimmed audio - raise the lead. If every gap is "
+	 L"smaller, the lead has enough margin.\n\n"
+	 L"The send figure also shows two parts: time in the Bluetooth transport, and time until "
+	 L"the driver's background work ran. A large first part is the link or headset; a large "
+	 L"second part means this PC was busy. Reset counters starts the window over."},
 	{"not copied",
-	 L"Audio the copy missed: it ran later than the engine's own buffer, or the driver's buffer "
-	 L"was full. Audio deliberately discarded at a stream or format boundary is not counted.\n\n"
-	 L"A listener hears it as a skip, and unlike a trim it is not the driver trading latency for "
-	 L"continuity - nothing was buffered to trade. A count that grows while the underruns do not "
-	 L"points at the machine (a stalled DPC or a long interrupt) rather than at the sink."},
+	 L"Audio Windows handed over too late, or while the driver's buffer was full, so it "
+	 L"could not be copied.\n\n"
+	 L"You hear a skip. Unlike trimming, nothing extra was buffered to trade away - the PC "
+	 L"missed the deadline. If this grows while Underruns does not, the cause is usually the "
+	 L"PC: a busy processor, a long interrupt or power saving, not the headset. Audio "
+	 L"deliberately discarded at a stream start or format change is not counted."},
 	{"service silence",
-	 L"PCM the encoder service filled with silence because the ring held less than one record."},
+	 L"Audio the encoder service replaced with silence because its input held less than one "
+	 L"frame.\n\n"
+	 L"You hear a small gap. A little at startup is harmless; a count that keeps growing "
+	 L"means the service is late, was restarted, or the PC is too busy to feed it. Check the "
+	 L"service before blaming the headset."},
 	{"underruns",
-	 L"Packets built with silence because the ring held no audio the media clock had "
-	 L"already asked for. Counted for the endpoint's whole life and never reset.\n\n"
-	 L"Each one is a tiny silent patch - a click or a small gap. A number that keeps "
-	 L"growing is a problem now; one that never changes is history."},
+	 L"Packets the driver filled with silence because the audio it needed arrived late.\n\n"
+	 L"Each is a tiny gap or click. A growing count means the pacing lead is too short for "
+	 L"this headset or link - raise it. A number that stopped is history; press Reset "
+	 L"counters to start a clean measurement. Compare with Worst gaps: a send gap larger than "
+	 L"the lead points at Bluetooth, not the codec."},
 	{"trimmed",
-	 L"Old audio discarded from a running stream's PCM ring when it held more than the lead "
-	 L"plus its slack for two observations. The pre-stream trim that bounds the opening lead is "
-	 L"not counted. Counted for the endpoint's whole life and never reset.\n\n"
-	 L"Each one is a small skip - the stream jumps forward to live sound instead of "
-	 L"staying behind. Growing means Bluetooth or the PC fell behind for a moment."},
+	 L"Old audio the driver dropped to catch back up with live sound after a backlog.\n\n"
+	 L"You hear a skip instead of a growing delay. A small amount after a link stall is "
+	 L"normal; if it keeps growing, check Worst gaps and raise Pacing lead. Reset counters "
+	 L"starts the count over."},
 	{"codec",
-	 L"The codec, sample rate, channel count and bitrate the running stream uses.\n\n"
-	 L"Why one headset sounds duller than another - SBC instead of aptX, or a lower "
-	 L"bitrate, is what you hear as flat or mushy."},
+	 L"The codec, sample rate, channel count and bitrate of the running stream.\n\n"
+	 L"This is what decides sound quality: LDAC and aptX HD usually beat AAC, and AAC "
+	 L"usually beats SBC; a low bitrate can make any of them sound flat. If SBC is running "
+	 L"when you expected better, check Preference, Encoder and Sink formats - the headset or "
+	 L"the encoder service may not offer the better codec."},
 	{"media MTU",
-	 L"The largest media packet the link agreed on, and the AAC bitrate it can carry.\n\n"
-	 L"A small packet carries less audio per send and caps the bitrate, so the link - "
-	 L"not the setting - decides how good AAC can sound."},
+	 L"The largest media packet the Bluetooth link agreed on, and the AAC bitrate it can "
+	 L"carry.\n\n"
+	 L"MTU means maximum transmission unit. A smaller packet carries less audio per send and "
+	 L"limits AAC quality; the link sets this, not the codec setting. If AAC sounds worse "
+	 L"than expected, compare this value with the AAC bitrate."},
 	{"sink name",
-	 L"The Bluetooth name the sink reported.\n\n"
-	 L"Only an identifier, so two similar headsets can be told apart."},
+	 L"The Bluetooth name the headset reported.\n\n"
+	 L"It identifies which headset this window and report describe. It does not affect "
+	 L"sound."},
 	{"sink formats",
-	 L"The sample rates, channel counts and codecs the sink advertised in the last "
-	 L"discovery.\n\n"
-	 L"What the headset can accept. A codec missing here is one the driver will never "
-	 L"use, however it is forced."},
+	 L"The sample rates, channel counts and codecs the headset advertised when it connected.\n\n"
+	 L"A codec missing here cannot be used, whatever is forced. If the list looks stale or "
+	 L"incomplete, disconnect and reconnect the headset. The rates listed here also limit "
+	 L"what Endpoint format can offer."},
 	{"listed formats",
-	 L"The formats the endpoint is offering Windows right now.\n\n"
-	 L"Empty means Windows cannot open a stream at all, so nothing plays until a format "
-	 L"is listed again."},
+	 L"The PCM formats the endpoint currently offers Windows.\n\n"
+	 L"PCM is the uncompressed audio Windows sends. Windows can open a stream only in one of "
+	 L"these formats; none means every player stays silent. Check Sink jack and Endpoint "
+	 L"format. Automatic lists every format the codec can play; a pinned format leaves only "
+	 L"that one."},
 	{"refused streams",
-	 L"Streams Windows asked for that the endpoint does not offer, with the last format "
-	 L"refused.\n\n"
-	 L"A player asking for the wrong format stays silent while this count grows."},
+	 L"Streams Windows tried to open in a format this endpoint does not offer, plus the last "
+	 L"refused format.\n\n"
+	 L"A growing count means a player is asking for something unavailable, so it may be "
+	 L"silent. Check Endpoint format and Listed formats: a pinned format can exclude what the "
+	 L"player wants. Press Reset counters after fixing the player to start the count over."},
 	{"endpoint format",
-	 L"The format the endpoint offers Windows - automatic, or pinned and therefore "
-	 L"offered alone.\n\n"
-	 L"Windows plays the first format listed and ignores the Sound-settings pick, so "
-	 L"pinning is what makes your chosen format the one you actually hear."},
+	 L"Which PCM format the endpoint offers Windows: automatic, or one pinned format.\n\n"
+	 L"Windows uses the first format in the list, and the Sound settings picker does not "
+	 L"reach this driver, so pinning here is how you choose. Pinning also limits apps that "
+	 L"open the output in exclusive mode and leaves only that format for the codec. It does "
+	 L"not force the codec - use Preference for that. A change briefly unplugs and rebuilds "
+	 L"the endpoint."},
 	{"preference",
-	 L"The stored codec choice: one forced codec, or automatic (LDAC > aptX HD > aptX > "
-	 L"AAC > SBC).\n\n"
-	 L"Automatic gives the best both ends support; forcing a codec the sink does not "
-	 L"advertise is refused rather than silently substituted."},
+	 L"The saved codec choice for this headset.\n\n"
+	 L"Automatic uses the best codec both ends support, in this order: LDAC, then aptX HD, "
+	 L"aptX, AAC and SBC. Forcing one helps when testing or when Automatic chooses a codec "
+	 L"that stutters; a codec the headset does not advertise is refused rather than replaced. "
+	 L"The settings tabs do not change this choice, and it is stored per headset."},
+	{"LDAC quality",
+	 L"The saved LDAC quality mode: High, Standard or Mobile.\n\n"
+	 L"High gives the best sound at the highest bitrate but needs a strong link; Standard "
+	 L"and Mobile trade quality for range and stability. This is a local setting - the "
+	 L"headset is not told which mode is used. It only applies when LDAC is running."},
 	{"SBC bitpool",
-	 L"The stored SBC bitpool - bits per frame, clamped to the sink's own range.\n\n"
-	 L"Higher is better SBC sound in larger packets. The default takes the sink's own "
-	 L"choice, usually the best it can decode."},
+	 L"The saved SBC bitpool: how many bits SBC uses per frame.\n\n"
+	 L"Higher usually sounds better and makes larger packets. The value is clamped to the "
+	 L"headset's range; the default is the headset's own choice, capped at 53. Raise it only "
+	 L"if the headset stays stable, and lower it if audio stutters. Only SBC uses it."},
 	{"AAC bitrate",
-	 L"The stored AAC bitrate target, capped by what the media MTU can carry.\n\n"
-	 L"Higher is better AAC sound and uses more of the link; past the cap it is reduced "
-	 L"instead of failing."},
+	 L"The saved AAC bitrate target, capped by the headset and the media packet.\n\n"
+	 L"Higher gives better sound and uses more of the link. The default is the highest the "
+	 L"link can carry, which is right for most cases; lower it if high-quality AAC stutters. "
+	 L"The stream may run below the stored value when the packet is small. Only AAC uses it."},
 	{"pacing lead",
-	 L"How far ahead of the media clock the stream is sent - the stored value, or the "
-	 L"running one raised to one packet when the stored one is too short. The kernel pacer and the "
-	 L"encoder service use the same number.\n\n"
-	 L"The main latency dial. Larger is more forgiving and a little more delayed; "
-	 L"smaller is snappier and risks the stutters the counters below report."},
+	 L"How far ahead of Windows' audio clock the driver sends sound, after applying the "
+	 L"codec's minimum.\n\n"
+	 L"This is the main latency/stability trade-off. Raise it if Underruns or Trimmed grows; "
+	 L"lower it for less delay if playback stays clean. The Latency line is this lead plus "
+	 L"Buffered. A new value is used when the next stream starts."},
 	{"SBC frames",
-	 L"Stored cap on SBC frames per packet; 0 fills the MTU.\n\n"
-	 L"Fewer frames is a shorter packet and less delay, at the cost of more packets a "
-	 L"second for the link to carry."},
+	 L"The saved limit on SBC frames per packet; 0 fills the packet.\n\n"
+	 L"Fewer frames make a shorter packet and reduce delay, but need more packets per second "
+	 L"and can stutter on a weak link. It works with Pacing lead: a shorter lead may need "
+	 L"fewer frames. Only SBC uses it."},
 	{"SBC frame",
-	 L"The stored SBC frame shape - blocks, subbands and allocation.\n\n"
-	 L"It changes how SBC spends its bits: longer frames, finer frequency resolution, or "
-	 L"bits spread by loudness instead of evenly."},
+	 L"The saved SBC frame shape: blocks, subbands and bit allocation.\n\n"
+	 L"These control how SBC packs sound into a frame. The defaults - 16 blocks, 8 subbands, "
+	 L"loudness - are the usual best choice. Shorter frames reduce delay but can sound worse, "
+	 L"and the headset must support the shape. It works together with Bitpool and Frames per "
+	 L"packet."},
 	{"driver",
-	 L"Driver ABI and version, maximum packet and ring sizes, and whether this window "
-	 L"speaks the same ABI.\n\n"
-	 L"A mismatch means the window and the driver came from different builds - update "
-	 L"both, or neither the numbers nor the settings can be trusted."},
+	 L"The driver build and interface version (ABI), plus its packet and buffer limits.\n\n"
+	 L"The driver, encoder service and tools must come from the same build. A mismatch means "
+	 L"settings and numbers cannot be trusted - reinstall all of them together. Without a "
+	 L"mismatch, a different version number is only informational."},
 	{"encoder",
-	 L"Whether the encoder service registered its codecs for this device.\n\n"
-	 L"Not registered means AAC and aptX cannot be used at all, so the stream falls "
-	 L"back to SBC and sounds worse."},
+	 L"Whether the encoder service has registered the codecs that need it: AAC, aptX, aptX "
+	 L"HD and LDAC.\n\n"
+	 L"Not registered means those codecs cannot be used and the driver falls back to SBC, "
+	 L"which usually sounds worse. Check that the OpenA2dp service is running and from the "
+	 L"same build as the driver. SBC does not need the service."},
 	{"buffered",
-	 L"What the two rings are holding right now, in milliseconds and bytes.\n\n"
-	 L"Small and steady is healthy. A number that climbs means audio is piling up and "
-	 L"will be trimmed - you hear a skip instead of growing delay."},
+	 L"Audio the driver's buffers hold right now, in milliseconds and bytes.\n\n"
+	 L"Small and steady is healthy. If it keeps climbing, audio is piling up and the driver "
+	 L"will trim older sound to return to live - you hear a skip instead of growing delay. "
+	 L"Compare with Pacing lead and Worst gaps."},
 	{"capacity",
-	 L"The bytes each ring can hold.\n\n"
-	 L"A limit, not a target - buffered stays well under it unless something stalled."},
+	 L"The maximum each driver buffer can hold.\n\n"
+	 L"This is a safety limit, not a target. Buffered normally stays well below it; reaching "
+	 L"it means something stalled, and the excess audio is trimmed."},
 	{"counters",
-	 L"Packets sent, records the driver dropped, underruns, failed sends and PCM bytes "
-	 L"trimmed.\n\n"
-	 L"A one-line summary to copy into a bug report; the rows above say the same "
-	 L"things in readable terms."},
+	 L"A compact summary: packets sent, dropped records, underruns, failed sends and trimmed "
+	 L"bytes.\n\n"
+	 L"Use Details or Copy for a bug report. The counts cover the window since the last Reset "
+	 L"counters. A count that is growing matters more than a large one: a number that stopped "
+	 L"means the fault stopped."},
 	{"last error",
-	 L"NTSTATUS of the last media failure, 0 while healthy.\n\n"
-	 L"A code here means a send or a ring failed - the stream either recovered by "
-	 L"itself or fell back to another codec."},
+	 L"The Windows error code from the most recent failed media operation, or none when "
+	 L"healthy.\n\n"
+	 L"A code means a send or buffer operation failed; the stream may have recovered or "
+	 L"fallen back to another codec. Include it in a bug report and check the driver log. It "
+	 L"stays until another failure replaces it; Reset counters clears counters, not this "
+	 L"record."},
 };
 
 const wchar_t* RowTipFor(const std::string& label)
@@ -810,9 +848,9 @@ HWND CreateChild(HWND parent, const wchar_t* className, const wchar_t* text, DWO
 	return child;
 }
 
-// What a field means and what changing it costs, shown when the pointer rests on its box. The
-// descriptions live here, next to the fields they describe, rather than in a help file that
-// would drift from the code; each line is short enough to read without moving the pointer.
+// What a field changes, how it affects the sound and how it works with the other settings, shown
+// when the pointer rests on its box. The descriptions live here, next to the fields they
+// describe, rather than in a help file that would drift from the code.
 struct FieldTip
 {
 	int id;
@@ -821,60 +859,76 @@ struct FieldTip
 
 constexpr FieldTip kFieldTips[] = {
 	{kSinkCombo,
-	 L"The sink this window controls.\n\n"
-	 L"Every field below is stored for this sink alone, so two headsets keep their own "
-	 L"codec and their own latency - a setting made here never silently reshapes the other."},
+	 L"The headset this window controls.\n\n"
+	 L"Settings are stored separately for each headset, so changing this one never alters "
+	 L"another. Switching also reloads every field below from that headset's saved settings. "
+	 L"Reset counters clears the selected headset's counters only."},
 	{kCodecCombo,
-	 L"Which codec the sink may use.\n\n"
-	 L"Automatic lets the driver take the best both ends support - LDAC, then aptX HD, "
-	 L"then aptX, then AAC, then SBC - so that is what to leave it on unless a headset "
-	 L"misbehaves. Picking one forces it, and one the sink does not advertise is refused. "
-	 L"The tabs below are only what you are looking at: a codec can be tuned there without "
-	 L"being the one the sink runs."},
+	 L"Which codec the Bluetooth stream may use.\n\n"
+	 L"Automatic is the normal choice: the driver uses the best codec both the headset and "
+	 L"this PC support, in the order LDAC, aptX HD, aptX, AAC, SBC. Force a codec only to "
+	 L"test one or when Automatic picks one that stutters; a codec the headset does not "
+	 L"advertise is refused instead of being replaced. The tabs below show settings and do "
+	 L"not change this choice."},
 	{kBitrateCombo,
-	 L"The bitrate the AAC encoder aims for, capped by what the media packet can carry.\n\n"
-	 L"Higher is better sound and uses more of the link; the default is the highest the "
-	 L"sink accepts, which is what you want unless the link is congested."},
+	 L"The AAC quality target, in kilobits per second.\n\n"
+	 L"Higher gives cleaner sound but uses more Bluetooth bandwidth. The headset's maximum "
+	 L"and the size of one media packet cap it, so the stream may run below this number. "
+	 L"Leave it on the default for the best the link can carry; lower it only if "
+	 L"high-quality AAC stutters. It has no effect unless AAC is the codec in use."},
 	{kBitpoolCombo,
-	 L"SBC's main quality control - bits per frame, clamped to the sink's range.\n\n"
-	 L"A higher bitpool is better sound in larger packets; the default takes the sink's "
-	 L"own choice, capped at its maximum."},
+	 L"SBC's main quality control: how many bits it uses per frame.\n\n"
+	 L"Higher usually means better sound and larger packets. The headset sets a minimum and "
+	 L"maximum, so the value is clamped to its range. The default takes the headset's own "
+	 L"preference; if you raise it, watch for stutter or growing counters, because the extra "
+	 L"bits can crowd the link. Only SBC uses it."},
 	{kBlocksCombo,
-	 L"Samples per SBC frame, in blocks of subband samples.\n\n"
-	 L"More blocks means longer frames - fewer packets a second, but each packet takes "
-	 L"longer to encode, which can add a little delay."},
+	 L"How many audio blocks make up one SBC frame.\n\n"
+	 L"More blocks make a longer frame: fewer packets per second, but more audio in each and "
+	 L"a little more delay. 16 is the usual choice; 4 or 8 can shorten the frame and reduce "
+	 L"delay, but may reduce quality or compatibility. It works with Frames per packet - "
+	 L"together they decide how much audio one Bluetooth packet carries."},
 	{kSubbandsCombo,
-	 L"Frequency resolution of an SBC frame.\n\n"
-	 L"8 Subbands split the band finer than 4 at the same bitpool, for a little more "
-	 L"work per frame and usually cleaner treble."},
+	 L"How finely SBC divides the audio band.\n\n"
+	 L"8 subbands separate high and low sounds more precisely than 4 and are the default, "
+	 L"usually giving cleaner treble. 4 can be slightly easier to encode but sounds duller. "
+	 L"The choice also affects the bitpool range SBC can use, and the headset must support "
+	 L"it."},
 	{kAllocationCombo,
-	 L"How SBC hands out bits across the band.\n\n"
-	 L"Loudness follows the ear's sensitivity and usually sounds fuller; "
-	 L"signal-to-noise spends the bits evenly."},
+	 L"How SBC decides where to spend its bits.\n\n"
+	 L"Loudness follows how the ear hears and usually gives the fullest sound; SNR "
+	 L"(signal-to-noise ratio) spreads the bits evenly and can make quiet details clearer. "
+	 L"Loudness is the default and the better choice for music. It only matters while SBC is "
+	 L"in use."},
 	{kLdacQualityCombo,
-	 L"The quality LDAC encodes at, which is a local setting - the sink is never told "
-	 L"which one is in use.\n\n"
-	 L"High is 990 kbps and the reason to use LDAC at all; standard and mobile fit a "
-	 L"crowded link at 660 and 330 kbps, and only matter if high stutters with the sink at a "
-	 L"distance."},
+	 L"How much data LDAC sends: High (990 kbps), Standard (660 kbps) or Mobile "
+	 L"(330 kbps).\n\n"
+	 L"High gives the best sound but needs a strong link. Use Standard or Mobile if audio "
+	 L"stutters or the headset is far away. This is a local setting - the headset is not told "
+	 L"which mode is in use - and it applies the next time an LDAC stream starts."},
 	{kPacingLeadCombo,
-	 L"How far ahead of the media clock the stream is sent - the audio queued in the "
-	 L"sink. It has a floor of one packet. The session panel's latency line is this lead plus what "
-	 L"the rings hold.\n\n"
-	 L"The main latency dial. Shorter is snappier and has less margin, so the sound can "
-	 L"start stuttering: 60 ms suits most sinks, 20 ms needs one that buffers little - and is "
-	 L"served at the floor instead."},
+	 L"How far ahead of Windows' audio clock the driver sends sound. This is the main "
+	 L"latency control.\n\n"
+	 L"A longer lead gives the PC and Bluetooth more time to recover from delays, so audio is "
+	 L"more stable but reaches the headset later. A shorter lead feels snappier and raises the "
+	 L"risk of gaps; the driver never goes below one packet of the current codec. Start at "
+	 L"60 ms. Raise it if Underruns or Trimmed grows; lower it one step at a time if playback "
+	 L"stays clean. The Latency line is this lead plus Buffered."},
 	{kSbcFramesCombo,
-	 L"The most SBC frames one packet carries.\n\n"
-	 L"Fewer frames is a shorter packet and less delay, but more packets a second for "
-	 L"the link to carry - past what the link can take, that is where stutters come from. The "
-	 L"default fills the packet the MTU allows."},
+	 L"How many SBC frames one Bluetooth packet carries.\n\n"
+	 L"Automatic fills the packet, which is the most efficient. Fewer frames make the packet "
+	 L"shorter and reduce delay, but need more packets per second and can overload a weak "
+	 L"link. If you lower the pacing lead, fewer frames can help; if sound stutters, go back "
+	 L"to Automatic. Only SBC uses it."},
 	{kFormatCombo,
-	 L"The sample rate and channel count the endpoint offers Windows, limited to the rates "
-	 L"the selected codec can play.\n\n"
-	 L"Automatic offers every format this codec can play; pinning one makes Windows use "
-	 L"exactly it, because Windows plays the first format listed. A rate this codec cannot "
-	 L"play is not offered, and is shown as Automatic instead of being pinned."},
+	 L"The PCM format Windows may use for the selected codec: sample rate and channels.\n\n"
+	 L"Automatic offers every format the codec and headset support. Pinning one makes it the "
+	 L"only format offered, so Windows uses it; the Sound settings picker does not reach this "
+	 L"driver, which is why the choice lives here. Pinning also limits apps that open the "
+	 L"output in exclusive mode. It does not force the codec - use the Codec box for that. "
+	 L"Changing it briefly interrupts audio while Windows rebuilds the endpoint; a format "
+	 L"this codec cannot play "
+	 L"is refused."},
 };
 
 const wchar_t* TipFor(int id)
