@@ -642,8 +642,8 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 			return;
 		}
 		OA2DP_INFO(ctx, "AVDTP", "starting stream, the endpoint plays");
-		// The link may be in sniff from the paused stretch: ask for active mode first so START and
-		// the first packets do not wait for the next sniff slot.
+		// Usually already out, since the audio edges asked; a request in flight absorbs this one.
+		// This covers a start that no edge preceded, such as a resume within a run.
 		L2capRequestActiveMode(ctx);
 		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		if (ctx->Session.State() != Avdtp::SessionState::Starting)
@@ -703,10 +703,11 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				"applying the endpoint formats after a provider change failed 0x%08X", status);
 		}
 	}
-	// A pause that keeps the stream Streaming (the grace) leaves START unsent, so the wake on
-	// that path never runs for the resume that follows. Done before the session lock: the
-	// request touches no session state and must not lengthen the wait behind it.
-	if (InterlockedExchange(&ctx->PauseWakePending, 0) != 0)
+	// Every audio edge that makes sound likely sets this: a prepared stream, the run, the first
+	// audio, and a pause the grace keeps open - whose resume sends no START at all. Done before
+	// the session lock: the request touches no session state and must not lengthen the wait
+	// behind it.
+	if (InterlockedExchange(&ctx->LinkWakePending, 0) != 0)
 	{
 		L2capRequestActiveMode(ctx);
 	}

@@ -89,7 +89,9 @@ void SignalingStop(_In_ DEVICE_CONTEXT* ctx)
 	WdfTimerStop(ctx->PauseGraceTimer, TRUE);
 	InterlockedExchange(&ctx->PauseGrace, 0);
 	// The wake belongs to that stream: the next session asks for its own.
-	InterlockedExchange(&ctx->PauseWakePending, 0);
+	InterlockedExchange(&ctx->LinkWakePending, 0);
+	// The wake slot belongs to that stream too, even if its completion never came.
+	InterlockedExchange(&ctx->ActiveWakeInFlight, 0);
 	if (ctx->SignalingWorkItemThread != KeGetCurrentThread())
 	{
 		WdfWorkItemFlush(ctx->SignalingWorkItem);

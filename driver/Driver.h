@@ -306,10 +306,10 @@ struct DEVICE_CONTEXT
 	// sends silence), so playback that resumes within the grace needs no START round trip.
 	WDFTIMER PauseGraceTimer;
 	volatile LONG PauseGrace;
-	// Set by an endpoint pause. A resume inside the grace sends no START, so the wake on the
-	// START path never runs for it; the work item asks for active mode itself, outside the
-	// audio path where creating the request is not allowed.
-	volatile LONG PauseWakePending;
+	// Set by every edge that makes sound likely: a prepared stream, the run, the first audio, and
+	// a pause the grace keeps open. The work item asks for active mode itself, outside the audio
+	// path where creating the request is not allowed, and before it takes SessionLock.
+	volatile LONG LinkWakePending;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
 	BOOLEAN CodecSwitchRecover;
@@ -628,6 +628,9 @@ struct DEVICE_CONTEXT
 	// asked for. The link's mode is read on demand instead of cached, because the stack changes
 	// it on its own.
 	volatile LONG LinkWakeMs;
+	// Set while an active-mode request is out. One is enough to bring the link up, and a second
+	// would race it and overwrite the measurement above.
+	volatile LONG ActiveWakeInFlight;
 	// Timestamps those gaps are measured from and the send in flight: LastRenderTime is guarded by
 	// AudioLock, the rest by MediaLock. 0 means nothing has been measured for this run yet.
 	ULONGLONG LastRenderTime;
@@ -836,6 +839,11 @@ void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx);
 // Called when Windows runs the render stream; discovers if no stream is configured.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx);
+
+// Called when Windows prepares a render stream: the earliest sign that sound may follow, so the
+// link is woken before a run can be one sniff slot too late.
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void SignalingOnAudioImminent(_In_ DEVICE_CONTEXT* ctx);
 
 // audio/
 // Reports the sink link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.

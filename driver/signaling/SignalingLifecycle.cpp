@@ -181,12 +181,27 @@ void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx)
 	// first audio (SignalingOnAudioHeard); the edge still settles a session out of step with it.
 	InterlockedExchange(&ctx->EndpointStartAttempts, 0);
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
+	// The link may have dropped into sniff while nothing played; ask for active mode now, so the
+	// start that follows does not queue behind a sniff slot.
+	InterlockedExchange(&ctx->LinkWakePending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
 void SignalingOnAudioHeard(_In_ DEVICE_CONTEXT* ctx)
 {
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
+	// The first audio is the START's own trigger, so it asks for the wake too; one that is
+	// already out is not repeated.
+	InterlockedExchange(&ctx->LinkWakePending, 1);
+	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
+}
+
+void SignalingOnAudioImminent(_In_ DEVICE_CONTEXT* ctx)
+{
+	// A prepared stream is the earliest sign that sound may follow - Windows prepares one before
+	// it runs, and that run edge can be one sniff slot too late. Only the wake is asked for here;
+	// whether anything plays stays with the run and first-audio edges.
+	InterlockedExchange(&ctx->LinkWakePending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }
 
@@ -206,7 +221,7 @@ void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx)
 	// The stream may stay Streaming through the grace, and that resume sends no START: the
 	// work item wakes the link instead, so the first packets after the pause do not queue
 	// behind a sniff slot.
-	InterlockedExchange(&ctx->PauseWakePending, 1);
+	InterlockedExchange(&ctx->LinkWakePending, 1);
 	WdfTimerStart(ctx->PauseGraceTimer, WDF_REL_TIMEOUT_IN_MS(graceMs));
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);

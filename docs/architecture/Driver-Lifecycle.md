@@ -88,7 +88,8 @@ The ACX stream drives the AVDTP stream:
   The pacer sends silence meanwhile, so a pause shorter than the stored grace
   resumes without a START round trip; a longer grace buys more of those resumes at
   the cost of a silent stream staying up. The grace also asks the link for active
-  mode, so that resume does not queue behind a sniff slot.
+  mode, and so do a prepared stream, a run and the first audio, so a resume does
+  not queue behind a sniff slot.
 - Stream edges, media-channel opens and every session transition to `Open` or
   `Streaming` are applied as requests. SUSPEND exists only from `Streaming` and
   START only from `Open`, and the sink or a media failure can move the session on

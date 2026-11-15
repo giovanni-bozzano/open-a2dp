@@ -100,6 +100,9 @@ NTSTATUS OnStreamPrepareHardware(_In_ ACXSTREAM stream)
 	KeAcquireSpinLock(&ctx->AudioLock, &irql);
 	ctx->AudioStream = stream;
 	KeReleaseSpinLock(&ctx->AudioLock, irql);
+	// Prepared, so Windows may run it at any moment: the earliest point to ask the link to leave
+	// sniff. The signaling work item sends the request at PASSIVE_LEVEL.
+	SignalingOnAudioImminent(ctx);
 	return STATUS_SUCCESS;
 }
 

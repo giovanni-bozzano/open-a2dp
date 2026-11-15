@@ -66,6 +66,12 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 {
 	auto* op = static_cast<BRB_OP*>(context);
 	op->Status = params->IoStatus.Status;
+	if (op->IsActiveMode)
+	{
+		// Refused or not, the slot is free again: holding it would keep every later start from
+		// asking for the link.
+		InterlockedExchange(&op->Ctx->ActiveWakeInFlight, 0);
+	}
 	if (op->IsActiveMode && NT_SUCCESS(op->Status) && op->StartedAt != 0)
 	{
 		// How long the stack took to bring the link out of sniff: the status report prints it
@@ -271,16 +277,23 @@ NTSTATUS BrbOpRun(_In_ BRB_OP* op, _In_ ULONG timeoutMs, _In_ bool abortable)
 }
 } // namespace OpenA2dpDriver::L2cap
 
-// Asks the stack to bring the ACL out of sniff before a stream start: a link in sniff only
+// Asks the stack to bring the ACL out of sniff when sound is coming: a link in sniff only
 // carries packets in its sniff slots, so the AVDTP START and the audio behind it wait for the
 // next one. Fire and forget - nothing a start depends on comes back, and a stack that refuses
 // the request still sends everything that follows.
 void L2capRequestActiveMode(_In_ DEVICE_CONTEXT* ctx)
 {
 	using namespace OpenA2dpDriver::L2cap;
+	if (InterlockedCompareExchange(&ctx->ActiveWakeInFlight, 1, 0) != 0)
+	{
+		// The request already out is what brings the link up; a second one would race it and
+		// overwrite the wake the status report shows.
+		return;
+	}
 	BRB_OP* op = BrbOpCreate(ctx, BRB_ACL_ENTER_ACTIVE_MODE);
 	if (op == nullptr)
 	{
+		InterlockedExchange(&ctx->ActiveWakeInFlight, 0);
 		return;
 	}
 	op->Brb.Active.BtAddress = ctx->RemoteAddress;
@@ -289,6 +302,8 @@ void L2capRequestActiveMode(_In_ DEVICE_CONTEXT* ctx)
 	BrbOpRelease(op);
 	if (!NT_SUCCESS(status))
 	{
+		// A request that never left gets no completion, so it releases its own slot here.
+		InterlockedExchange(&ctx->ActiveWakeInFlight, 0);
 		OA2DP_INFO(ctx, "L2CAP", "the link keeps its power state; active mode was refused 0x%08X", status);
 	}
 }

@@ -48,13 +48,17 @@ kernel and service paths.
 A paused stream leaves the ACL to the stack's power management, which can put the
 link in sniff. A start on such a link waits for the next sniff slot before the
 AVDTP START and the first packets leave, which is heard as a delay before the
-first sound. The driver asks the stack for active mode immediately before that
-START. The request is fire and forget, and a refusal only means the link keeps
-its power state.
+first sound. The driver asks the stack for active mode as soon as anything says
+sound may follow: a prepared stream, the run edge, the first audio. The work
+item sends that before it takes the session lock, so the ask is not queued
+behind whatever the session was doing. The request is fire and forget, a refusal
+only means the link keeps its power state, and only one is out at a time: a
+second adds nothing to a link that is already waking.
 
 A pause asks for the same thing, when the grace keeps the stream open: that
 resume sends no START, so the wake on the START path would never run and the
-first packets after the pause would still queue behind a sniff slot.
+first packets after the pause would still queue behind a sniff slot. A start
+with no edge before it - a resume within a run - still asks right before START.
 
 The request cannot skip the slot it waits for. On a link that already dropped
 into sniff the wake completes when the controller leaves it, which is the moment
