@@ -43,6 +43,15 @@ kernel and service paths.
 - A trim drops back to the lead, not to the limit, so the one gap buys an interval
   of headroom.
 
+### The link is awake before a stream starts
+
+A paused stream leaves the ACL to the stack's power management, which can put the
+link in sniff. A start on such a link waits for the next sniff slot before the
+AVDTP START and the first packets leave, which is heard as a delay before the
+first sound. The driver asks the stack for active mode immediately before that
+START. The request is fire and forget, and a refusal only means the link keeps
+its power state.
+
 ### The lead is a setting with a floor
 
 `PrerollMs` is stored per sink and can be 20 to 200 ms. `MediaStart` resolves it

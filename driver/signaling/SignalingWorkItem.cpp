@@ -642,6 +642,9 @@ static void ContinueEndpointStream(DEVICE_CONTEXT* ctx)
 			return;
 		}
 		OA2DP_INFO(ctx, "AVDTP", "starting stream, the endpoint plays");
+		// The link may be in sniff from the paused stretch: ask for active mode first so START and
+		// the first packets do not wait for the next sniff slot.
+		L2capRequestActiveMode(ctx);
 		Transmit(ctx, ctx->Session.Start(ctx->WriteBuffer, sizeof(ctx->WriteBuffer)));
 		if (ctx->Session.State() != Avdtp::SessionState::Starting)
 		{

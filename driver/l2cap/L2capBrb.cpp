@@ -260,3 +260,25 @@ NTSTATUS BrbOpRun(_In_ BRB_OP* op, _In_ ULONG timeoutMs, _In_ bool abortable)
 	return wait == STATUS_TIMEOUT ? STATUS_IO_TIMEOUT : STATUS_CANCELLED;
 }
 } // namespace OpenA2dpDriver::L2cap
+
+// Asks the stack to bring the ACL out of sniff before a stream start: a link in sniff only
+// carries packets in its sniff slots, so the AVDTP START and the audio behind it wait for the
+// next one. Fire and forget - nothing a start depends on comes back, and a stack that refuses
+// the request still sends everything that follows.
+void L2capRequestActiveMode(_In_ DEVICE_CONTEXT* ctx)
+{
+	using namespace OpenA2dpDriver::L2cap;
+	BRB_OP* op = BrbOpCreate(ctx, BRB_ACL_ENTER_ACTIVE_MODE);
+	if (op == nullptr)
+	{
+		return;
+	}
+	op->Brb.Active.BtAddress = ctx->RemoteAddress;
+	op->State = 2; // nobody waits for this one
+	const NTSTATUS status = BrbOpStart(op);
+	BrbOpRelease(op);
+	if (!NT_SUCCESS(status))
+	{
+		OA2DP_INFO(ctx, "L2CAP", "the link keeps its power state; active mode was refused 0x%08X", status);
+	}
+}

@@ -713,6 +713,11 @@ void L2capUnregisterServer(_In_ DEVICE_CONTEXT* ctx);
 _IRQL_requires_(PASSIVE_LEVEL)
 void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx);
 
+// Asks the stack to bring the link out of sniff, so a stream start does not wait for the next
+// sniff slot. Fire and forget: a refusal only leaves the link in its power state.
+_IRQL_requires_(PASSIVE_LEVEL)
+void L2capRequestActiveMode(_In_ DEVICE_CONTEXT* ctx);
+
 // Copies the data into the slot and submits it without waiting. On success the result
 // arrives in slot->Status once Idle is signaled, followed by CompletionWorkItem.
 // STATUS_DEVICE_BUSY when the slot is not idle; on any failure the slot stays idle.

@@ -35,6 +35,7 @@ struct BRB_OP
 		struct _BRB_L2CA_CLOSE_CHANNEL Close;
 		struct _BRB_L2CA_REGISTER_SERVER Register;
 		struct _BRB_L2CA_UNREGISTER_SERVER Unregister;
+		struct _BRB_ACL_ENTER_ACTIVE_MODE Active;
 	} Brb;
 };
 
