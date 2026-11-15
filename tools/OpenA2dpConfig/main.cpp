@@ -593,22 +593,22 @@ constexpr RowTip kRowTips[] = {
 	 L"Last error and the logs."},
 	{"endpoint",
 	 L"Whether Windows is sending audio to this endpoint. Every value:\n\n"
-	 L"Running - a player has the endpoint open and is clocking it, so the Bluetooth stream "
+	 L"RUNNING - a player has the endpoint open and is clocking it, so the Bluetooth stream "
 	 L"follows it.\n"
-	 L"Paused - nothing is playing, or the player paused. The stream is suspended after the "
+	 L"PAUSED - nothing is playing, or the player paused. The stream is suspended after the "
 	 L"pause grace, or kept running so a quick resume skips START.\n\n"
-	 L"Paused is normal when music is stopped, so check this before blaming the driver. A player "
-	 L"that plays nothing while this says Running is worth a look at AVDTP and Media."},
+	 L"PAUSED is normal when music is stopped, so check this before blaming the driver. A player "
+	 L"that plays nothing while this says RUNNING is worth a look at AVDTP and Media."},
 	{"link",
 	 L"The power state of the Bluetooth link to the headset, and how long the driver's last "
 	 L"request to wake it took. Every value:\n\n"
-	 L"Active - the link is fully on and packets can go at any time. Normal while audio runs.\n"
-	 L"Hold - the link is briefly parked; rare while audio runs.\n"
-	 L"Sniff - the link sleeps and listens only in short slots, which saves the headset's "
+	 L"ACTIVE - the link is fully on and packets can go at any time. Normal while audio runs.\n"
+	 L"HOLD - the link is briefly parked; rare while audio runs.\n"
+	 L"SNIFF - the link sleeps and listens only in short slots, which saves the headset's "
 	 L"battery and is normal while paused. A start on a sniff link waits for the next slot, "
 	 L"which is heard as a moment of silence before the first sound.\n"
-	 L"Park - the link is almost off and takes longer to wake.\n"
-	 L"Not read - the stack did not answer, usually because the headset is disconnected.\n\n"
+	 L"PARK - the link is almost off and takes longer to wake.\n"
+	 L"NOT READ - the stack did not answer, usually because the headset is disconnected.\n\n"
 	 L"The last wake is the request the driver makes just before it starts a stream. A few "
 	 L"milliseconds means the link was already awake; a long wake matches the delay you hear "
 	 L"at the start. Nothing is disabled: the Bluetooth stack puts the link back to sleep on its "
@@ -749,8 +749,8 @@ constexpr RowTip kRowTips[] = {
 	{"encoder",
 	 L"Whether the encoder service has registered the codecs that need it: AAC, aptX, aptX "
 	 L"HD and LDAC. Every value:\n\n"
-	 L"Registered - the service is running, so those codecs can be negotiated.\n"
-	 L"Not registered - it is stopped, crashed, or from another build, so those codecs cannot "
+	 L"REGISTERED - the service is running, so those codecs can be negotiated.\n"
+	 L"NOT REGISTERED - it is stopped, crashed, or from another build, so those codecs cannot "
 	 L"be used and the driver falls back to SBC, which usually sounds worse.\n\n"
 	 L"Check that the OpenA2dp service is running and from the same build as the driver. SBC "
 	 L"does not need the service."},
