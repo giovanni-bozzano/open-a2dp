@@ -46,6 +46,8 @@ EVT_WDF_FILE_CLEANUP OnFileCleanup;
 EVT_WDF_REQUEST_CANCEL OnWaitCancel;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP OnControlDeviceCleanup;
 EVT_WDF_OBJECT_CONTEXT_DESTROY OnControlDeviceDestroy;
+// Removes the object-manager link that makes the control device visible to the tools.
+void DeleteControlLink(_In_ DEVICE_CONTEXT* ctx);
 
 constexpr ULONG kRingHeaderBytes = static_cast<ULONG>(sizeof(OpenA2dp::RingHeader));
 constexpr ULONG kLayoutBytes =

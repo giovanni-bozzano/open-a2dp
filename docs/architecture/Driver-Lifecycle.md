@@ -137,7 +137,10 @@ state alone cannot say whether the sink is connected. The quiesce withdraws the
 link before publishing the interface removal, and the next start recreates it
 before publishing its arrival; a sink the start cannot reach loses it again when
 its open fails. The control device object and its `\Device` name stay put for
-the resume path.
+the resume path. Its link is created and removed with the object manager,
+because a control device can only take framework symbolic links before
+`WdfControlFinishInitializing`; the device has long passed that point when a
+sink reconnects.
 
 Each disconnect is tagged with the signaling generation that opened its channel,
 not the one current when the callback finally runs. The callback carries the

@@ -11,8 +11,13 @@ void OnControlDeviceCleanup(WDFOBJECT object)
 	}
 	// The framework is deleting the control device (driver unload or device removal):
 	// forget the handle so ServiceStop does not delete it again.
-	InterlockedCompareExchangePointer(
-		reinterpret_cast<PVOID volatile*>(&ctx->ControlDevice), nullptr, object);
+	if (InterlockedCompareExchangePointer(
+			reinterpret_cast<PVOID volatile*>(&ctx->ControlDevice), nullptr, object) == object)
+	{
+		// The link is an object-manager name, not a framework-owned one: remove it with the
+		// device. If a newer control device already owns the handle, leave its link alone.
+		DeleteControlLink(ctx);
+	}
 	InterlockedExchange(&ctx->ServiceActive, 0);
 	// Release a parked WAIT_EVENT before the queue disappears.
 	LatchEvents(ctx, Ioctl::kEventDeviceGone);

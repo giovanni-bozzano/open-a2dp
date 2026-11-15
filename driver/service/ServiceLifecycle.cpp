@@ -67,20 +67,39 @@ static NTSTATUS FormatControlLink(_In_ DEVICE_CONTEXT* ctx,
 		linkName, capacity, L"\\DosDevices\\OpenA2dpCtl-%012I64X", ctx->RemoteAddress);
 }
 
-static NTSTATUS CreateControlLink(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
+static NTSTATUS FormatControlDeviceName(_In_ DEVICE_CONTEXT* ctx,
+	_Out_writes_(capacity) WCHAR* deviceName, size_t capacity)
+{
+	return RtlStringCchPrintfW(
+		deviceName, capacity, L"\\Device\\OpenA2dpCtl%012I64X", ctx->RemoteAddress);
+}
+
+// The control device outlives a D0 exit, so its link has to be recreated after the device has
+// already been initialized. WdfDeviceCreateSymbolicLink is only valid before
+// WdfControlFinishInitializing, so the link is created and removed with the object manager.
+static NTSTATUS CreateControlLink(_In_ DEVICE_CONTEXT* ctx)
 {
 	WCHAR linkName[48];
+	WCHAR deviceName[48];
 	UNICODE_STRING link;
+	UNICODE_STRING target;
 	NTSTATUS status = FormatControlLink(ctx, linkName, ARRAYSIZE(linkName));
 	if (NT_SUCCESS(status))
 	{
+		status = FormatControlDeviceName(ctx, deviceName, ARRAYSIZE(deviceName));
+	}
+	if (NT_SUCCESS(status))
+	{
 		RtlInitUnicodeString(&link, linkName);
-		status = WdfDeviceCreateSymbolicLink(control, &link);
+		RtlInitUnicodeString(&target, deviceName);
+		status = IoCreateSymbolicLink(&link, &target);
 	}
 	return status;
 }
 
-static void DeleteControlLink(_In_ DEVICE_CONTEXT* ctx)
+namespace OpenA2dpDriver::Service
+{
+void DeleteControlLink(_In_ DEVICE_CONTEXT* ctx)
 {
 	WCHAR linkName[48];
 	UNICODE_STRING link;
@@ -96,6 +115,7 @@ static void DeleteControlLink(_In_ DEVICE_CONTEXT* ctx)
 		OA2DP_WARN(ctx, "Service", "control link removal failed 0x%08X", status);
 	}
 }
+} // namespace OpenA2dpDriver::Service
 
 // A start that follows a power transition has the device object from before the D0 exit: the
 // link was removed at the quiesce and the rundown it drained refuses every handler until it is
@@ -105,7 +125,7 @@ static bool ResumeControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
 {
 	// A collision means the previous removal had not completed; the link already names this
 	// control device, so it is usable.
-	const NTSTATUS status = CreateControlLink(ctx, control);
+	const NTSTATUS status = CreateControlLink(ctx);
 	if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_COLLISION)
 	{
 		OA2DP_ERROR(ctx, "Service", "control link recreate failed 0x%08X", status);
@@ -154,18 +174,9 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	// interfaces are not supported on control devices, so the CLI and the
 	// service enumerate the symbolic links (QueryDosDevice) instead; the PnP
 	// device's kControlArrivalInterface tells the service when to look.
-	WCHAR address[16];
-	NTSTATUS status = RtlStringCchPrintfW(address, ARRAYSIZE(address), L"%012I64X", ctx->RemoteAddress);
-	if (!NT_SUCCESS(status))
-	{
-		OA2DP_ERROR(ctx, "Service", "address format failed 0x%08X", status);
-		WdfDeviceInitFree(init);
-		return;
-	}
-
 	WCHAR deviceName[48];
 	UNICODE_STRING deviceNameString;
-	status = RtlStringCchPrintfW(deviceName, ARRAYSIZE(deviceName), L"\\Device\\OpenA2dpCtl%ws", address);
+	NTSTATUS status = FormatControlDeviceName(ctx, deviceName, ARRAYSIZE(deviceName));
 	if (NT_SUCCESS(status))
 	{
 		RtlInitUnicodeString(&deviceNameString, deviceName);
@@ -225,9 +236,7 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	status = FormatControlLink(ctx, linkName, ARRAYSIZE(linkName));
 	if (NT_SUCCESS(status))
 	{
-		UNICODE_STRING linkNameString;
-		RtlInitUnicodeString(&linkNameString, linkName);
-		status = WdfDeviceCreateSymbolicLink(control, &linkNameString);
+		status = CreateControlLink(ctx);
 	}
 	if (!NT_SUCCESS(status))
 	{
@@ -271,7 +280,7 @@ void ServicePublishLink(_In_ DEVICE_CONTEXT* ctx, bool present)
 	}
 	// A link that is already there names this control device: the sink can come back before
 	// the previous removal reached the tools.
-	const NTSTATUS status = CreateControlLink(ctx, control);
+	const NTSTATUS status = CreateControlLink(ctx);
 	if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_COLLISION)
 	{
 		OA2DP_ERROR(ctx, "Service", "control link create failed 0x%08X", status);
