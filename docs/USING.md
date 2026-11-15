@@ -90,6 +90,7 @@ These apply to `codec`:
 | `--allocation <mode>` | `loudness`, `snr`, `default` | SBC bit allocation |
 | `--frames <n>` | 0, or 1..15 | SBC frames per packet; 0 fills the packet |
 | `--preroll <ms>` | 0, or 20..200 | Pacing lead; 0 is the 60 ms default |
+| `--pause-grace <ms>` | 0, or 1000..60000 | How long a paused stream is kept before it suspends; 0 is the 3 s default |
 | `--ldac-quality <q>` | `high`, `standard`, `mobile` | 990, 660 or 330 kbps; local to the encoder |
 
 A value of 0, or `default`, restores the driver default. The sink's advertised
@@ -122,6 +123,7 @@ by hand and shares the same layout.
 |---|---|---|---|---|
 | Codec | `[general] codec` | `codec ...` | `auto`, `sbc`, `aac`, `aptx`, `aptxhd`, `ldac` | `auto` |
 | Pacing lead | `[general] prerollMs` | `--preroll` | 0, or 20..200 ms | 60 ms |
+| Pause grace | `[general] pauseGraceMs` | `--pause-grace` | 0, or 1000..60000 ms | 3 s |
 | SBC bitpool | `[sbc] bitpool` | `--bitpool` | 0, or 2..250 | sink-selected, capped at 53 |
 | SBC block length | `[sbc] blocks` | `--blocks` | 4, 8, 12, 16 | 16 |
 | SBC subbands | `[sbc] subbands` | `--subbands` | 4, 8 | 8 |

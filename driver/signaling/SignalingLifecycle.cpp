@@ -195,8 +195,15 @@ void SignalingOnAudioPause(_In_ DEVICE_CONTEXT* ctx)
 	// The endpoint is the reason the stream exists, so a pause suspends it - after a grace, so a
 	// short pause resumes without a START round trip. The work item sends SUSPEND when the timer
 	// fires, which is legal from Streaming alone.
+	// The sink's stored grace decides how long a resume may skip START. The preference lock is a
+	// leaf held only for the copy, so this is safe on the audio path's IRQL.
+	uint32_t graceMs;
+	KIRQL irql;
+	KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+	graceMs = Ioctl::EffectivePauseGraceMs(ctx->Preference.pauseGraceMs);
+	KeReleaseSpinLock(&ctx->PreferenceLock, irql);
 	InterlockedExchange(&ctx->PauseGrace, 1);
-	WdfTimerStart(ctx->PauseGraceTimer, WDF_REL_TIMEOUT_IN_MS(PauseGraceMs));
+	WdfTimerStart(ctx->PauseGraceTimer, WDF_REL_TIMEOUT_IN_MS(graceMs));
 	InterlockedExchange(&ctx->EndpointStreamPending, 1);
 	WdfWorkItemEnqueue(ctx->SignalingWorkItem);
 }

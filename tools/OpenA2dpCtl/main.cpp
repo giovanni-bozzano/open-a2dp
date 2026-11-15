@@ -37,7 +37,7 @@ Usage:
   OpenA2dpCtl list
   OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd|ldac>] [--bitrate <bps>]
                      [--bitpool <n>] [--blocks <4|8|12|16>] [--subbands <4|8>]
-                     [--allocation <loudness|snr>] [--preroll <ms>]
+                     [--allocation <loudness|snr>] [--preroll <ms>] [--pause-grace <ms>]
                      [--frames <n>] [--ldac-quality <high|standard|mobile>]
                      [--device <mac|index>]
   OpenA2dpCtl format [<codec> [<auto|16000|32000|44100|48000|88200|96000> [<1|2>]]] [--device <mac|index>]
@@ -59,7 +59,9 @@ Commands:
             --subbands and --allocation pin the SBC frame shape; --preroll shortens
             the lead the stream is sent ahead of the clock and --frames caps how
             many SBC frames one packet carries, which lowers latency while the sink
-            still buffers reliably; --ldac-quality picks LDAC's 990, 660 or
+            still buffers reliably; --pause-grace sets how long a paused stream
+            is kept before it is suspended, so a short break resumes without a
+            START; --ldac-quality picks LDAC's 990, 660 or
             330 kbps mode. 0 restores the driver default
             (--allocation default), and the sink's advertised limits still apply.
             Without a codec name the stored selection is kept and only the
@@ -109,6 +111,10 @@ Options:
                     Every codec is sent this far ahead of the media clock; a
                     shorter lead is less latency but less margin against the
                     sink running dry.
+  --pause-grace <ms>
+                    How long a paused stream is kept before it is suspended, 0
+                    (default, 3000 ms) or 1000..60000. A pause shorter than this
+                    resumes at once; a longer one pays for a START.
   --frames <n>      SBC frames per media packet for `codec`, 0 (fill the
                     packet) or 1..15. Fewer frames is a shorter packet, less
                     audio buffered per packet and more packets per second.
@@ -442,6 +448,8 @@ struct PreferenceOverrides {
 	uint32_t allocation = 0;
 	bool hasPreroll = false;
 	uint32_t preroll = 0;
+	bool hasPauseGrace = false;
+	uint32_t pauseGrace = 0;
 	bool hasFrames = false;
 	uint32_t frames = 0;
 	bool hasLdacQuality = false;
@@ -450,7 +458,7 @@ struct PreferenceOverrides {
 	bool ParameterChange() const
 	{
 		return hasBitrate || hasBitpool || hasBlocks || hasSubbands || hasAllocation || hasPreroll ||
-			   hasFrames || hasLdacQuality;
+			   hasFrames || hasLdacQuality || hasPauseGrace;
 	}
 
 };
@@ -584,6 +592,10 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	if (overrides.hasPreroll)
 	{
 		preference.prerollMs = overrides.preroll;
+	}
+	if (overrides.hasPauseGrace)
+	{
+		preference.pauseGraceMs = overrides.pauseGrace;
 	}
 	if (overrides.hasFrames)
 	{
@@ -1133,6 +1145,25 @@ int main(int argc, char** argv)
 			}
 			overrides.hasPreroll = true;
 			overrides.preroll = static_cast<uint32_t>(parsed);
+		}
+		else if (arg == "--pause-grace" && position + 1 < args.size())
+		{
+			const std::string& value = args[++position];
+			if (!IsDecimal(value))
+			{
+				std::fprintf(stderr, "--pause-grace takes 0 (default) or %u..%u ms\n",
+						Ioctl::kMinPauseGraceMs, Ioctl::kMaxPauseGraceMs);
+				return 2;
+			}
+			const unsigned long parsed = std::strtoul(value.c_str(), nullptr, 10);
+			if (parsed != 0 && (parsed < Ioctl::kMinPauseGraceMs || parsed > Ioctl::kMaxPauseGraceMs))
+			{
+				std::fprintf(stderr, "--pause-grace takes 0 (default) or %u..%u ms\n",
+						Ioctl::kMinPauseGraceMs, Ioctl::kMaxPauseGraceMs);
+				return 2;
+			}
+			overrides.hasPauseGrace = true;
+			overrides.pauseGrace = static_cast<uint32_t>(parsed);
 		}
 		else if (arg == "--frames" && position + 1 < args.size())
 		{

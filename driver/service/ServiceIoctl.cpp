@@ -440,7 +440,10 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			const bool ldacChanged = ctx->Preference.ldacQuality != in->ldacQuality;
 			// The pacing lead shapes every codec, so it always belongs to the stream.
 			const bool leadChanged = ctx->Preference.prerollMs != in->prerollMs;
-			parametersChanged = sbcChanged || aacChanged || ldacChanged || leadChanged;
+			// The grace shapes the next pause, not the stream that is running, so it is stored
+			// without a renegotiation.
+			const bool graceChanged = ctx->Preference.pauseGraceMs != in->pauseGraceMs;
+			parametersChanged = sbcChanged || aacChanged || ldacChanged || leadChanged || graceChanged;
 			// A setting that belongs to a codec the stream is not running changes nothing it
 			// sends: storing it is enough, and suspending a playing stream to apply it would
 			// be a restart the listener pays for and cannot hear. The codec in use is the one
@@ -464,9 +467,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			}
 			OA2DP_INFO(ctx, "Service",
 				"codec preference changed (flags 0x%08X, codec %u, SBC bitpool %u, blocks %u, subbands %u, "
-				"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u)",
+				"allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, "
+				"LDAC quality %u, pause grace %u ms)",
 				in->flags, static_cast<unsigned>(in->codec), in->sbcBitpool, in->sbcBlocks, in->sbcSubbands,
-				in->sbcAllocation, in->aacBitrate, in->prerollMs, in->sbcFramesPerPacket);
+				in->sbcAllocation, in->aacBitrate, in->prerollMs, in->sbcFramesPerPacket, in->ldacQuality,
+				in->pauseGraceMs);
 			// Stored before the renegotiation so the switch survives a reload; the IOCTL
 			// still succeeds in memory if the file cannot be written.
 			ConfigSaveSettings(ctx);

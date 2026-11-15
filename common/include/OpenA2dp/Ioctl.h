@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 11;
+constexpr uint32_t kAbiVersion = 12;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -52,6 +52,17 @@ constexpr uint32_t kMaxPrerollMs = 200;
 constexpr uint32_t EffectivePrerollMs(uint32_t preferred) noexcept
 {
 	return preferred == 0 ? kPrerollMs : preferred;
+}
+
+// How long a paused endpoint keeps its stream before the driver suspends it. A pause shorter
+// than this (a seek, a notification that ends) resumes without a START round trip; a longer one
+// suspends, and the next play pays for START. Stored per sink; 0 means this default.
+constexpr uint32_t kPauseGraceMs = 3000;
+constexpr uint32_t kMinPauseGraceMs = 1000;
+constexpr uint32_t kMaxPauseGraceMs = 60000;
+constexpr uint32_t EffectivePauseGraceMs(uint32_t preferred) noexcept
+{
+	return preferred == 0 ? kPauseGraceMs : preferred;
 }
 
 // Clock span the encoder service covers with one record (aptX, aptX HD); AAC writes one record
@@ -386,6 +397,10 @@ struct Preference {
 	// LDAC encode quality: 0 = high (990 kbps), 1 = standard, 2 = mobile. The mode is not in
 	// the A2DP IE, so both ends stay in step without negotiating it.
 	uint32_t ldacQuality;
+	// How long a paused endpoint keeps its stream before it is suspended, in milliseconds: 0 is
+	// kPauseGraceMs, otherwise kMinPauseGraceMs..kMaxPauseGraceMs. A longer grace turns a short
+	// break into a resume of the running stream instead of a START.
+	uint32_t pauseGraceMs;
 };
 
 // The PCM format the render endpoint is pinned to, one entry per codec and indexed by
@@ -485,6 +500,11 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	{
 		return false;
 	}
+	if (preference.pauseGraceMs != 0 &&
+		(preference.pauseGraceMs < kMinPauseGraceMs || preference.pauseGraceMs > kMaxPauseGraceMs))
+	{
+		return false;
+	}
 	if ((preference.flags & kPreferenceForceCodec) == 0)
 	{
 		return true;
@@ -494,7 +514,7 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 		   preference.codec == kCodecLdac;
 }
 
-static_assert(sizeof(Preference) == 44, "Preference layout is part of the driver/CLI ABI");
+static_assert(sizeof(Preference) == 48, "Preference layout is part of the driver/CLI ABI");
 
 static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is part of the ABI");
 static_assert(sizeof(WaitEventOut) == 40, "WaitEventOut layout is part of the ABI");

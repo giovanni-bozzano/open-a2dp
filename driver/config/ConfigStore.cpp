@@ -236,11 +236,11 @@ void LogSettings(_In_ DEVICE_CONTEXT* ctx, const char* action, const wchar_t* pa
 	OA2DP_INFO(ctx, "Config",
 			   "settings %s %ws: codec preference %s (SBC bitpool %u, blocks %u, subbands %u, "
 			   "allocation 0x%02X, AAC bitrate %u, preroll %u ms, SBC frames per packet %u, "
-			   "LDAC quality %u)",
+			   "LDAC quality %u, pause grace %u ms)",
 			   action, path, CodecValueName(preference.codec), preference.sbcBitpool,
 			   preference.sbcBlocks, preference.sbcSubbands, preference.sbcAllocation,
 			   preference.aacBitrate, preference.prerollMs, preference.sbcFramesPerPacket,
-			   preference.ldacQuality);
+			   preference.ldacQuality, preference.pauseGraceMs);
 }
 } // namespace
 

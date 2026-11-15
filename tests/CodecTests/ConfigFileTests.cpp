@@ -74,6 +74,7 @@ TEST(ConfigFile_RoundTripsEverySetting)
 	written.preference.flags = Ioctl::kPreferenceForceCodec;
 	written.preference.codec = Ioctl::kCodecLdac;
 	written.preference.prerollMs = 30;
+	written.preference.pauseGraceMs = 4000;
 	written.preference.sbcBitpool = 35;
 	written.preference.sbcBlocks = 8;
 	written.preference.sbcSubbands = 4;

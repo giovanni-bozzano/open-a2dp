@@ -134,7 +134,7 @@ TEST(StatusReport_VerboseListsEveryField)
 	for (const char* const field : {"status.avdtpState", "status.objectType", "status.pcmBufferedBytes",
 									"status.frameCapacity", "status.underruns", "status.negotiatedCodec",
 									"status.preferenceFlags", "status.sinkCodecs", "preference.sbcBlocks",
-									"preference.prerollMs", "status.pacingLeadMs",
+									"preference.prerollMs", "preference.pauseGraceMs", "status.pacingLeadMs",
 									"status.worstSendTransportMs", "status.worstSendResumeMs",
 									"status.linkMode", "status.lastWakeMs",
 									"version.maxFramePayload"})
@@ -210,6 +210,16 @@ TEST(StatusReport_ShowsARaisedLead)
 	const std::string asStored = Report(false, status, preference);
 	CHECK(Contains(asStored, "60 ms ahead of the media clock\n"));
 	CHECK(!Contains(asStored, "raised from"));
+}
+
+// The pause grace decides whether a resume costs a START, so a stored value is reported; the
+// default is not restated, the same as every other stored-only setting.
+TEST(StatusReport_ShowsTheStoredPauseGrace)
+{
+	Ioctl::Preference preference = StreamingPreference();
+	CHECK(!Contains(Report(false, StreamingStatus(), preference), "pause grace"));
+	preference.pauseGraceMs = 10000;
+	CHECK(Contains(Report(false, StreamingStatus(), preference), "pause grace     10000 ms (stored)"));
 }
 
 TEST(StatusReport_ShowsWhatTheLatencyCost)

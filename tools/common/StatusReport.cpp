@@ -165,6 +165,11 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	{
 		AppendLine(text, "pacing lead", Format("%u ms (stored)", preference.prerollMs));
 	}
+	// How long a paused stream is kept: the setting that decides whether a resume costs a START.
+	if (preference.pauseGraceMs != 0)
+	{
+		AppendLine(text, "pause grace", Format("%u ms (stored)", preference.pauseGraceMs));
+	}
 	if (preference.sbcFramesPerPacket != 0)
 	{
 		AppendLine(text, "SBC frames", Format("%u per packet (stored)", preference.sbcFramesPerPacket));
@@ -256,6 +261,7 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "preference.aacBitrate", preference.aacBitrate);
 	AppendField(text, "preference.sbcBitpool", preference.sbcBitpool);
 	AppendField(text, "preference.prerollMs", preference.prerollMs);
+	AppendField(text, "preference.pauseGraceMs", preference.pauseGraceMs);
 	AppendField(text, "preference.sbcFramesPerPacket", preference.sbcFramesPerPacket);
 	AppendField(text, "preference.sbcBlocks", preference.sbcBlocks);
 	AppendField(text, "preference.sbcSubbands", preference.sbcSubbands);

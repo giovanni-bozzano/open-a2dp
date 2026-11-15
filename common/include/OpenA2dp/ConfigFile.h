@@ -36,7 +36,7 @@ constexpr bool SamePreference(const Ioctl::Preference& first, const Ioctl::Prefe
 		   first.sbcBlocks == second.sbcBlocks && first.sbcSubbands == second.sbcSubbands &&
 		   first.sbcAllocation == second.sbcAllocation && first.prerollMs == second.prerollMs &&
 		   first.sbcFramesPerPacket == second.sbcFramesPerPacket &&
-		   first.ldacQuality == second.ldacQuality;
+		   first.ldacQuality == second.ldacQuality && first.pauseGraceMs == second.pauseGraceMs;
 }
 
 constexpr bool SameEndpointFormat(const Ioctl::EndpointFormat& first,
@@ -279,6 +279,10 @@ inline bool ApplyValue(const char* section, size_t sectionLength, const char* ke
 		{
 			return ReadNumber(value, valueLength, preference.prerollMs);
 		}
+		if (KeyIs(key, keyLength, "pauseGraceMs"))
+		{
+			return ReadNumber(value, valueLength, preference.pauseGraceMs);
+		}
 		return true;
 	}
 
@@ -379,6 +383,13 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 	{
 		writer.String("# How far ahead of the media clock the stream is sent, in milliseconds.\r\nprerollMs = ");
 		writer.Number(preference.prerollMs);
+		writer.String("\r\n");
+	}
+	if (preference.pauseGraceMs != 0)
+	{
+		writer.String("# How long a paused stream is kept before it is suspended, in milliseconds.\r\n"
+					  "pauseGraceMs = ");
+		writer.Number(preference.pauseGraceMs);
 		writer.String("\r\n");
 	}
 	Detail::CloseSection(writer, start);

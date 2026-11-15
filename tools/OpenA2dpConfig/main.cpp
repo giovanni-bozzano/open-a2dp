@@ -80,6 +80,7 @@ enum ControlId : int {
 	kSubbandsCombo,
 	kAllocationCombo,
 	kPacingLeadCombo,
+	kPauseGraceCombo,
 	kSbcFramesCombo,
 	kLdacQualityCombo,
 	kApplyButton,
@@ -145,6 +146,7 @@ constexpr WidestField kWidestFields[] = {
 	{kSubbandsCombo, L"Default (8)"},
 	{kAllocationCombo, L"Default (loudness)"},
 	{kPacingLeadCombo, L"Default (60 ms)"},
+	{kPauseGraceCombo, L"Default (3 s)"},
 	{kSbcFramesCombo, L"Default (fill the packet)"},
 	{kLdacQualityCombo, L"High (990 kbps)"},
 };
@@ -914,6 +916,13 @@ constexpr FieldTip kFieldTips[] = {
 	 L"risk of gaps; the driver never goes below one packet of the current codec. Start at "
 	 L"60 ms. Raise it if Underruns or Trimmed grows; lower it one step at a time if playback "
 	 L"stays clean. The Latency line is this lead plus Buffered."},
+	{kPauseGraceCombo,
+	 L"How long a paused stream is kept before it is suspended.\n\n"
+	 L"A pause shorter than this resumes at once, without an AVDTP START round trip; a longer "
+	 L"one suspends the stream and the next play pays for START. Raising it makes short breaks "
+	 L"- a seek, a notification, a video pausing - start instantly, at the cost of a silent "
+	 L"stream staying up while nothing plays. Lowering it saves the sink's battery. The default "
+	 L"is 3 seconds."},
 	{kSbcFramesCombo,
 	 L"How many SBC frames one Bluetooth packet carries.\n\n"
 	 L"Automatic fills the packet, which is the most efficient. Fewer frames make the packet "
@@ -1248,6 +1257,7 @@ void SelectPreferenceValues(HWND hwnd)
 	SelectComboValue(hwnd, kAllocationCombo, preference.sbcAllocation);
 	SelectComboValueOrAdd(hwnd, kBitpoolCombo, preference.sbcBitpool);
 	SelectComboValueOrAdd(hwnd, kPacingLeadCombo, preference.prerollMs);
+	SelectComboValueOrAdd(hwnd, kPauseGraceCombo, preference.pauseGraceMs);
 	SelectComboValueOrAdd(hwnd, kSbcFramesCombo, preference.sbcFramesPerPacket);
 	SelectComboValue(hwnd, kLdacQualityCombo, preference.ldacQuality);
 	// The sample rate row is the open codec's own entry: every codec keeps its own format.
@@ -1825,6 +1835,7 @@ void CreateControls(HWND hwnd)
 	// to the shown codec alone, so a box is only offered where it changes something.
 	CreateField(hwnd, L"Sample rate", kFormatCombo, kAllTabs, 0, 0, font);
 	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, kAllTabs, 1, 0, font);
+	CreateField(hwnd, L"Pause grace", kPauseGraceCombo, kAllTabs, 0, 4, font);
 	CreateField(hwnd, L"Bitpool", kBitpoolCombo, static_cast<int>(CodecTab::Sbc), 0, 1, font);
 	CreateField(hwnd, L"Blocks", kBlocksCombo, static_cast<int>(CodecTab::Sbc), 1, 1, font);
 	CreateField(hwnd, L"Subbands", kSubbandsCombo, static_cast<int>(CodecTab::Sbc), 0, 2, font);
@@ -1888,6 +1899,16 @@ void CreateControls(HWND hwnd)
 		AddComboItem(hwnd, kPacingLeadCombo, Format(L"%u ms", lead).c_str(), lead);
 	}
 
+	// How long a paused stream is kept before it is suspended. A longer grace turns a short
+	// break into a resume of the running stream instead of a START.
+	AddComboItem(hwnd, kPauseGraceCombo, L"Default (3 s)", 0);
+	AddComboItem(hwnd, kPauseGraceCombo, L"1 s", 1000);
+	AddComboItem(hwnd, kPauseGraceCombo, L"2 s", 2000);
+	AddComboItem(hwnd, kPauseGraceCombo, L"5 s", 5000);
+	AddComboItem(hwnd, kPauseGraceCombo, L"10 s", 10000);
+	AddComboItem(hwnd, kPauseGraceCombo, L"30 s", 30000);
+	AddComboItem(hwnd, kPauseGraceCombo, L"60 s", 60000);
+
 	// SBC frames per packet: fewer frames is a shorter packet with less audio in it.
 	AddComboItem(hwnd, kSbcFramesCombo, L"Default (fill the packet)", 0);
 	for (const uint32_t frames : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u})
@@ -1902,7 +1923,7 @@ void CreateControls(HWND hwnd)
 	AddComboItem(hwnd, kLdacQualityCombo, L"Mobile (330 kbps)", 2);
 
 	for (const int id : {kBitpoolCombo, kBlocksCombo, kSubbandsCombo, kAllocationCombo, kPacingLeadCombo,
-						 kSbcFramesCombo, kLdacQualityCombo})
+						 kPauseGraceCombo, kSbcFramesCombo, kLdacQualityCombo})
 	{
 		SendMessageW(GetDlgItem(hwnd, id), CB_SETCURSEL, 0, 0);
 	}
@@ -2429,7 +2450,7 @@ bool SamePreference(const Ioctl::Preference& first, const Ioctl::Preference& sec
 		   first.sbcBlocks == second.sbcBlocks && first.sbcSubbands == second.sbcSubbands &&
 		   first.sbcAllocation == second.sbcAllocation && first.prerollMs == second.prerollMs &&
 		   first.sbcFramesPerPacket == second.sbcFramesPerPacket &&
-		   first.ldacQuality == second.ldacQuality;
+		   first.ldacQuality == second.ldacQuality && first.pauseGraceMs == second.pauseGraceMs;
 }
 
 bool SameEndpointFormat(const Ioctl::EndpointFormat& first, const Ioctl::EndpointFormat& second)
@@ -2511,6 +2532,7 @@ void ApplySettings(HWND hwnd)
 	preference.sbcSubbands = ComboValue(hwnd, kSubbandsCombo);
 	preference.sbcAllocation = ComboValue(hwnd, kAllocationCombo);
 	preference.prerollMs = ComboValue(hwnd, kPacingLeadCombo);
+	preference.pauseGraceMs = ComboValue(hwnd, kPauseGraceCombo);
 	preference.sbcFramesPerPacket = ComboValue(hwnd, kSbcFramesCombo);
 	preference.ldacQuality = ComboValue(hwnd, kLdacQualityCombo);
 
@@ -2659,8 +2681,8 @@ void ApplyDarkControls(HWND hwnd)
 	}
 	EnumChildWindows(hwnd, UnthemeTextControl, 0);
 	for (const int id : {kSinkCombo, kCodecCombo, kFormatCombo, kBitrateCombo, kBitpoolCombo, kBlocksCombo,
-						 kSubbandsCombo, kAllocationCombo, kPacingLeadCombo, kSbcFramesCombo,
-						 kLdacQualityCombo})
+						 kSubbandsCombo, kAllocationCombo, kPacingLeadCombo, kPauseGraceCombo,
+						 kSbcFramesCombo, kLdacQualityCombo})
 	{
 		SetWindowTheme(GetDlgItem(hwnd, id), L"DarkMode_CFD", nullptr);
 	}

@@ -84,8 +84,10 @@ The ACX stream drives the AVDTP stream:
   the stream briefly around an endpoint rebuild, which must not count as
   playback.
 - A pause, or a release that is not followed by a resume, suspends the stream
-  once it has lasted `PauseGraceMs`. The pacer sends silence meanwhile, so a short
-  pause resumes without a START round trip.
+  once it has lasted the sink's pause grace (`kPauseGraceMs`, 3 s by default).
+  The pacer sends silence meanwhile, so a pause shorter than the stored grace
+  resumes without a START round trip; a longer grace buys more of those resumes at
+  the cost of a silent stream staying up.
 - Stream edges, media-channel opens and every session transition to `Open` or
   `Streaming` are applied as requests. SUSPEND exists only from `Streaming` and
   START only from `Open`, and the sink or a media failure can move the session on

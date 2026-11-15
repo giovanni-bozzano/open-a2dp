@@ -204,6 +204,20 @@ TEST(Ioctl_PreferenceValidation)
 	CHECK(Ioctl::ValidPreference(preference));
 	CHECK_EQ(Ioctl::EffectivePrerollMs(0), Ioctl::kPrerollMs);
 
+	// The pause grace is the other stored duration: 0 keeps the default and the range is what a
+	// sink is asked to hold a silent stream open for.
+	preference.pauseGraceMs = Ioctl::kMinPauseGraceMs;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.pauseGraceMs = Ioctl::kMaxPauseGraceMs;
+	CHECK(Ioctl::ValidPreference(preference));
+	preference.pauseGraceMs = Ioctl::kMinPauseGraceMs - 1;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.pauseGraceMs = Ioctl::kMaxPauseGraceMs + 1;
+	CHECK(!Ioctl::ValidPreference(preference));
+	preference.pauseGraceMs = 0;
+	CHECK(Ioctl::ValidPreference(preference));
+	CHECK_EQ(Ioctl::EffectivePauseGraceMs(0), Ioctl::kPauseGraceMs);
+
 	// The SBC packet cap: 0 fills the packet, otherwise the range SbcFrame accepts.
 	preference.sbcFramesPerPacket = Ioctl::kSbcMaxFramesPerPacket;
 	CHECK(Ioctl::ValidPreference(preference));
