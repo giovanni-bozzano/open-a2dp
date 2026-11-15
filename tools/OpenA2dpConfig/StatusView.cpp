@@ -46,6 +46,10 @@ struct ViewState
 	// than controls, so one tooltip covers the pane and this view switches it on and off.
 	int hotRow = -1;
 	bool tipShown = false;
+	// The text the active tip shows. It is built when the tip is shown, because its first
+	// lines are the value the row cannot fit and that value changes with every refresh; the
+	// tooltip keeps the pointer, so it has to outlive this function's caller.
+	std::wstring tipText;
 	HWND tooltip = nullptr;
 	HFONT normal = nullptr;
 	HFONT bold = nullptr;
@@ -475,16 +479,108 @@ void HideRowTip(HWND window, ViewState& state)
 	state.tipShown = false;
 }
 
-void ShowRowTip(HWND window, ViewState& state, int index)
+// True when the row's column has room for the whole string. DrawTextW cuts the rest off with
+// DT_END_ELLIPSIS, so the same measurement against the same font says whether it did.
+bool TextFits(HDC dc, HFONT font, const std::wstring& text, int width)
 {
-	if (state.tooltip == nullptr || index < 0 || index >= static_cast<int>(state.rows.size()) ||
-		state.rows[static_cast<size_t>(index)].tip.empty())
+	if (text.empty())
+	{
+		return true;
+	}
+	if (dc == nullptr || width <= 0)
+	{
+		return false;
+	}
+	const HGDIOBJ previous = font != nullptr ? SelectObject(dc, font) : nullptr;
+	SIZE size = {};
+	const bool measured =
+			GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &size) != FALSE;
+	if (previous != nullptr)
+	{
+		SelectObject(dc, previous);
+	}
+	return measured && size.cx <= width;
+}
+
+// What the row cannot show: a clipped label or value comes first, in full, then the explanation
+// the row already carried. Empty when the row shows everything and has nothing to explain, in
+// which case there is no tip to put up.
+std::wstring RowTipText(HWND window, const ViewState& state, int index)
+{
+	if (index < 0 || index >= static_cast<int>(state.rows.size()))
+	{
+		return {};
+	}
+	const StatusRow& row = state.rows[static_cast<size_t>(index)];
+	RECT client = {};
+	GetClientRect(window, &client);
+	const int divider = DividerX(state);
+	const int labelRoom = divider - kColumnGap - kTextInset;
+	const int valueRoom = client.right - kTextInset - divider - kColumnGap;
+	std::wstring text;
+	const HDC dc = GetDC(window);
+	if (dc != nullptr)
+	{
+		if (!row.label.empty() && !TextFits(dc, state.normal, row.label, labelRoom))
+		{
+			text = row.label;
+		}
+		if (!row.section && !row.value.empty() && !TextFits(dc, state.normal, row.value, valueRoom))
+		{
+			if (!text.empty())
+			{
+				text += L"\n";
+			}
+			text += row.value;
+		}
+		ReleaseDC(window, dc);
+	}
+	if (!row.tip.empty())
+	{
+		if (!text.empty())
+		{
+			text += L"\n\n";
+		}
+		text += row.tip;
+	}
+	return text;
+}
+
+// Rebuilds the text of a tip that is already up, without moving or flashing it. Its clipped
+// value is a live counter on some rows, so a shown tip is brought up to date with the refresh
+// rather than left quoting the value it was opened with.
+void UpdateRowTip(HWND window, ViewState& state, int index)
+{
+	if (state.tooltip == nullptr || !state.tipShown)
+	{
+		return;
+	}
+	state.tipText = RowTipText(window, state, index);
+	if (state.tipText.empty())
 	{
 		HideRowTip(window, state);
 		return;
 	}
 	TTTOOLINFOW tool = RowTool(window);
-	tool.lpszText = const_cast<LPWSTR>(state.rows[static_cast<size_t>(index)].tip.c_str());
+	tool.lpszText = state.tipText.data();
+	SendMessageW(state.tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+}
+
+void ShowRowTip(HWND window, ViewState& state, int index)
+{
+	if (state.tooltip == nullptr)
+	{
+		HideRowTip(window, state);
+		return;
+	}
+	state.tipText = RowTipText(window, state, index);
+	if (state.tipText.empty())
+	{
+		HideRowTip(window, state);
+		return;
+	}
+	TTTOOLINFOW tool = RowTool(window);
+	tool.lpszText = state.tipText.data();
 	SendMessageW(state.tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
 	// Under the row, not under the pointer: the tip stays put while the pointer moves across
 	// the row it explains.
@@ -553,7 +649,9 @@ LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
 			{
 				state->hotRow = hotRow;
 				HideRowTip(window, *state);
-				if (hotRow >= 0 && !state->rows[static_cast<size_t>(hotRow)].tip.empty())
+				// A clipped value needs the tip even when the row has no explanation, so the
+				// timer is started for anything the tip could carry rather than for a tip alone.
+				if (!RowTipText(window, *state, hotRow).empty())
 				{
 					SetTimer(window, kTipTimerId, kTipDelayMs, nullptr);
 				}
@@ -820,6 +918,12 @@ void UpdateStatusView(HWND parent, int id, const std::vector<StatusRow>& rows, c
 			state->rows = rows;
 			if (!sameContent)
 			{
+				// Keep a shown tip current: its first lines are the value the row cannot fit,
+				// and a counter in it changes on every refresh.
+				if (state->tipShown)
+				{
+					UpdateRowTip(window, *state, state->hotRow);
+				}
 				InvalidateRect(window, nullptr, FALSE);
 			}
 			return;

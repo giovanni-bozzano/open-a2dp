@@ -12,6 +12,9 @@
 // rows, or the whole pane when nothing is selected. A section band names the rows below it, so
 // it is never selected itself; Ctrl+A selects every value row.
 //
+// A value wider than its column is cut with an ellipsis as everywhere else, but the row's
+// tooltip shows the whole string before the explanation, so no reported field is unreadable.
+//
 // The text behind it is still Tools::BuildStatusReport - the caller builds the rows from
 // that report, so the panel and `OpenA2dpCtl status` cannot disagree.
 

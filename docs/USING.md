@@ -42,7 +42,8 @@ paired and reconnects through the new driver.
 | **Use Windows driver** / **Use OpenA2dp driver** | Move this sink between the two drivers. |
 
 The window refreshes itself, including sinks that start or stop playing while it
-is open. A field's tooltip explains the setting it changes.
+is open. A field's tooltip explains the setting it changes; a status row whose
+value does not fit its column shows the whole value in the row's tooltip.
 
 ## The command line
 
