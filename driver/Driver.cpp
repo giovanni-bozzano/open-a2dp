@@ -118,7 +118,18 @@ NTSTATUS OnSelfManagedIoSuspend(_In_ WDFDEVICE device)
 
 void OnDisconnectWorkItem(_In_ WDFWORKITEM workItem)
 {
-	L2capCloseSignalingChannel(GetDeviceContext(WdfWorkItemGetParentObject(workItem)));
+	DEVICE_CONTEXT* ctx = GetDeviceContext(WdfWorkItemGetParentObject(workItem));
+	L2capCloseSignalingChannel(ctx);
+	// A paired sink keeps its PnP node and control device when the Bluetooth link drops, so
+	// the link the tools enumerate is withdrawn here and put back when the channel reopens.
+	// SessionLock orders this against that publish, which the signaling work item does under
+	// the same lock: a reopened channel keeps its link rather than losing it to this close.
+	WdfWaitLockAcquire(ctx->SessionLock, nullptr);
+	if (ctx->SignalingState != ChannelOpen)
+	{
+		ServicePublishLink(ctx, false);
+	}
+	WdfWaitLockRelease(ctx->SessionLock);
 }
 
 void OnDeviceCleanup(_In_ WDFOBJECT object)

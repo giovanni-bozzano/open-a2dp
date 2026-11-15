@@ -69,6 +69,10 @@ void OnOpenComplete(
 		InterlockedExchange(&ctx->SignalingState, ChannelClosed);
 		OA2DP_ERROR(ctx, "L2CAP", "signaling channel open failed 0x%08X (L2CAP response %u/%u)",
 			status, ctx->OpenBrb.Response, ctx->OpenBrb.ResponseStatus);
+		// The start published the link before it knew whether the sink was there. Nothing is
+		// listening on an open that failed, so the sink is not connected: withdraw it, as a
+		// remote disconnect does.
+		WdfWorkItemEnqueue(ctx->DisconnectWorkItem);
 	}
 
 	KeSetEvent(&ctx->OpenIdle, IO_NO_INCREMENT, FALSE);

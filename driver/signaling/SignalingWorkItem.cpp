@@ -718,6 +718,9 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 
 	if (InterlockedExchange(&ctx->ConnectPending, 0) != 0 && ctx->SignalingState == ChannelOpen)
 	{
+		// The sink can come back after a disconnect left its node loaded: the tools find it
+		// through the link, so it goes back before the endpoint is plugged in.
+		ServicePublishLink(ctx, true);
 		AudioNotifyLinkState(ctx);
 		// A service that registers after this discovery renegotiates the stream as AAC
 		// (SignalingOnEncoderRegistered), so nothing waits for it here.

@@ -99,7 +99,8 @@ static void DeleteControlLink(_In_ DEVICE_CONTEXT* ctx)
 
 // A start that follows a power transition has the device object from before the D0 exit: the
 // link was removed at the quiesce and the rundown it drained refuses every handler until it is
-// reinitialized. The link goes back first, because the tools find a sink through it.
+// reinitialized. The link goes back first, because the tools find a sink through it; a sink
+// that is not there is withdrawn again when the signaling channel open fails.
 static bool ResumeControl(_In_ DEVICE_CONTEXT* ctx, _In_ WDFDEVICE control)
 {
 	// A collision means the previous removal had not completed; the link already names this
@@ -243,6 +244,43 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx)
 	OA2DP_INFO(ctx, "Service", "control device ready at %ws", linkName);
 }
 
+// The link the tools enumerate is the sink's A2DP connection, not its PnP node: a paired
+// sink keeps its node and this control device while the Bluetooth link is down, so the link
+// is published when the signaling channel opens and withdrawn when it closes. Publishing is
+// refused while the device is quiesced or stopping; withdrawing is always honoured.
+void ServicePublishLink(_In_ DEVICE_CONTEXT* ctx, bool present)
+{
+	WDFDEVICE control = static_cast<WDFDEVICE>(ctx->ControlDevice);
+	if (control == nullptr)
+	{
+		return;
+	}
+	if (!present)
+	{
+		// Before the interface removal: both tools reload on that notification and find sinks
+		// through the link, so a link removed afterwards would leave the sink listed.
+		DeleteControlLink(ctx);
+		WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
+		OA2DP_INFO(ctx, "Service", "control link withdrawn; the sink is no longer listed");
+		return;
+	}
+	if (InterlockedCompareExchange(&ctx->ServiceActive, 0, 0) == 0 ||
+		KeReadStateEvent(&ctx->StopEvent) != 0)
+	{
+		return;
+	}
+	// A link that is already there names this control device: the sink can come back before
+	// the previous removal reached the tools.
+	const NTSTATUS status = CreateControlLink(ctx, control);
+	if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_COLLISION)
+	{
+		OA2DP_ERROR(ctx, "Service", "control link create failed 0x%08X", status);
+		return;
+	}
+	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, TRUE);
+	OA2DP_INFO(ctx, "Service", "control link published; the sink is listed");
+}
+
 void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx)
 {
 	WDFDEVICE control = ctx->ControlDevice;
@@ -253,12 +291,9 @@ void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx)
 
 	// Stop serving but keep the object: the service's next arrival is the interface state
 	// below, and a name that is never released cannot collide with a recreate on the way back
-	// to D0. The link goes before the interface removal is published: both tools reload on
-	// that notification and find sinks through the link, so a link removed afterwards would
-	// leave a disconnected sink listed until the next notification.
+	// to D0. The link goes before the interface removal is published, in ServicePublishLink.
 	InterlockedExchange(&ctx->ServiceActive, 0);
-	DeleteControlLink(ctx);
-	WdfDeviceSetDeviceInterfaceState(ctx->Device, &Ioctl::kControlArrivalInterface, nullptr, FALSE);
+	ServicePublishLink(ctx, false);
 	LatchEvents(ctx, Ioctl::kEventDeviceGone);
 
 	// Wait for every IOCTL and cleanup handler that is already running (none of them

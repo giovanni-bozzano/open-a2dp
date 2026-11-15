@@ -14,7 +14,7 @@ NTSTATUS ServiceInitialize(_In_ DEVICE_CONTEXT* ctx);
 // Creates the per-device control device that exposes the interface, or re-enables the one a
 // power transition left in place. Called from self-managed IO start: the object and its \Device
 // name exist from the first start until the device is removed, while the link the tools
-// enumerate exists only while the device is started.
+// enumerate exists only while the sink's A2DP link is up.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ServiceStart(_In_ DEVICE_CONTEXT* ctx);
 
@@ -23,6 +23,12 @@ void ServiceStart(_In_ DEVICE_CONTEXT* ctx);
 // name from colliding with a copy of itself that is still being destroyed.
 _IRQL_requires_(PASSIVE_LEVEL)
 void ServiceQuiesce(_In_ DEVICE_CONTEXT* ctx);
+
+// Publishes or withdraws the link the tools enumerate. A paired sink keeps its PnP node while
+// the Bluetooth link is down, so the link follows the AVDTP signaling channel instead: it is
+// withdrawn when the channel closes or its open fails, and published when it opens.
+_IRQL_requires_(PASSIVE_LEVEL)
+void ServicePublishLink(_In_ DEVICE_CONTEXT* ctx, bool present);
 
 // Final teardown for device removal and unload: quiesces, then deletes the control device.
 _IRQL_requires_(PASSIVE_LEVEL)

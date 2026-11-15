@@ -128,12 +128,16 @@ and deleted only at removal or unload: a copy with open handles can outlive a
 power transition, and a name recreated too early loses the race for the rest of
 the boot.
 
-The symbolic link is not kept across that transition. The tools and the service
-find a sink through `\DosDevices\OpenA2dpCtl-<address>`, so the link is removed
-before the quiesce publishes the interface removal and recreated before the next
-start publishes its arrival. A disconnected or sleeping sink is therefore not
-listed, while the control device object and its `\Device` name stay put for the
-resume path.
+The symbolic link follows the sink's A2DP link, not the PnP node state. The tools
+and the service find a sink through `\DosDevices\OpenA2dpCtl-<address>`, so the
+link is published when the AVDTP signaling channel opens and withdrawn when a
+remote disconnect, or a failed open, leaves it closed. A paired sink keeps its
+node and control device while the Bluetooth link is down, which is why the node
+state alone cannot say whether the sink is connected. The quiesce withdraws the
+link before publishing the interface removal, and the next start recreates it
+before publishing its arrival; a sink the start cannot reach loses it again when
+its open fails. The control device object and its `\Device` name stay put for
+the resume path.
 
 Rundown and an FDO reference protect outstanding handlers and handles. Removal
 delivers a device-gone event to any parked service wait. `RingLock` serializes
