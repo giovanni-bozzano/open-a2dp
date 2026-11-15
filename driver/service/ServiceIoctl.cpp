@@ -220,8 +220,8 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 		}
 		*out = {};
 		out->abiVersion = Ioctl::kAbiVersion;
-		// Everything here comes from lock-free snapshots or short spin locks, so a
-		// busy session can never make the CLI wait.
+		// Everything here comes from lock-free snapshots or short spin locks, except the link
+		// state below: that one asks the stack, with a bound, because only the stack knows it.
 		out->avdtpState = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->AvdtpStateSnapshot, 0, 0));
 		out->negotiatedCodec = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->NegotiatedCodecSnapshot, 0, 0));
 		{
@@ -330,6 +330,11 @@ void HandleDeviceControl(DEVICE_CONTEXT* ctx, SERVICE_FILE_CONTEXT* file, WDFFIL
 			static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendTransportMs, 0, 0));
 		out->worstSendResumeMs =
 			static_cast<uint32_t>(InterlockedCompareExchange(&ctx->WorstSendResumeMs, 0, 0));
+		// A link in sniff is why a start can be slow with nothing else to show for it, and the
+		// wake is what the driver's own request to leave it cost. Both are read here, at the
+		// moment the report is built, because the stack changes them on its own.
+		out->linkMode = L2capQueryLinkMode(ctx);
+		out->lastWakeMs = static_cast<uint32_t>(InterlockedCompareExchange(&ctx->LinkWakeMs, 0, 0));
 		out->mediaMtu = ctx->MediaOutMtu != 0 ? ctx->MediaOutMtu : MediaMaxMtu;
 		const size_t payloadCapacity = out->mediaMtu > Rtp::kHeaderSize
 			? static_cast<size_t>(out->mediaMtu) - Rtp::kHeaderSize

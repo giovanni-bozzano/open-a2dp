@@ -620,6 +620,10 @@ struct DEVICE_CONTEXT
 	// like the other counters.
 	volatile LONG WorstSendTransportMs;
 	volatile LONG WorstSendResumeMs;
+	// How long the last active-mode request took to complete, in milliseconds; 0 until one was
+	// asked for. The link's mode is read on demand instead of cached, because the stack changes
+	// it on its own.
+	volatile LONG LinkWakeMs;
 	// Timestamps those gaps are measured from and the send in flight: LastRenderTime is guarded by
 	// AudioLock, the rest by MediaLock. 0 means nothing has been measured for this run yet.
 	ULONGLONG LastRenderTime;
@@ -717,6 +721,11 @@ void L2capCloseSignalingChannel(_In_ DEVICE_CONTEXT* ctx);
 // sniff slot. Fire and forget: a refusal only leaves the link in its power state.
 _IRQL_requires_(PASSIVE_LEVEL)
 void L2capRequestActiveMode(_In_ DEVICE_CONTEXT* ctx);
+
+// Reads the link's power state for the status report. Bounded, and Unknown when the stack does
+// not answer: a status read must not wait on a transport that is gone.
+_IRQL_requires_(PASSIVE_LEVEL)
+uint32_t L2capQueryLinkMode(_In_ DEVICE_CONTEXT* ctx);
 
 // Copies the data into the slot and submits it without waiting. On success the result
 // arrives in slot->Status once Idle is signaled, followed by CompletionWorkItem.

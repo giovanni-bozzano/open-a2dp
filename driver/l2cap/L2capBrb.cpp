@@ -35,6 +35,7 @@ BRB_OP* BrbOpCreate(_In_ DEVICE_CONTEXT* ctx, _In_ BRB_TYPE type)
 	op->Refs = 2;
 	op->IsOpen = type == BRB_L2CA_OPEN_CHANNEL;
 	op->IsRegister = type == BRB_L2CA_REGISTER_SERVER;
+	op->IsActiveMode = type == BRB_ACL_ENTER_ACTIVE_MODE;
 	op->NotifyFlag = nullptr;
 	op->NotifyWorkItem = nullptr;
 	KeInitializeEvent(&op->Done, NotificationEvent, FALSE);
@@ -65,6 +66,14 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 {
 	auto* op = static_cast<BRB_OP*>(context);
 	op->Status = params->IoStatus.Status;
+	if (op->IsActiveMode && NT_SUCCESS(op->Status) && op->StartedAt != 0)
+	{
+		// How long the stack took to bring the link out of sniff: the status report prints it
+		// next to the link's state, so a slow start can be attributed without a log capture.
+		const ULONGLONG elapsed = (KeQueryInterruptTime() - op->StartedAt) / 10000ull;
+		const LONG ms = elapsed > 0x7FFFFFFFull ? 0x7FFFFFFF : static_cast<LONG>(elapsed);
+		InterlockedExchange(&op->Ctx->LinkWakeMs, ms);
+	}
 	const LONG previous = InterlockedCompareExchange(&op->State, 1, 0);
 	if (previous == 2 && NT_SUCCESS(op->Status))
 	{
@@ -95,6 +104,7 @@ void OnBrbOpComplete(_In_ WDFREQUEST, _In_ WDFIOTARGET, _In_ PWDF_REQUEST_COMPLE
 NTSTATUS BrbOpStart(_In_ BRB_OP* op)
 {
 	DEVICE_CONTEXT* ctx = op->Ctx;
+	op->StartedAt = KeQueryInterruptTime();
 	NTSTATUS status = WdfIoTargetFormatRequestForInternalIoctlOthers(ctx->IoTarget, op->Request,
 		IOCTL_INTERNAL_BTH_SUBMIT_BRB, op->Memory, nullptr, nullptr, nullptr, nullptr, nullptr);
 	if (NT_SUCCESS(status))
@@ -281,4 +291,34 @@ void L2capRequestActiveMode(_In_ DEVICE_CONTEXT* ctx)
 	{
 		OA2DP_INFO(ctx, "L2CAP", "the link keeps its power state; active mode was refused 0x%08X", status);
 	}
+}
+
+// Reads the link's power state for the status report. The query is bounded, and a stack that does
+// not answer leaves the report saying so instead of holding the status read: a status poll must
+// never wait on a transport that is gone.
+uint32_t L2capQueryLinkMode(_In_ DEVICE_CONTEXT* ctx)
+{
+	using namespace OpenA2dpDriver::L2cap;
+	constexpr ULONG LinkModeQueryMs = 150;
+	BRB_OP* op = BrbOpCreate(ctx, BRB_ACL_GET_MODE);
+	if (op == nullptr)
+	{
+		return static_cast<uint32_t>(OpenA2dp::Ioctl::LinkMode::Unknown);
+	}
+	op->Brb.Mode.BtAddress = ctx->RemoteAddress;
+	const NTSTATUS status = BrbOpRun(op, LinkModeQueryMs, true);
+	OpenA2dp::Ioctl::LinkMode mode = OpenA2dp::Ioctl::LinkMode::Unknown;
+	if (NT_SUCCESS(status))
+	{
+		switch (op->Brb.Mode.AclMode)
+		{
+		case ACL_MODE_ACTIVE: mode = OpenA2dp::Ioctl::LinkMode::Active; break;
+		case ACL_MODE_HOLD: mode = OpenA2dp::Ioctl::LinkMode::Hold; break;
+		case ACL_MODE_SNIFF: mode = OpenA2dp::Ioctl::LinkMode::Sniff; break;
+		case ACL_MODE_PARK: mode = OpenA2dp::Ioctl::LinkMode::Park; break;
+		default: break; // a transitional or disconnected state has no steady mode to report
+		}
+	}
+	BrbOpRelease(op);
+	return static_cast<uint32_t>(mode);
 }

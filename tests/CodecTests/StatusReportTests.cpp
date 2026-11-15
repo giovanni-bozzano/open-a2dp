@@ -136,6 +136,7 @@ TEST(StatusReport_VerboseListsEveryField)
 									"status.preferenceFlags", "status.sinkCodecs", "preference.sbcBlocks",
 									"preference.prerollMs", "status.pacingLeadMs",
 									"status.worstSendTransportMs", "status.worstSendResumeMs",
+									"status.linkMode", "status.lastWakeMs",
 									"version.maxFramePayload"})
 	{
 		CHECK(Contains(report, field));
@@ -268,6 +269,31 @@ TEST(StatusReport_TellsWhetherWindowsRunsAnEndpoint)
 
 	status.endpointRunning = 0;
 	CHECK(Contains(Report(false, status, StreamingPreference()), "endpoint        Paused"));
+}
+
+// Two numbers a slow start cannot otherwise explain: the link's power state and what the
+// driver's last wake request cost. A link in sniff carries packets only in its slots, so START
+// and the first audio wait for one.
+TEST(StatusReport_ShowsTheLinkState)
+{
+	Ioctl::Status status = StreamingStatus();
+	status.linkMode = static_cast<uint32_t>(Ioctl::LinkMode::Active);
+	status.lastWakeMs = 180;
+	CHECK(Contains(Report(false, status, StreamingPreference()),
+			"link            Active; the last wake took 180 ms"));
+
+	// The state that costs a start its wait names that cost, so the reader does not need the
+	// architecture doc to know why the line matters.
+	status.linkMode = static_cast<uint32_t>(Ioctl::LinkMode::Sniff);
+	status.lastWakeMs = 0;
+	CHECK(Contains(Report(false, status, StreamingPreference()),
+			"link            Sniff (a start waits for a sniff slot); no wake requested yet"));
+
+	// No link, or a stack that did not answer: the line still appears, so an absent line is never
+	// mistaken for a reading of Active.
+	status.linkMode = static_cast<uint32_t>(Ioctl::LinkMode::Unknown);
+	CHECK(Contains(Report(false, status, StreamingPreference()),
+			"link            not read (no link, or the stack did not answer)"));
 }
 
 TEST(StatusReport_ShowsRefusedStreamsInEveryMode)

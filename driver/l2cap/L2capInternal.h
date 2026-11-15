@@ -24,6 +24,9 @@ struct BRB_OP
 	volatile LONG Refs;
 	BOOLEAN IsOpen;
 	BOOLEAN IsRegister;
+	// Set for the active-mode BRB, whose completion time the status reports as the wake.
+	BOOLEAN IsActiveMode;
+	ULONGLONG StartedAt;
 	NTSTATUS Status;
 	// Optional completion notification for operations nobody waits for: the flag is set
 	// and the work item enqueued, unless the owner abandoned the operation.
@@ -36,6 +39,7 @@ struct BRB_OP
 		struct _BRB_L2CA_REGISTER_SERVER Register;
 		struct _BRB_L2CA_UNREGISTER_SERVER Unregister;
 		struct _BRB_ACL_ENTER_ACTIVE_MODE Active;
+		struct _BRB_ACL_GET_MODE Mode;
 	} Brb;
 };
 

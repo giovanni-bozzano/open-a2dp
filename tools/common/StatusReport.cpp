@@ -231,6 +231,8 @@ void AppendRawFields(std::string& text, const Ioctl::Status& status, const Ioctl
 	AppendField(text, "status.worstSendMs", status.worstSendMs);
 	AppendField(text, "status.worstSendTransportMs", status.worstSendTransportMs);
 	AppendField(text, "status.worstSendResumeMs", status.worstSendResumeMs);
+	AppendField(text, "status.linkMode", status.linkMode);
+	AppendField(text, "status.lastWakeMs", status.lastWakeMs);
 	AppendField(text, "status.packetsSent", status.packetsSent);
 	AppendField(text, "status.framesDropped", status.framesDropped);
 	AppendField(text, "status.underruns", status.underruns);
@@ -412,6 +414,39 @@ bool SplitReportLine(const std::string& line, size_t labelWidth, std::string& la
 	return !label.empty();
 }
 
+const char* LinkModeName(Ioctl::LinkMode mode)
+{
+	switch (mode)
+	{
+	case Ioctl::LinkMode::Active: return "Active";
+	case Ioctl::LinkMode::Hold: return "Hold";
+	case Ioctl::LinkMode::Sniff: return "Sniff";
+	case Ioctl::LinkMode::Park: return "Park";
+	default: return "unknown";
+	}
+}
+
+// The link's power state and what the last wake cost. It belongs next to the session: a link in
+// sniff is why a start can be slow with no other symptom, and the wake is the only part of that
+// wait the driver itself asks for.
+void AppendLink(std::string& text, const Ioctl::Status& status)
+{
+	const Ioctl::LinkMode mode = static_cast<Ioctl::LinkMode>(status.linkMode);
+	if (mode == Ioctl::LinkMode::Unknown)
+	{
+		AppendLine(text, "link", "not read (no link, or the stack did not answer)");
+		return;
+	}
+	std::string line = LinkModeName(mode);
+	if (mode == Ioctl::LinkMode::Sniff)
+	{
+		line += " (a start waits for a sniff slot)";
+	}
+	line += status.lastWakeMs != 0 ? Format("; the last wake took %u ms", status.lastWakeMs)
+								  : "; no wake requested yet";
+	AppendLine(text, "link", line);
+}
+
 // The latency block: what the driver holds ahead of live audio and what that cost. The sink's
 // own buffering is not reported by any A2DP profile, so this is the part the driver controls,
 // not the whole mouth-to-ear delay.
@@ -503,6 +538,7 @@ std::string BuildStatusReport(const StatusReportInput& input)
 	{
 		AppendLine(text, "sink jack", "unplugged (endpoint rebuild in progress; nothing can play)");
 	}
+	AppendLink(text, status);
 	AppendLatency(text, status);
 	AppendCodec(text, status);
 	AppendMediaMtu(text, status);

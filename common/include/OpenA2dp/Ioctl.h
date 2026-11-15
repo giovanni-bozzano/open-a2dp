@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 10;
+constexpr uint32_t kAbiVersion = 11;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -87,6 +87,17 @@ enum class MediaState : uint32_t {
 	Streaming = 2,
 	Suspended = 3,
 	Failed = 4,
+};
+
+// Status.linkMode: the ACL's power state, as the stack reported it when the status was read.
+// Sniff is the one that costs a stream start a wait: the link carries packets only in its sniff
+// slots, so START and the audio behind it wait for the next one.
+enum class LinkMode : uint32_t {
+	Unknown = 0, // no link, or the stack did not answer the query
+	Active = 1,
+	Hold = 2,
+	Sniff = 3,
+	Park = 4,
 };
 
 // WAIT_EVENT event mask.
@@ -303,6 +314,10 @@ struct Status {
 	// Only the first is the link; a large second value means the machine starved the work item.
 	uint32_t worstSendTransportMs;
 	uint32_t worstSendResumeMs;
+	// The link's power state now, and how long the last request to bring it out of sniff took
+	// to complete. A link in sniff is why a start can be slow with nothing else to show for it.
+	uint32_t linkMode;   // LinkMode
+	uint32_t lastWakeMs; // 0 = no wake requested since the driver loaded
 	uint32_t lastError; // NTSTATUS of the last media failure, 0 if none
 	// Codec chosen by the last AVDTP negotiation (0 = none yet). It is valid
 	// before streaming starts, unlike `codec`, which is set by MediaStart.
@@ -485,7 +500,7 @@ static_assert(sizeof(RegisterEncoderOut) == 32, "RegisterEncoderOut layout is pa
 static_assert(sizeof(WaitEventOut) == 40, "WaitEventOut layout is part of the ABI");
 static_assert(sizeof(SharedRings) == 48, "SharedRings layout is part of the driver/service ABI");
 static_assert(sizeof(FrameRecordHeader) == 20, "FrameRecordHeader layout is part of the ABI");
-static_assert(sizeof(Status) == 360, "Status layout is part of the driver/CLI ABI");
+static_assert(sizeof(Status) == 368, "Status layout is part of the driver/CLI ABI");
 static_assert(kMaxFrameRecordBytes >= kMaxFramePayload + sizeof(FrameRecordHeader),
 			  "a maximum-size frame must fit in one record");
 

@@ -52,6 +52,11 @@ first sound. The driver asks the stack for active mode immediately before that
 START. The request is fire and forget, and a refusal only means the link keeps
 its power state.
 
+The report's `link` line carries the state the stack reports and how long the
+last wake took, so a slow start can be attributed without a log capture. The
+state is read when the report is built, with a bound: a status poll never waits
+on a link that is gone.
+
 ### The lead is a setting with a floor
 
 `PrerollMs` is stored per sink and can be 20 to 200 ms. `MediaStart` resolves it

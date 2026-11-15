@@ -17,6 +17,7 @@ field with its decimal and hex value.
 |---|---|
 | `AVDTP`, `media` | Where the A2DP session is: discovery, configuration, open, streaming, suspended |
 | `endpoint` | Whether Windows is running a render stream to the endpoint |
+| `link` | The ACL's power state and how long the last wake took; a link in sniff makes a start wait for a slot |
 | `sink jack` | The endpoint is reported unplugged during a format rebuild; nothing can play until it returns |
 | `codec` | The codec the stream runs, or the one negotiated but not streaming |
 | `media MTU` | What one media packet carries and the AAC bitrate that fits |
