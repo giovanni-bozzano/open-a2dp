@@ -39,10 +39,30 @@ void OnIndication(_In_opt_ PVOID context, _In_ INDICATION_CODE indication, _In_ 
 
 	if (indication == IndicationRemoteDisconnect)
 	{
-		OA2DP_INFO(ctx, "L2CAP", "signaling channel remote disconnect, reason %d", static_cast<int>(parameters->Parameters.Disconnect.Reason));
-		InterlockedExchange(&ctx->DisconnectGeneration,
-			InterlockedCompareExchange(&ctx->SignalingGeneration, 0, 0));
-		WdfWorkItemEnqueue(ctx->DisconnectWorkItem);
+		const L2CAP_CHANNEL_HANDLE handle = parameters->ConnectionHandle;
+		if (handle != nullptr && handle == ctx->SignalingChannel)
+		{
+			OA2DP_INFO(ctx, "L2CAP", "signaling channel remote disconnect, reason %d",
+				static_cast<int>(parameters->Parameters.Disconnect.Reason));
+			InterlockedExchange(&ctx->DisconnectGeneration,
+				InterlockedCompareExchange(&ctx->SignalingChannelGeneration, 0, 0));
+			WdfWorkItemEnqueue(ctx->DisconnectWorkItem);
+		}
+		else if (handle != nullptr && handle == ctx->MediaChannel)
+		{
+			// The media transport can drop while the signaling link stays up. The sink is still
+			// connected and must keep its control link; the media send and open paths recover
+			// the stream on their own.
+			OA2DP_INFO(ctx, "L2CAP", "media channel remote disconnect, reason %d; signaling link stays",
+				static_cast<int>(parameters->Parameters.Disconnect.Reason));
+		}
+		else
+		{
+			// The indication belongs to a channel that has already been replaced or closed.
+			// Acting on it would tear down the channel that took its place.
+			OA2DP_INFO(ctx, "L2CAP", "stale remote disconnect ignored (handle %p)",
+				reinterpret_cast<void*>(handle));
+		}
 	}
 }
 
@@ -60,6 +80,8 @@ void OnOpenComplete(
 	}
 	else if (NT_SUCCESS(status))
 	{
+		InterlockedExchange(&ctx->SignalingChannelGeneration,
+			InterlockedCompareExchange(&ctx->SignalingGeneration, 0, 0));
 		ctx->SignalingChannel = ctx->OpenBrb.ChannelHandle;
 		ctx->SignalingOutMtu = ctx->OpenBrb.OutResults.Params.Mtu;
 		InterlockedExchange(&ctx->SignalingState, ChannelOpen);

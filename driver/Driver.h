@@ -237,6 +237,9 @@ struct DEVICE_CONTEXT
 	volatile LONG SignalingState;
 	volatile LONG SignalingGeneration;
 	L2CAP_CHANNEL_HANDLE SignalingChannel;
+	// Generation that opened SignalingChannel. A disconnect indication carries its channel
+	// handle, so one for a channel this field no longer describes is stale, not a new event.
+	volatile LONG SignalingChannelGeneration;
 	USHORT SignalingOutMtu;
 
 	// Preallocated open request; OpenIdle is signaled while no open is in flight.

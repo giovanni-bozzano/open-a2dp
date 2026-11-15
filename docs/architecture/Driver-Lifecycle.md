@@ -139,11 +139,14 @@ before publishing its arrival; a sink the start cannot reach loses it again when
 its open fails. The control device object and its `\Device` name stay put for
 the resume path.
 
-Each disconnect is tagged with the signaling generation that was current when it
-was raised. If a newer open attempt or channel exists when its work item runs, the
-disconnect is ignored: it belongs to a connection that is already gone, and
-closing the newer channel would take the link down with it. Only the current
-generation withdraws the link, so a sink that reconnects while a failed open is
+Each disconnect is tagged with the signaling generation that opened its channel,
+not the one current when the callback finally runs. The callback carries the
+channel handle, so a media-channel disconnect, or one for a channel that has
+already been replaced, is not mistaken for a signaling disconnect: the media link
+can drop while the sink is still connected, and acting on either would tear down
+the channel that took its place. If a newer open attempt or channel exists when
+the work item runs, the disconnect is ignored as well. Only the generation that
+owns the link withdraws it, so a sink that reconnects while an old disconnect is
 still unwinding keeps both its channel and its place in the tools.
 
 Rundown and an FDO reference protect outstanding handlers and handles. Removal
