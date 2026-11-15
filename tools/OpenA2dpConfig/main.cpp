@@ -592,9 +592,27 @@ constexpr RowTip kRowTips[] = {
 	 L"not that Bluetooth dropped. FAILED starts a new stream on the next playback; check "
 	 L"Last error and the logs."},
 	{"endpoint",
-	 L"Whether Windows is sending audio to this endpoint.\n\n"
-	 L"Running - a player has it open. Paused - nothing is playing, or the player paused. "
-	 L"Paused is normal when music is stopped, so check this before blaming the driver."},
+	 L"Whether Windows is sending audio to this endpoint. Every value:\n\n"
+	 L"Running - a player has the endpoint open and is clocking it, so the Bluetooth stream "
+	 L"follows it.\n"
+	 L"Paused - nothing is playing, or the player paused. The stream is suspended after the "
+	 L"pause grace, or kept running so a quick resume skips START.\n\n"
+	 L"Paused is normal when music is stopped, so check this before blaming the driver. A player "
+	 L"that plays nothing while this says Running is worth a look at AVDTP and Media."},
+	{"link",
+	 L"The power state of the Bluetooth link to the headset, and how long the driver's last "
+	 L"request to wake it took. Every value:\n\n"
+	 L"Active - the link is fully on and packets can go at any time. Normal while audio runs.\n"
+	 L"Hold - the link is briefly parked; rare while audio runs.\n"
+	 L"Sniff - the link sleeps and listens only in short slots, which saves the headset's "
+	 L"battery and is normal while paused. A start on a sniff link waits for the next slot, "
+	 L"which is heard as a moment of silence before the first sound.\n"
+	 L"Park - the link is almost off and takes longer to wake.\n"
+	 L"Not read - the stack did not answer, usually because the headset is disconnected.\n\n"
+	 L"The last wake is the request the driver makes just before it starts a stream. A few "
+	 L"milliseconds means the link was already awake; a long wake matches the delay you hear "
+	 L"at the start. Nothing is disabled: the Bluetooth stack puts the link back to sleep on its "
+	 L"own once audio stops."},
 	{"sink jack",
 	 L"Windows reports the headphone jack as unplugged while it rebuilds the endpoint.\n\n"
 	 L"This happens for a moment after a format change. No player can open a stream until "
@@ -730,10 +748,12 @@ constexpr RowTip kRowTips[] = {
 	 L"mismatch, a different version number is only informational."},
 	{"encoder",
 	 L"Whether the encoder service has registered the codecs that need it: AAC, aptX, aptX "
-	 L"HD and LDAC.\n\n"
-	 L"Not registered means those codecs cannot be used and the driver falls back to SBC, "
-	 L"which usually sounds worse. Check that the OpenA2dp service is running and from the "
-	 L"same build as the driver. SBC does not need the service."},
+	 L"HD and LDAC. Every value:\n\n"
+	 L"Registered - the service is running, so those codecs can be negotiated.\n"
+	 L"Not registered - it is stopped, crashed, or from another build, so those codecs cannot "
+	 L"be used and the driver falls back to SBC, which usually sounds worse.\n\n"
+	 L"Check that the OpenA2dp service is running and from the same build as the driver. SBC "
+	 L"does not need the service."},
 	{"buffered",
 	 L"Audio the driver's buffers hold right now, in milliseconds and bytes.\n\n"
 	 L"Small and steady is healthy. If it keeps climbing, audio is piling up and the driver "
@@ -1831,16 +1851,17 @@ void CreateControls(HWND hwnd)
 		state->sessionPanel = GetDlgItem(hwnd, kStatusList);
 	}
 
-	// The top of every table: the two settings every codec shares. The rows below them belong
-	// to the shown codec alone, so a box is only offered where it changes something.
+	// The top of every table: the settings every codec shares, with the pause grace under the
+	// pacing lead. The rows below them belong to the shown codec alone, so a box is only offered
+	// where it changes something.
 	CreateField(hwnd, L"Sample rate", kFormatCombo, kAllTabs, 0, 0, font);
 	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, kAllTabs, 1, 0, font);
-	CreateField(hwnd, L"Pause grace", kPauseGraceCombo, kAllTabs, 0, 4, font);
+	CreateField(hwnd, L"Pause grace", kPauseGraceCombo, kAllTabs, 1, 1, font);
 	CreateField(hwnd, L"Bitpool", kBitpoolCombo, static_cast<int>(CodecTab::Sbc), 0, 1, font);
-	CreateField(hwnd, L"Blocks", kBlocksCombo, static_cast<int>(CodecTab::Sbc), 1, 1, font);
 	CreateField(hwnd, L"Subbands", kSubbandsCombo, static_cast<int>(CodecTab::Sbc), 0, 2, font);
 	CreateField(hwnd, L"Allocation", kAllocationCombo, static_cast<int>(CodecTab::Sbc), 1, 2, font);
 	CreateField(hwnd, L"Frames per packet", kSbcFramesCombo, static_cast<int>(CodecTab::Sbc), 0, 3, font);
+	CreateField(hwnd, L"Blocks", kBlocksCombo, static_cast<int>(CodecTab::Sbc), 1, 3, font);
 	CreateField(hwnd, L"Bitrate", kBitrateCombo, static_cast<int>(CodecTab::Aac), 0, 1, font);
 	CreateField(hwnd, L"Quality", kLdacQualityCombo, static_cast<int>(CodecTab::Ldac), 0, 1, font);
 	if (state != nullptr)
