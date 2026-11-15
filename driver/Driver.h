@@ -306,9 +306,9 @@ struct DEVICE_CONTEXT
 	// sends silence), so playback that resumes within the grace needs no START round trip.
 	WDFTIMER PauseGraceTimer;
 	volatile LONG PauseGrace;
-	// Set by every edge that makes sound likely: a prepared stream, the run, the first audio, and
-	// a pause the grace keeps open. The work item asks for active mode itself, outside the audio
-	// path where creating the request is not allowed, and before it takes SessionLock.
+	// Set when the endpoint runs: the earliest sign that sound is coming. The work item asks for
+	// active mode outside the audio path, where creating the request is not allowed, and before it
+	// takes SessionLock.
 	volatile LONG LinkWakePending;
 	BOOLEAN CodecSwitchWanted;
 	BOOLEAN CodecSwitchClosing;
@@ -839,11 +839,6 @@ void SignalingOnStreamFormatChanged(_In_ DEVICE_CONTEXT* ctx);
 // Called when Windows runs the render stream; discovers if no stream is configured.
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void SignalingOnAudioRun(_In_ DEVICE_CONTEXT* ctx);
-
-// Called when Windows prepares a render stream: the earliest sign that sound may follow, so the
-// link is woken before a run can be one sniff slot too late.
-_IRQL_requires_max_(DISPATCH_LEVEL)
-void SignalingOnAudioImminent(_In_ DEVICE_CONTEXT* ctx);
 
 // audio/
 // Reports the sink link state to Windows through the sink jack. Safe at PASSIVE_LEVEL.

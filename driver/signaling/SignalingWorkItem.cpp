@@ -703,10 +703,9 @@ void OnSignalingWorkItem(_In_ WDFWORKITEM workItem)
 				"applying the endpoint formats after a provider change failed 0x%08X", status);
 		}
 	}
-	// Every audio edge that makes sound likely sets this: a prepared stream, the run, the first
-	// audio, and a pause the grace keeps open - whose resume sends no START at all. Done before
-	// the session lock: the request touches no session state and must not lengthen the wait
-	// behind it.
+	// The endpoint run sets this: the earliest sign that sound is coming, and the edge a resume
+	// inside the pause grace arrives on. Done before the session lock: the request touches no
+	// session state and must not lengthen the wait behind it.
 	if (InterlockedExchange(&ctx->LinkWakePending, 0) != 0)
 	{
 		L2capRequestActiveMode(ctx);

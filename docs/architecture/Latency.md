@@ -48,17 +48,13 @@ kernel and service paths.
 A paused stream leaves the ACL to the stack's power management, which can put the
 link in sniff. A start on such a link waits for the next sniff slot before the
 AVDTP START and the first packets leave, which is heard as a delay before the
-first sound. The driver asks the stack for active mode as soon as anything says
-sound may follow: a prepared stream, the run edge, the first audio. The work
-item sends that before it takes the session lock, so the ask is not queued
-behind whatever the session was doing. The request is fire and forget, a refusal
-only means the link keeps its power state, and only one is out at a time: a
-second adds nothing to a link that is already waking.
-
-A pause asks for the same thing, when the grace keeps the stream open: that
-resume sends no START, so the wake on the START path would never run and the
-first packets after the pause would still queue behind a sniff slot. A start
-with no edge before it - a resume within a run - still asks right before START.
+first sound. The driver asks the stack for active mode when the endpoint runs,
+which is the earliest sign that sound is coming, and again right before a START
+that no run preceded. The work item sends the run's ask before it takes the
+session lock, so it is not queued behind whatever the session was doing. The
+request is fire and forget, a refusal only means the link keeps its power state,
+and only one is out at a time: a second adds nothing to a link that is already
+waking.
 
 The request cannot skip the slot it waits for. On a link that already dropped
 into sniff the wake completes when the controller leaves it, which is the moment
@@ -145,10 +141,11 @@ at their shortest. LDAC's record is its encoder packet.
 - **A long lead sends start-up silence.** A 200 ms lead sends up to 200 ms of
   silence before the first real sample. That is the lead working as configured,
   and why the default stays at 60 ms.
-- **The pause wake only buys what the stack keeps.** Whether the link stays
-  active for the whole grace decides if a resume inside it is instant. Pause for
-  longer than a sniff interval, resume, and read `link` and `worst gaps`: a send
-  gap near a second says the link slept anyway.
+- **A resume inside the grace still pays the slot if the link slept.** The
+  grace keeps the stream open, so the resume sends no START, but it cannot keep
+  the link awake once media stops. Pause for longer than a sniff interval,
+  resume, and read `link` and `worst gaps`: a send gap near a second says the
+  link slept anyway.
 - **The reported total is a lower bound.** The sink starts playing when its own
   buffer says so, after the part we report.
 
