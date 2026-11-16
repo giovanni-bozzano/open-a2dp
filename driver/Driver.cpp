@@ -16,13 +16,13 @@ EVT_WDF_DEVICE_SELF_MANAGED_IO_SUSPEND OnSelfManagedIoSuspend;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP OnDeviceCleanup;
 EVT_WDF_WORKITEM OnDisconnectWorkItem;
 
-// Names the device after the sink: "<name> [OpenA2DP]".
+// Names the device after the sink: "<name> (OpenA2DP)".
 void AssignFriendlyName(_In_ DEVICE_CONTEXT* ctx)
 {
 	WCHAR friendlyName[BTH_MAX_NAME_SIZE + 32];
 	NTSTATUS status = ctx->RemoteName[0] != L'\0'
-		? RtlStringCchPrintfW(friendlyName, ARRAYSIZE(friendlyName), L"%ws [OpenA2DP]", ctx->RemoteName)
-		: RtlStringCchPrintfW(friendlyName, ARRAYSIZE(friendlyName), L"%012I64X [OpenA2DP]", ctx->RemoteAddress);
+		? RtlStringCchPrintfW(friendlyName, ARRAYSIZE(friendlyName), L"%ws (OpenA2DP)", ctx->RemoteName)
+		: RtlStringCchPrintfW(friendlyName, ARRAYSIZE(friendlyName), L"%012I64X (OpenA2DP)", ctx->RemoteAddress);
 	if (!NT_SUCCESS(status))
 	{
 		return;

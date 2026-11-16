@@ -133,7 +133,7 @@ least 3 times; teardown tests 10 times.
 
 **T1 PC-initiated connect (S)**
 1. Sink on, not connected. In Windows Bluetooth settings click *Connect*.
-2. Play audio to `<sink> [OpenA2DP]`.
+2. Play audio to `<sink> (OpenA2DP)`.
 - Expect: `signaling channel open`, AVDTP states `Discovering` -> ... -> `Streaming`,
   `media channel open`, `streaming, media MTU`; audible; `packets` advancing,
   `send failures` 0.

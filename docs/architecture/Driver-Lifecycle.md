@@ -52,7 +52,7 @@ a sink in the tools to a sink in PnP.
 
 Start creates the control device, registers incoming L2CAP handling and opens the
 signaling channel. The remote Class of Device selects the headphone or speaker
-endpoint category; the endpoint name is `<sink> [OpenA2DP]`.
+endpoint category; the endpoint name is `<sink> (OpenA2DP)`.
 
 Suspend attempts a courtesy AVDTP CLOSE (ABORT where the session cannot close),
 stops media, sets the stop barrier, then drains and cancels the work items and
