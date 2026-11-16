@@ -88,6 +88,7 @@ enum ControlId : int {
 	kRestoreButton,
 	kResetCountersButton,
 	kMessageLabel,
+	kSwitchOverlay,
 };
 
 // The captions are constants because the layout measures them: the window is sized to the
@@ -299,6 +300,10 @@ struct SinkState
 	int tab = 0;
 	bool automatic = true;
 	HWND codecLabel = nullptr;
+	// Covers the window while a driver switch runs, so the blocking install shows why the
+	// window cannot be used.
+	HWND switchOverlay = nullptr;
+	bool switching = false;
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
 	// The client size the layout settled on. Both only grow, so a measurement that changes with
@@ -1577,6 +1582,10 @@ void ApplyLayout(HWND hwnd)
 		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column],
 			  kComboListHeight);
 	}
+	if (state->switchOverlay != nullptr)
+	{
+		Place(state->switchOverlay, 0, 0, width, height);
+	}
 
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
 	// share the width below it, one third each, so the row ends where the panes above do.
@@ -1636,6 +1645,7 @@ void ApplyLayout(HWND hwnd)
 }
 
 constexpr UINT_PTR kTabSubclassId = 1;
+constexpr UINT_PTR kSwitchOverlaySubclassId = 2;
 
 // The tab strip heads the table, and the tab control has no dark part on this Windows: themed
 // or not, it paints its items and the strip around them light. So the strip is painted from the
@@ -1759,6 +1769,32 @@ LRESULT CALLBACK TabSubclass(HWND tab, UINT message, WPARAM wParam, LPARAM lPara
 	return DefSubclassProc(tab, message, wParam, lParam);
 }
 
+// The switch overlay covers the client while the blocking driver install runs; its own cursor
+// says the window is working even though the controls under it are disabled.
+LRESULT CALLBACK SwitchOverlaySubclass(HWND overlay, UINT message, WPARAM wParam, LPARAM lParam,
+									   UINT_PTR id, DWORD_PTR reference)
+{
+	UNREFERENCED_PARAMETER(lParam);
+	UNREFERENCED_PARAMETER(reference);
+	if (message == WM_SETCURSOR)
+	{
+		SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+		return TRUE;
+	}
+	if (message == WM_ERASEBKGND)
+	{
+		RECT client = {};
+		GetClientRect(overlay, &client);
+		FillRect(reinterpret_cast<HDC>(wParam), &client, BackgroundBrush());
+		return 1;
+	}
+	if (message == WM_NCDESTROY)
+	{
+		RemoveWindowSubclass(overlay, SwitchOverlaySubclass, id);
+	}
+	return DefSubclassProc(overlay, message, wParam, lParam);
+}
+
 // Creates every control with a placeholder rect; ApplyLayout gives them their real ones, so
 // the geometry comes from the measured strings and not from coordinates typed by hand.
 void CreateControls(HWND hwnd)
@@ -1866,6 +1902,16 @@ void CreateControls(HWND hwnd)
 				font);
 	// Wrapped, not cut: a long sentence makes the window taller instead of ending in an ellipsis.
 	CreateChild(hwnd, L"STATIC", L"", SS_LEFT, 0, 0, 10, 10, kMessageLabel, font);
+	if (state != nullptr)
+	{
+		state->switchOverlay = CreateChild(hwnd, L"STATIC", L"",
+				SS_CENTER | SS_CENTERIMAGE | SS_NOPREFIX, 0, 0, 10, 10, kSwitchOverlay, font);
+		if (state->switchOverlay != nullptr)
+		{
+			ShowWindow(state->switchOverlay, SW_HIDE);
+			SetWindowSubclass(state->switchOverlay, SwitchOverlaySubclass, kSwitchOverlaySubclassId, 0);
+		}
+	}
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
 
 	// The sample rate and AAC bitrate lists depend on the codec and on the link, so
@@ -2857,6 +2903,58 @@ std::wstring DriverTitle(SinkDriver driver)
 											: L"no A2DP driver";
 }
 
+std::wstring SwitchOverlayText(SinkDriver target)
+{
+	return L"Switching to " + DriverTitle(target) +
+		   L"...\n\nPlease wait; the sink reconnects and audio stops for a moment.";
+}
+
+// Covers the window and disables it before the install starts. The overlay is painted before
+// the window is disabled, so the wait is visible instead of a frozen frame.
+void BeginDriverSwitch(HWND hwnd, SinkDriver target)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	state->switching = true;
+	if (state->switchOverlay != nullptr)
+	{
+		const std::wstring text = SwitchOverlayText(target);
+		SetWindowTextW(state->switchOverlay, text.c_str());
+		RECT client = {};
+		GetClientRect(hwnd, &client);
+		SetWindowPos(state->switchOverlay, HWND_TOP, 0, 0, client.right, client.bottom,
+					 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		InvalidateRect(state->switchOverlay, nullptr, TRUE);
+		UpdateWindow(state->switchOverlay);
+	}
+	else
+	{
+		SetMessage(hwnd, L"Switching driver; please wait...");
+	}
+	SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+	EnableWindow(hwnd, FALSE);
+}
+
+void EndDriverSwitch(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	state->switching = false;
+	if (state->switchOverlay != nullptr)
+	{
+		ShowWindow(state->switchOverlay, SW_HIDE);
+	}
+	EnableWindow(hwnd, TRUE);
+	SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+	BringToFront(hwnd);
+}
+
 // Moves the selected sink to the other A2DP source driver. The install restarts that sink's
 // A2DP node, so its control device, endpoints and stream go with it: the list is read again
 // afterwards and reopens the sink under whichever driver now owns it.
@@ -2886,6 +2984,9 @@ void SwitchSelectedDriver(HWND hwnd)
 		return;
 	}
 
+	// A switch is a blocking install and node restart, so the window is covered and disabled
+	// while it runs: no control can start a second switch and the wait is visible.
+	BeginDriverSwitch(hwnd, target);
 	// The window's own handle on the control device would keep the old OpenA2dp image loaded
 	// after its node is gone, and a later switch back then fails until a reboot (problem 38).
 	// It is closed before the node restarts, not after.
@@ -2894,6 +2995,7 @@ void SwitchSelectedDriver(HWND hwnd)
 	Tools::SwitchReport report;
 	const Tools::SwitchOutcome outcome = SwitchSinkDriver(reference, target, report, error);
 	ReloadDevices(hwnd);
+	EndDriverSwitch(hwnd);
 	if (outcome != Tools::SwitchOutcome::Switched)
 	{
 		SetMessage(hwnd, Tools::Widen(error));
@@ -3058,9 +3160,26 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		return OnColorStatic(wParam, lParam);
 	case WM_CTLCOLORLISTBOX:
 		return OnColorListBox(wParam);
+	case WM_SETCURSOR:
+	{
+		const SinkState* state = StateOf(hwnd);
+		if (state != nullptr && state->switching)
+		{
+			SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+			return TRUE;
+		}
+		break;
+	}
 	case WM_CLOSE:
+	{
+		const SinkState* state = StateOf(hwnd);
+		if (state != nullptr && state->switching)
+		{
+			return 0;
+		}
 		DestroyWindow(hwnd);
 		return 0;
+	}
 	case WM_DESTROY:
 	{
 		KillTimer(hwnd, kStatusTimerId);
