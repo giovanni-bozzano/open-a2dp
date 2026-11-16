@@ -89,7 +89,7 @@ These apply to `codec`:
 | `--subbands <n>` | 4, 8 | SBC subbands |
 | `--allocation <mode>` | `loudness`, `snr`, `default` | SBC bit allocation |
 | `--frames <n>` | 0, or 1..15 | SBC frames per packet; 0 fills the packet |
-| `--preroll <ms>` | 0, or 20..200 | Pacing lead; 0 is the 60 ms default |
+| `--preroll <ms>` | 0, or 20..200 | Pacing lead for every codec except aptX LL, which has a fixed one; 0 is the 60 ms default |
 | `--pause-grace <ms>` | 0, or 1000..60000 | How long a paused stream is kept before it suspends; 0 is the 3 s default |
 | `--ldac-quality <q>` | `high`, `standard`, `mobile` | 990, 660 or 330 kbps; local to the encoder |
 
@@ -122,7 +122,7 @@ by hand and shares the same layout.
 | Setting | Section and key | CLI | Values | Default |
 |---|---|---|---|---|
 | Codec | `[general] codec` | `codec ...` | `auto`, `sbc`, `aac`, `aptx`, `aptxhd`, `ldac`, `aptxll` | `auto` |
-| Pacing lead | `[general] prerollMs` | `--preroll` | 0, or 20..200 ms | 60 ms |
+| Pacing lead | `[general] prerollMs` | `--preroll` | 0, or 20..200 ms; not aptX LL | 60 ms |
 | Pause grace | `[general] pauseGraceMs` | `--pause-grace` | 0, or 1000..60000 ms | 3 s |
 | SBC bitpool | `[sbc] bitpool` | `--bitpool` | 0, or 2..250 | sink-selected, capped at 53 |
 | SBC block length | `[sbc] blocks` | `--blocks` | 4, 8, 12, 16 | 16 |
@@ -137,8 +137,8 @@ Automatic codec order is LDAC, aptX HD, aptX, AAC, SBC, skipping any codec the
 sink does not advertise or whose encoder is not registered. aptX LL is never
 automatic because it trades jitter margin for latency; force it with
 `codec aptxll` when that trade is the one you want. It sends two-millisecond
-records, so the pacing lead is the remaining source-side buffer: lower it to
-20 ms to get the most out of LL.
+records and runs with a fixed pacing lead of one record plus the copy tick;
+`--preroll` does not apply to it and is refused when LL is the selected codec.
 
 ## Endpoint formats
 
@@ -167,7 +167,7 @@ carries.
 | A parameter that keeps the codec | Suspend, reconfigure, start; a refused reconfigure falls back to close and rediscover |
 | A parameter of a codec not playing | Stored only; the running stream is untouched |
 | PCM format | The listed formats are rebuilt and the jack is reported unplugged briefly; Windows rebuilds the endpoint and the stream renegotiates |
-| Pacing lead | Used at the next stream start; the presentation position subtracts the same value |
+| Pacing lead | Used at the next stream start; the presentation position subtracts the same value. aptX LL keeps its fixed lead |
 
 A format change costs a short silence while Windows rebuilds the endpoint and the
 player reopens its stream. A codec or parameter change costs whatever the

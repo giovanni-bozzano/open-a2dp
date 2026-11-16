@@ -57,9 +57,19 @@ void StartAptx(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength, uint32_t c
 	ctx->ServiceLastFrameTime = ctx->MediaStartTime;
 	ctx->ServiceLastUnderrunLog = 0;
 	MediaStatsReset(ctx);
-	// A record covers one clock span of the codec, so the lead has to hold one plus the copy
-	// tick that fills it.
-	ApplyLeadFloor(ctx, sampleRate * (ll ? 2u : Ioctl::kServiceRecordMs) / 1000);
+	// LL's buffer target is 2 ms, so its lead is fixed: the stored preroll is a setting for the
+	// other codecs and would either be far longer than LL wants or below what a 2 ms record can
+	// be served at. The floor is one record plus the copy tick that has to fill it.
+	if (ll)
+	{
+		const uint32_t unit = sampleRate * AptxLl::kTargetBufferMs / 1000;
+		ctx->PacingLeadMs = LatencyBudget::LeadFloorMs(unit, sampleRate);
+		OA2DP_INFO(ctx, "Media", "aptX LL uses a fixed %u ms pacing lead", ctx->PacingLeadMs);
+	}
+	else
+	{
+		ApplyLeadFloor(ctx, sampleRate * Ioctl::kServiceRecordMs / 1000);
+	}
 	InterlockedExchange(&ctx->StreamFault, 0);
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);

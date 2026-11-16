@@ -80,9 +80,12 @@ rate = 96000
 channels = 2
 ```
 
+`prerollMs` is ignored while aptX LL is the selected codec: LL forces the lead
+for its 2 ms record instead.
+
 The file has one section per codec (`[sbc]`, `[aac]`, `[aptx]`, `[aptxhd]`,
-`[ldac]`) plus `[general]`, and one `key = value` line under each. `#` starts a
-comment.
+`[ldac]`, `[aptxll]`) plus `[general]`, and one `key = value` line under each.
+`#` starts a comment.
 
 | Rule | Behaviour |
 |---|---|

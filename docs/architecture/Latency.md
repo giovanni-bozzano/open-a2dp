@@ -16,7 +16,7 @@ Typical values below are for a 44.1 kHz stereo stream; 48 kHz scales by about
 | Windows engine buffer | The engine; bounded by bytes, not a packet count | 2 x 10 ms |
 | Driver copy granularity | `AudioTimer`, at the packet boundary or 10 ms, whichever is sooner | one packet, at most 10 ms |
 | PCM ring backlog | The lead plus the copy slack; the ring is sized by time at the widest format | under 10 ms |
-| Encoder pacing lead | `PrerollMs`, default 60 ms | 60 ms, or the stored value |
+| Encoder pacing lead | `PrerollMs`, default 60 ms; aptX LL forces its own | 60 ms, or the stored value |
 | Packetization | Codec record size, SBC frames per packet | 10 to 23 ms |
 | Transport | One send in flight per stream | link dependent |
 | Sink buffer | Not ours | 50 to 200 ms or more |
@@ -78,6 +78,11 @@ Below that, a packet would be requested before the producer had time to fill it,
 so every packet would be padded. At 44.1 kHz the floor is about 30 ms for aptX,
 41 ms for a full SBC packet and 44 ms for AAC. A stored value below the floor is
 raised, and the report says so.
+
+aptX LL is the exception: its record and sink buffer target are 2 ms, so the
+stored lead cannot describe the stream. `StartAptx` ignores `PrerollMs` and uses
+the floor for a 2 ms record, 22 ms at 44.1 and 48 kHz. The report shows that
+value, and `--preroll` is refused while LL is the selected codec.
 
 ### Report the driver side, not the whole path
 

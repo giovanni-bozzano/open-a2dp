@@ -300,6 +300,9 @@ TEST(LatencyBudget_LeadFloorCoversOneAccessUnit)
 	CHECK_EQ(LeadFloorMs(Ioctl::kAacSamplesPerFrame, 48000), uint32_t{22 + kPcmSlackMs});
 	// One service record at 48 kHz is 480 samples: 10 ms.
 	CHECK_EQ(LeadFloorMs(48000 * Ioctl::kServiceRecordMs / 1000, 48000), uint32_t{10 + kPcmSlackMs});
+	// aptX LL's record is 2 ms, which is the lead the driver forces for it.
+	CHECK_EQ(LeadFloorMs(48000 * 2 / 1000, 48000), uint32_t{2 + kPcmSlackMs});
+	CHECK_EQ(LeadFloorMs(44100 * 2 / 1000, 44100), uint32_t{2 + kPcmSlackMs});
 	// Nothing known, nothing raised.
 	CHECK_EQ(LeadFloorMs(0, 44100), uint32_t{0});
 	CHECK_EQ(LeadFloorMs(1024, 0), uint32_t{0});

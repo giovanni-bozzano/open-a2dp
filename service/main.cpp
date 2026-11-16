@@ -488,7 +488,8 @@ void DeviceLoop(const std::wstring& linkName)
 				params.prerollMs = ev.prerollMs;
 				// LL's IE asks for a 2 ms buffer, so its records follow that cadence; classic
 				// aptX keeps the 10 ms span the rest of the service codecs use.
-				params.recordMs = ll ? 2u : Ioctl::kServiceRecordMs;
+				params.recordMs = ll ? static_cast<uint32_t>(AptxLl::kTargetBufferMs)
+									 : Ioctl::kServiceRecordMs;
 				if (!aptxStreamEncoder.Start(std::move(encoder), params, nowUs)) {
 					Log("[svc] AptxStreamEncoder::Start failed");
 				}

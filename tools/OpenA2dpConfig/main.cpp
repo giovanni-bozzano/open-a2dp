@@ -127,7 +127,7 @@ constexpr wchar_t kSbcHintText[] = L"The frame shape, bitpool and frames per pac
 constexpr wchar_t kAacHintText[] = L"The bitrate AAC aims for, capped by what one media packet carries.";
 constexpr wchar_t kAptxHintText[] = L"16-bit stereo at a fixed bitpool: the sample rate is the only setting.";
 constexpr wchar_t kAptxHdHintText[] = L"24-bit stereo at a fixed bitpool: the sample rate is the only setting.";
-constexpr wchar_t kAptxLlHintText[] = L"Low latency, 16-bit stereo: force it from the codec list; it plays the classic aptX bitstream.";
+constexpr wchar_t kAptxLlHintText[] = L"Low latency, 16-bit stereo: force it from the codec list; it plays the classic aptX bitstream with a fixed pacing lead.";
 constexpr wchar_t kLdacHintText[] = L"The quality LDAC encodes at. It is local: the sink is never told "
 									L"which mode is in use.";
 // The widest entry each field's list can hold, keyed by control. The sample rate list is rebuilt
@@ -935,7 +935,7 @@ constexpr FieldTip kFieldTips[] = {
 	 L"which mode is in use - and it applies the next time an LDAC stream starts."},
 	{kPacingLeadCombo,
 	 L"How far ahead of Windows' audio clock the driver sends sound. This is the main "
-	 L"latency control.\n\n"
+	 L"latency control. aptX LL has a fixed lead and does not use this setting.\n\n"
 	 L"A longer lead gives the PC and Bluetooth more time to recover from delays, so audio is "
 	 L"more stable but reaches the headset later. A shorter lead feels snappier and raises the "
 	 L"risk of gaps; the driver never goes below one packet of the current codec. Start at "
@@ -1294,6 +1294,15 @@ void SelectPreferenceValues(HWND hwnd)
 	SelectComboValue(hwnd, kFormatCombo,
 					 FormatComboValue(state->endpointFormat.sampleRate[tab],
 									  state->endpointFormat.channels[tab]));
+}
+
+// aptX LL runs with a fixed pacing lead, so the control is not offered while it is the choice:
+// a value the driver ignores is worse than no control.
+void UpdatePacingLeadEnabled(HWND hwnd)
+{
+	const uint32_t value = ComboValue(hwnd, kCodecCombo);
+	const bool ll = value == CodecEntryValue(false, static_cast<int>(CodecTab::AptxLl));
+	EnableWindow(GetDlgItem(hwnd, kPacingLeadCombo), ll ? FALSE : TRUE);
 }
 
 // Shows one codec's table. The tabs only say what the pane shows: the codec the sink runs is
@@ -1983,6 +1992,7 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	// no tab for reads as the automatic choice, which is what the driver does with it as well.
 	const int forced = TabOfCodec(state->preference.codec);
 	SelectComboValue(hwnd, kCodecCombo, CodecEntryValue(state->automatic || forced < 0, forced));
+	UpdatePacingLeadEnabled(hwnd);
 	RebuildTabLists(hwnd);
 	SelectPreferenceValues(hwnd);
 	ApplyLayout(hwnd);
@@ -2988,6 +2998,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 				{
 					ShowCodecTable(hwnd, static_cast<int>(value) - 1);
 				}
+				UpdatePacingLeadEnabled(hwnd);
 			}
 			return 0;
 		}

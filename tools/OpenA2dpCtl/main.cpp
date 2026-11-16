@@ -108,6 +108,7 @@ Options:
                     LDAC mode for `codec`: high (990 kbps), standard (660) or
                     mobile (330). It is not negotiated, so both ends just use it.
   --preroll <ms>    Pacing lead for `codec`, 0 (default, 60 ms) or 20..200.
+                    aptX LL has a fixed lead and refuses this option.
                     Every codec is sent this far ahead of the media clock; a
                     shorter lead is less latency but less margin against the
                     sink running dry.
@@ -472,11 +473,12 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 {
 	const bool isAptxHd = codecArg == "aptxhd" || codecArg == "aptx-hd";
 	const bool isAptx = codecArg == "aptx";
+	const bool isAptxLl = codecArg == "aptxll";
 	const bool isLdac = codecArg == "ldac";
 	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac" && !isAptx &&
-		!isAptxHd && !isLdac)
+		!isAptxHd && !isAptxLl && !isLdac)
 	{
-		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx, aptxhd or ldac\n",
+		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx, aptxhd, aptxll or ldac\n",
 			codecArg.c_str());
 		return 2;
 	}
@@ -574,10 +576,21 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		preference.codec = isLdac ? Ioctl::kCodecLdac
 			: isAptxHd ? Ioctl::kCodecAptxHd
 			: isAptx ? Ioctl::kCodecAptx
-			: codecArg == "aptxll" ? Ioctl::kCodecAptxLl
+			: isAptxLl ? Ioctl::kCodecAptxLl
 			: codecArg == "aac"
 			? Ioctl::kCodecAac
 			: Ioctl::kCodecSbc;
+	}
+	// LL's record and sink buffer are 2 ms, so the driver forces its own lead. Storing a preroll
+	// that would be ignored is worse than refusing the combination.
+	const bool llSelected = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
+							preference.codec == Ioctl::kCodecAptxLl;
+	if (llSelected && overrides.hasPreroll)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr, "aptX LL has a fixed pacing lead; --preroll does not apply to it. "
+							 "No preference was stored.\n");
+		return 2;
 	}
 	if (overrides.hasBitrate)
 	{
