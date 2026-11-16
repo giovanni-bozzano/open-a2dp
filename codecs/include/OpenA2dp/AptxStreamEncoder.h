@@ -3,8 +3,8 @@
 // Paces, encodes and frames classic aptX for OpenA2dpSvc.exe.
 //
 // The service owns the media clock for service-encoded codecs: on every WAIT_EVENT tick it
-// tells this object how much time has elapsed, and the object encodes one 10 ms record
-// whenever the clock has made one due. A frame covers four samples per channel, but 10 ms of
+// tells this object how much time has elapsed, and the object encodes one record (10 ms by
+// default, 2 ms for aptX LL) whenever the clock has made one due. A frame covers four samples per channel, but 10 ms of
 // 44.1 kHz is 441 samples, which is not a multiple of four, so 0..3 samples are carried into
 // the next record. The clock still advances by the full span and a record's sample count is
 // what it actually encoded, which keeps the RTP timestamp locked to the media clock over
@@ -34,6 +34,9 @@ struct AptxStreamParams {
 	// Real time the pacing sends ahead of the clock, from the stored preference; 0 keeps the
 	// default. A shorter lead lowers latency by spending the sink's jitter margin.
 	uint32_t prerollMs = 0;
+	// Clock span one record covers, in milliseconds: 10 for classic aptX, 2 for aptX LL, whose
+	// buffer target is that short. The driver sends one packet per record.
+	uint32_t recordMs = Ioctl::kServiceRecordMs;
 };
 
 struct AptxStreamStats {
@@ -78,7 +81,7 @@ public:
 	const AptxStreamStats& Stats() const noexcept { return stats_; }
 
 private:
-	// Encodes one record covering the clock's 10 ms span plus whatever the frame layout
+	// Encodes one record covering the clock's record span plus whatever the frame layout
 	// carried over: lead silence still owed first, then PCM, zero-filling only what the ring
 	// does not hold.
 	bool EncodeRecord(RingBufferView& pcm, RingBufferView& frames) noexcept;
@@ -99,7 +102,7 @@ private:
 	uint32_t sampleBytes_ = 0;     // interleaved 16-bit bytes for all channels
 	uint32_t ringSampleBytes_ = 0; // interleaved ring bytes for all channels (2 or 4 per sample)
 	uint32_t samplesPerFrame_ = 0;
-	uint32_t spanSamples_ = 0; // 10 ms of the media clock
+	uint32_t spanSamples_ = 0; // recordMs of the media clock
 	size_t maxFrames_ = 0;
 	uint32_t carrySamples_ = 0;
 	// Silence zero-filled for the samples the record that follows will carry, so the count

@@ -59,7 +59,7 @@ void StartAptx(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength, uint32_t c
 	MediaStatsReset(ctx);
 	// A record covers one clock span of the codec, so the lead has to hold one plus the copy
 	// tick that fills it.
-	ApplyLeadFloor(ctx, sampleRate * Ioctl::kServiceRecordMs / 1000);
+	ApplyLeadFloor(ctx, sampleRate * (ll ? 2u : Ioctl::kServiceRecordMs) / 1000);
 	InterlockedExchange(&ctx->StreamFault, 0);
 	ServiceFlushRings(ctx);
 	ServiceStreamStart(ctx);

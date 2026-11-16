@@ -136,7 +136,9 @@ by hand and shares the same layout.
 Automatic codec order is LDAC, aptX HD, aptX, AAC, SBC, skipping any codec the
 sink does not advertise or whose encoder is not registered. aptX LL is never
 automatic because it trades jitter margin for latency; force it with
-`codec aptxll` when that trade is the one you want.
+`codec aptxll` when that trade is the one you want. It sends two-millisecond
+records, so the pacing lead is the remaining source-side buffer: lower it to
+20 ms to get the most out of LL.
 
 ## Endpoint formats
 

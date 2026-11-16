@@ -87,6 +87,9 @@ safety net, not the normal path.
   352.8 kbps at 44.1 kHz.
 - **aptX HD** also carries ten milliseconds per record, 120 frames at 48 kHz or
   110 or 111 at 44.1 kHz, at 576 kbps and 529.2 kbps.
+- **aptX LL** uses the same encoder and concatenated 4-byte frames as classic aptX,
+  but its record covers two milliseconds, matching the buffer target its IE asks
+  for: 24 frames at 48 kHz, one packet at a time as completions free the ring.
 - **LDAC** runs stereo only. Each encode call consumes 128 samples per channel;
   the encoder returns a whole media packet after two calls at 44.1 or 48 kHz, so
   a record covers 256 samples, about 5.8 ms. Its 2-DH5 framing needs a 679-byte
