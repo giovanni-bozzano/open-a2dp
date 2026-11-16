@@ -33,7 +33,7 @@ paired and reconnects through the new driver.
 | Sink picker | Select the headset. Each entry shows its address and whether it is connected, playing or on the Windows driver. |
 | Session, Sink, Endpoint, Service, Driver | The same fields as `OpenA2dpCtl status`, split into sections. |
 | Codec | Automatic, or one forced codec. |
-| SBC, AAC, aptX, aptX HD, LDAC tabs | Every codec's settings, whether or not that codec is playing. |
+| SBC, AAC, aptX, aptX LL, aptX HD, LDAC tabs | Every codec's settings, whether or not that codec is playing. |
 | **Apply** | Store the selected values for this sink. |
 | **Restore defaults** | Clear this sink's stored settings, the same as `OpenA2dpCtl reset`. |
 | **Reset counters** | Start a fresh measurement window without interrupting playback. |
@@ -51,7 +51,7 @@ value does not fit its column shows the whole value in the row's tooltip.
 OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
                      [--watch [--interval <ms>]]
 OpenA2dpCtl list
-OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd|ldac>] [options]
+OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxll|aptxhd|ldac>] [options]
 OpenA2dpCtl format [<codec> [<auto|rate> [<1|2>]]]
 OpenA2dpCtl driver [<opena2dp|windows>]
 OpenA2dpCtl reset
@@ -121,7 +121,7 @@ by hand and shares the same layout.
 
 | Setting | Section and key | CLI | Values | Default |
 |---|---|---|---|---|
-| Codec | `[general] codec` | `codec ...` | `auto`, `sbc`, `aac`, `aptx`, `aptxhd`, `ldac`, `aptxll` | `auto` |
+| Codec | `[general] codec` | `codec ...` | `auto`, `sbc`, `aac`, `aptx`, `aptxll`, `aptxhd`, `ldac` | `auto` |
 | Pacing lead | `[general] prerollMs` | `--preroll` | 0, or 20..200 ms; not aptX LL | 60 ms |
 | Pause grace | `[general] pauseGraceMs` | `--pause-grace` | 0, or 1000..60000 ms | 3 s |
 | SBC bitpool | `[sbc] bitpool` | `--bitpool` | 0, or 2..250 | sink-selected, capped at 53 |

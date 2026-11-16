@@ -13,7 +13,7 @@ one command or one button.
 
 | Capability | What it means in use |
 |---|---|
-| Codec control | SBC, AAC, aptX, aptX HD and LDAC. Automatic mode picks the best both ends support (LDAC, aptX HD, aptX, AAC, SBC); one codec can be pinned per sink. aptX LL is there too, forced explicitly because it trades margin for latency. |
+| Codec control | SBC, AAC, aptX, aptX LL, aptX HD and LDAC. Automatic mode picks the best both ends support (LDAC, aptX HD, aptX, AAC, SBC); one codec can be pinned per sink. aptX LL is forced explicitly because it trades margin for latency. |
 | Codec settings | Sample rate and channel count per codec, SBC frame shape, block length, subbands and bitpool, AAC bitrate, and LDAC quality. Each is stored per headset. |
 | Stream timing | A pacing lead from 20 to 200 ms, and a cap on how many SBC frames one packet carries. |
 | Live visibility | Session state, negotiated codec, buffers, latency, counters and the last transport error, refreshed in a window or by `--watch`. |
@@ -55,9 +55,9 @@ A2DP node, not a radio or a machine-wide stack.
   test-signed drivers.
 - The sink has to advertise a codec before OpenA2dp can use it. Pinning a codec the
   sink does not offer is refused.
-- Six codecs are supported: SBC, AAC, aptX, aptX HD, LDAC and aptX LL. SBC is
+- Six codecs are supported: SBC, AAC, aptX, aptX LL, aptX HD and LDAC. SBC is
   encoded in the driver; AAC uses the Windows Media Foundation encoder; aptX,
-  aptX HD, LDAC and aptX LL are encoded by the service.
+  aptX LL, aptX HD and LDAC are encoded by the service.
 - Bluetooth range and interference still apply. OpenA2dp changes the codec and the
   timing, not the radio.
 - One A2DP stream per sink.
@@ -113,7 +113,7 @@ Administrators only. The full reference is in [Using OpenA2dp](docs/USING.md).
 
 A kernel driver takes over the A2DP connection for the sinks you switch: codec
 negotiation, timing, the L2CAP transport and the audio endpoint Windows plays to.
-A small user-mode service encodes AAC, aptX, aptX HD and LDAC. SBC is encoded in
+A small user-mode service encodes AAC, aptX, aptX LL, aptX HD and LDAC. SBC is encoded in
 the driver, so the mandatory codec keeps working with no service running. The tools talk to a separate control
 device, which is also where the status report comes from, so the window, its
 **Copy** button and `OpenA2dpCtl status` cannot disagree.

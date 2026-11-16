@@ -384,13 +384,13 @@ std::string CodecListText(uint32_t codecs)
 	{
 		text += text.empty() ? "aptX" : ", aptX";
 	}
-	if ((codecs & Ioctl::kSinkCodecAptxHd) != 0)
-	{
-		text += text.empty() ? "aptX HD" : ", aptX HD";
-	}
 	if ((codecs & Ioctl::kSinkCodecAptxLl) != 0)
 	{
 		text += text.empty() ? "aptX LL" : ", aptX LL";
+	}
+	if ((codecs & Ioctl::kSinkCodecAptxHd) != 0)
+	{
+		text += text.empty() ? "aptX HD" : ", aptX HD";
 	}
 	if ((codecs & Ioctl::kSinkCodecLdac) != 0)
 	{

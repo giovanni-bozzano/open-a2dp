@@ -130,8 +130,9 @@ uint32_t AcceptSelected(void* context, Avdtp::CodecType codec, const uint8_t* co
 	return 0;
 }
 
-// Scores each sink SEP: SBC 1, AAC 2, aptX 3, aptX HD 4. Quality order, so the best codec
-// both sides can run wins; registration and a format the endpoint cannot serve still return 0.
+// Scores each sink SEP: SBC 1, AAC 2, aptX 3, aptX LL 3 (forced only), aptX HD 4, LDAC 5.
+// Quality order, so the best codec both sides can run wins; registration and a format the
+// endpoint cannot serve still return 0.
 uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remoteIe, size_t remoteIeLength,
 	uint8_t* configIe, size_t& configIeLength)
 {

@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 13;
+constexpr uint32_t kAbiVersion = 14;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -89,9 +89,9 @@ constexpr uint32_t kAacSamplesPerFrame = 1024;
 constexpr uint32_t kCodecSbc = 0x00;
 constexpr uint32_t kCodecAptx = 0x01;
 constexpr uint32_t kCodecAac = 0x02;
-constexpr uint32_t kCodecAptxHd = 0x03;
-constexpr uint32_t kCodecLdac = 0x04;
-constexpr uint32_t kCodecAptxLl = 0x05;
+constexpr uint32_t kCodecAptxLl = 0x03;
+constexpr uint32_t kCodecAptxHd = 0x04;
+constexpr uint32_t kCodecLdac = 0x05;
 
 enum class MediaState : uint32_t {
 	Idle = 0,
@@ -198,7 +198,7 @@ struct VersionInfo {
 
 struct RegisterEncoderIn {
 	uint32_t abiVersion;       // must equal kAbiVersion
-	uint32_t codec;            // kCodecAac, kCodecAptx, kCodecAptxHd, kCodecLdac or kCodecAptxLl
+	uint32_t codec;            // kCodecAac, kCodecAptx, kCodecAptxLl, kCodecAptxHd or kCodecLdac
 	uint32_t maxFramePayload;  // service limit; 0 = no limit (driver clamps)
 	uint32_t reserved;
 };
@@ -412,7 +412,7 @@ struct Preference {
 // pick, so a pinned format is offered alone: that is the only way the format the user wants is
 // the one the engine plays. An entry applies while its codec is the one in use, so pinning
 // 96 kHz for LDAC leaves SBC its own rate instead of making the two conflict.
-constexpr uint32_t kCodecCount = 6; // kCodecSbc, kCodecAptx, kCodecAac, kCodecAptxHd, kCodecLdac, kCodecAptxLl
+constexpr uint32_t kCodecCount = 6; // kCodecSbc, kCodecAptx, kCodecAac, kCodecAptxLl, kCodecAptxHd, kCodecLdac
 
 struct EndpointFormat {
 	uint32_t abiVersion;
@@ -463,7 +463,7 @@ constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
 	return true;
 }
 
-static_assert(kCodecCount == kCodecAptxLl + 1, "every codec has an endpoint format entry");
+static_assert(kCodecCount == kCodecLdac + 1, "every codec has an endpoint format entry");
 static_assert(sizeof(EndpointFormat) == 56, "EndpointFormat layout is part of the driver/CLI ABI");
 
 // Range SbcFramesPerPacket accepts (see SbcFrame::kMaxFramesPerPacket).

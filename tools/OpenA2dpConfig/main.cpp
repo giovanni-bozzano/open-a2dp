@@ -167,9 +167,9 @@ enum class CodecTab {
 	Sbc,
 	Aac,
 	Aptx,
+	AptxLl,
 	AptxHd,
 	Ldac,
-	AptxLl,
 	Count,
 };
 constexpr int kTabCount = static_cast<int>(CodecTab::Count);
@@ -187,9 +187,9 @@ constexpr TabInfo kTabInfo[] = {
 	{kSbcTabText, kSbcHintText},
 	{kAacTabText, kAacHintText},
 	{kAptxTabText, kAptxHintText},
+	{kAptxLlTabText, kAptxLlHintText},
 	{kAptxHdTabText, kAptxHdHintText},
 	{kLdacTabText, kLdacHintText},
-	{kAptxLlTabText, kAptxLlHintText},
 };
 static_assert(ARRAYSIZE(kTabInfo) == static_cast<size_t>(kTabCount),
 			  "a caption and a hint for every codec tab");
@@ -1291,9 +1291,11 @@ void SelectPreferenceValues(HWND hwnd)
 	SelectComboValue(hwnd, kLdacQualityCombo, preference.ldacQuality);
 	// The sample rate row is the open codec's own entry: every codec keeps its own format.
 	const int tab = state->tab >= 0 && state->tab < kTabCount ? state->tab : 0;
+	// The format array is indexed by codec value, not tab: the tab order is the window's.
+	const uint32_t codec = CodecOfTab(tab);
 	SelectComboValue(hwnd, kFormatCombo,
-					 FormatComboValue(state->endpointFormat.sampleRate[tab],
-									  state->endpointFormat.channels[tab]));
+					 FormatComboValue(state->endpointFormat.sampleRate[codec],
+									  state->endpointFormat.channels[codec]));
 }
 
 // Shows one codec's table. The tabs only say what the pane shows: the codec the sink runs is
@@ -2575,9 +2577,10 @@ void ApplySettings(HWND hwnd)
 	// The combo carries the format of the open codec; the other codecs keep their own entry.
 	const uint32_t formatValue = ComboValue(hwnd, kFormatCombo);
 	Ioctl::EndpointFormat endpointFormat = state->endpointFormat;
-	const int codecIndex = state->tab >= 0 && state->tab < kTabCount ? state->tab : 0;
-	endpointFormat.sampleRate[codecIndex] = formatValue / 10;
-	endpointFormat.channels[codecIndex] = formatValue % 10;
+	// The format array is indexed by codec value, not tab: the tab order is the window's.
+	const uint32_t codec = CodecOfTab(state->tab >= 0 && state->tab < kTabCount ? state->tab : 0);
+	endpointFormat.sampleRate[codec] = formatValue / 10;
+	endpointFormat.channels[codec] = formatValue % 10;
 	endpointFormat.abiVersion = Ioctl::kAbiVersion;
 	if (!Ioctl::ValidEndpointFormat(endpointFormat))
 	{

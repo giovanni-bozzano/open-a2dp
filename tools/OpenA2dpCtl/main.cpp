@@ -35,7 +35,7 @@ Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
                        [--watch [--interval <ms>]]
   OpenA2dpCtl list
-  OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxhd|ldac>] [--bitrate <bps>]
+  OpenA2dpCtl codec [<auto|sbc|aac|aptx|aptxll|aptxhd|ldac>] [--bitrate <bps>]
                      [--bitpool <n>] [--blocks <4|8|12|16>] [--subbands <4|8>]
                      [--allocation <loudness|snr>] [--preroll <ms>] [--pause-grace <ms>]
                      [--frames <n>] [--ldac-quality <high|standard|mobile>]
@@ -478,7 +478,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	if (!codecArg.empty() && codecArg != "auto" && codecArg != "sbc" && codecArg != "aac" && !isAptx &&
 		!isAptxHd && !isAptxLl && !isLdac)
 	{
-		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx, aptxhd, aptxll or ldac\n",
+		std::fprintf(stderr, "unknown codec '%s'; use auto, sbc, aac, aptx, aptxll, aptxhd or ldac\n",
 			codecArg.c_str());
 		return 2;
 	}
@@ -740,7 +740,7 @@ int CommandFormat(const std::vector<Device>& devices, const std::string& spec, c
 	if (codec < 0 || rateArg.empty())
 	{
 		CloseHandle(handle);
-		std::fprintf(stderr, "format takes a codec (sbc, aac, aptx, aptxhd, ldac) and auto, or a codec, a rate "
+		std::fprintf(stderr, "format takes a codec (sbc, aac, aptx, aptxll, aptxhd, ldac) and auto, or a codec, a rate "
 							 "(16000, 32000, 44100, 48000, 88200, 96000) and a channel count (1, 2)\n");
 		return 2;
 	}
