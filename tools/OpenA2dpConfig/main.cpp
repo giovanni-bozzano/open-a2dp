@@ -120,16 +120,6 @@ constexpr wchar_t kWidestFormatText[] = L"96000 Hz, stereo";
 // stream runs. The window is measured from this sample instead of the live list, so a rename
 // cannot resize it; the picker itself takes the space the header's buttons leave.
 constexpr wchar_t kSinkPickerText[] = L"Headphones (00:00:00:00:00:00)";
-// One hint per codec, under its table: what that codec's settings do and what limits them, so
-// the body explains itself instead of repeating every tooltip.
-constexpr wchar_t kSbcHintText[] = L"The frame shape, bitpool and frames per packet, clamped to the range "
-								   L"this sink advertises.";
-constexpr wchar_t kAacHintText[] = L"The bitrate AAC aims for, capped by what one media packet carries.";
-constexpr wchar_t kAptxHintText[] = L"16-bit stereo at a fixed bitpool: the sample rate is the only setting.";
-constexpr wchar_t kAptxHdHintText[] = L"24-bit stereo at a fixed bitpool: the sample rate is the only setting.";
-constexpr wchar_t kAptxLlHintText[] = L"Low latency, 16-bit stereo: force it from the codec list; it plays the classic aptX bitstream with a fixed pacing lead.";
-constexpr wchar_t kLdacHintText[] = L"The quality LDAC encodes at. It is local: the sink is never told "
-									L"which mode is in use.";
 // The widest entry each field's list can hold, keyed by control. The sample rate list is rebuilt
 // for the open codec and the bitrate list is cut by the link, so a live measurement would move
 // the columns and resize the window on every tab switch; this is what the lists can grow to, so
@@ -180,19 +170,18 @@ constexpr int kAllTabs = -1;
 struct TabInfo
 {
 	const wchar_t* caption;
-	const wchar_t* hint;
 };
 
 constexpr TabInfo kTabInfo[] = {
-	{kSbcTabText, kSbcHintText},
-	{kAacTabText, kAacHintText},
-	{kAptxTabText, kAptxHintText},
-	{kAptxLlTabText, kAptxLlHintText},
-	{kAptxHdTabText, kAptxHdHintText},
-	{kLdacTabText, kLdacHintText},
+	{kSbcTabText},
+	{kAacTabText},
+	{kAptxTabText},
+	{kAptxLlTabText},
+	{kAptxHdTabText},
+	{kLdacTabText},
 };
 static_assert(ARRAYSIZE(kTabInfo) == static_cast<size_t>(kTabCount),
-			  "a caption and a hint for every codec tab");
+			  "a caption for every codec tab");
 // The combo's entry for a stored choice: 0 is automatic, otherwise the codec's tab plus one,
 // because SBC's own value would be 0 too.
 uint32_t CodecEntryValue(bool automatic, int tab)
@@ -310,7 +299,6 @@ struct SinkState
 	int tab = 0;
 	bool automatic = true;
 	HWND codecLabel = nullptr;
-	std::vector<HWND> hints; // one hint line per codec, created with the other controls
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
 	// The client size the layout settled on. Both only grow, so a measurement that changes with
@@ -410,8 +398,8 @@ int TextWidth(HDC dc, const wchar_t* text)
 	return size.cx;
 }
 
-// Height a sentence needs at the given width, so a hint wraps onto more lines instead of
-// being cut; the string is what decides, not a fixed control height.
+// Height a sentence needs at the given width, so a long message wraps onto more lines
+// instead of being cut; the string is what decides, not a fixed control height.
 int TextHeight(HDC dc, const wchar_t* text, int width)
 {
 	if (dc == nullptr || text == nullptr || *text == L'\0' || width <= 0)
@@ -1432,7 +1420,6 @@ void ApplyLayout(HWND hwnd)
 	const int groupLeft = margin;
 	const int groupWidth = width - margin * 2;
 	const int innerLeft = groupLeft + inset;
-	const int innerWidth = groupWidth - inset * 2;
 	// The codec row fills the pane end to end: the drop-down takes what its label and the reset
 	// button leave, and the button is exactly the width of one button in the row at the bottom.
 	const int rowButtonWidth = (width - margin * 2 - gap * 2) / 3;
@@ -1453,10 +1440,9 @@ void ApplyLayout(HWND hwnd)
 		tabHeight = (tabItem.bottom - tabItem.top) + 3;
 	}
 
-	// The body is as tall as the longest codec's table and its hint, so choosing another codec
-	// never moves the window the user placed.
+	// The body is as tall as the longest codec's table, so choosing another codec never
+	// moves the window the user placed.
 	int rows = 1;
-	int hintHeight = 0;
 	for (int tab = 0; tab < kTabCount; ++tab)
 	{
 		int tabRows = 1;
@@ -1468,12 +1454,7 @@ void ApplyLayout(HWND hwnd)
 			}
 		}
 		rows = MaxOf(rows, tabRows);
-		hintHeight = MaxOf(hintHeight, TextHeight(dc, kTabInfo[tab].hint, innerWidth));
 	}
-	hintHeight = MaxOf(hintHeight, textHeight);
-	// The hint occupies a row of its own under the table, its first line where a selector's
-	// label sits, so the space above it matches the space above every row.
-	const int hintOffset = (rowHeight - textHeight) / 2;
 	// The outcome of the last action is a line of its own above the buttons: beside them it was
 	// cut to a few words, which is no use when it is the reason a setting did not apply. It wraps
 	// rather than ending in an ellipsis, so the window is as tall as the sentence is long.
@@ -1482,7 +1463,7 @@ void ApplyLayout(HWND hwnd)
 
 	// The session panel takes as many rows as the screen can show and scrolls for the rest.
 	const int statusRowHeight = MaxOf(StatusViewRowHeight(hwnd, kStatusList), 1);
-	const int bodyHeight = inset + rows * rowHeight + hintOffset + hintHeight + gap;
+	const int bodyHeight = inset + rows * rowHeight + gap;
 	int fixedHeight = margin + rowHeight + gap + bottomHeight + margin;
 	fixedHeight += rowHeight + gap + tabHeight + bodyHeight + gap;
 	// The border and the title bar count too, or the window as a whole would hang off the
@@ -1595,12 +1576,6 @@ void ApplyLayout(HWND hwnd)
 		Place(field.label, left, top + (rowHeight - textHeight) / 2, labelWidth[field.column], textHeight);
 		Place(field.control, left + labelWidth[field.column] + gap, top, fieldWidth[field.column],
 			  kComboListHeight);
-	}
-	for (int tab = 0; tab < kTabCount && tab < static_cast<int>(state->hints.size()); ++tab)
-	{
-		Place(state->hints[tab], innerLeft, contentTop + rows * rowHeight + hintOffset, innerWidth,
-			  hintHeight);
-		ShowWindow(state->hints[tab], tab == state->tab ? SW_SHOW : SW_HIDE);
 	}
 
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
@@ -1881,16 +1856,6 @@ void CreateControls(HWND hwnd)
 	CreateField(hwnd, L"Blocks", kBlocksCombo, static_cast<int>(CodecTab::Sbc), 1, 3, font);
 	CreateField(hwnd, L"Bitrate", kBitrateCombo, static_cast<int>(CodecTab::Aac), 0, 1, font);
 	CreateField(hwnd, L"Quality", kLdacQualityCombo, static_cast<int>(CodecTab::Ldac), 0, 1, font);
-	if (state != nullptr)
-	{
-		// One hint line per codec, under its table; the shown codec's is the only one shown.
-		state->hints.assign(kTabCount, nullptr);
-		for (int tab = 0; tab < kTabCount; ++tab)
-		{
-			state->hints[tab] =
-					CreateChild(hwnd, L"STATIC", kTabInfo[tab].hint, SS_LEFT, 0, 0, 10, 10, 0, font);
-		}
-	}
 
 	CreateChild(hwnd, L"BUTTON", kApplyText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kApplyButton, font);
 	CreateChild(hwnd, L"BUTTON", kUseOpenA2dpText, BS_PUSHBUTTON | WS_TABSTOP, 0, 0, 10, 10, kDriverButton,
