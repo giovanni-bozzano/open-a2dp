@@ -31,7 +31,7 @@ paired and reconnects through the new driver.
 
 | Part | Use |
 |---|---|
-| Sink picker | Select the headset. Each entry shows its address and whether it is connected, playing or on the Windows driver. |
+| Sink picker | Select the headset. Each entry shows its address and whether it is connected, playing, suspended or bound to one of the A2DP drivers. |
 | Session, Sink, Endpoint, Service, Driver | The same fields as `OpenA2dpCtl status`, split into sections. |
 | Codec | Automatic, or one forced codec. |
 | SBC, AAC, aptX, aptX LL, aptX HD, LDAC tabs | Every codec's settings, whether or not that codec is playing. |

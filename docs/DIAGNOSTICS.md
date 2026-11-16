@@ -105,7 +105,7 @@ mean a wait did not finish include `stop: still waiting`, `BRB did not complete`
 
 | Symptom | Check first | Usual meaning |
 |---|---|---|
-| The sink is not in the window or `list` | `OpenA2dpCtl driver` | The sink is on `BthA2dp`, or its node has a problem |
+| The sink is not in the window or `list` | `OpenA2dpCtl driver` | No A2DP node is present, or its node has a problem |
 | A codec is refused | `sink formats` and `encoder` | The sink does not advertise it, or its encoder is not registered |
 | `encoder Not registered` | The encoder service state | The service is stopped, crashed, or from another build |
 | No sound, session looks configured | `listed formats`, `refused streams`, `sink jack` | The endpoint has no format Windows can open, or is rebuilding |

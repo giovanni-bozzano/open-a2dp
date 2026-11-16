@@ -245,13 +245,14 @@ constexpr uint32_t FormatComboValue(uint32_t sampleRate, uint32_t channels)
 }
 
 // What a sink is doing as far as the window can tell. The driver keeps a sink's control
-// device only while the link is up, so every listed sink is connected; a running stream is
-// what makes it playing.
+// device only while the link is up, so a sink with one is connected; a node without one is
+// listed by its driver, and a running stream is what makes it playing.
 enum class DeviceState {
 	Connected,
 	Playing,
-	Suspended,     // a stream the driver suspended because Windows paused the endpoint
-	WindowsDriver, // an A2DP node the inbox driver owns: listed, but with no control device
+	Suspended,      // a stream the driver suspended because Windows paused the endpoint
+	WindowsDriver,  // an A2DP node the inbox driver owns: listed, but with no control device
+	OpenA2dpDriver, // an A2DP node this driver owns but has not started: no control device yet
 };
 
 // What the sink list says about one report. A configured stream Windows paused is its own state,
@@ -2136,12 +2137,24 @@ void OpenSelected(HWND hwnd)
 	ReadSelectedDriver(hwnd);
 	if (device.path.empty())
 	{
-		// Listed from its A2DP node: the inbox driver owns the sink, so there is no control
-		// device to read and the switch is the only thing this window can do with it.
-		state->message = SinkTitle(device.reference, std::wstring()) +
-						 L" runs the Windows A2DP driver; " +
-						 (state->driverSwitchable ? L"switch it to use these settings."
-												  : state->driverProblem + L".");
+		// Listed from its A2DP node: either driver can own it while no control device exists, so
+		// there is nothing to read and the switch is the only thing this window can do with it.
+		const std::wstring title = SinkTitle(device.reference, std::wstring());
+		if (state->driver == SinkDriver::OpenA2dp)
+		{
+			state->message = title +
+					(state->driverRestartPending
+							 ? L" is bound to the OpenA2DP driver; its A2DP device is waiting for a "
+							   L"restart, so finish the driver switch."
+							 : L" is bound to the OpenA2DP driver, but its A2DP device is not "
+							   L"running; reconnect the sink, then Refresh.");
+		}
+		else
+		{
+			state->message = title + L" runs the Windows A2DP driver; " +
+					(state->driverSwitchable ? L"switch it to use these settings."
+											 : state->driverProblem + L".");
+		}
 		SetMessage(hwnd, state->message);
 		RefreshStatusView(hwnd);
 		return;
@@ -2314,6 +2327,7 @@ std::wstring DeviceLabel(const std::string& reference, DeviceState state, const 
 	const wchar_t* const text = state == DeviceState::Playing   ? L" - playing"
 								 : state == DeviceState::Suspended ? L" - suspended"
 								 : state == DeviceState::WindowsDriver ? L" - Windows driver"
+								 : state == DeviceState::OpenA2dpDriver ? L" - OpenA2DP driver"
 																		  : L" - connected";
 	return SinkTitle(reference, name) + text;
 }
@@ -2369,6 +2383,19 @@ void SelectDeviceItem(HWND hwnd, size_t device)
 	}
 }
 
+// The driver a node entry is bound to, for the label of a sink that has no control device.
+SinkDriver NodeDriverOf(const std::vector<SinkNode>& nodes, const std::string& reference)
+{
+	for (const SinkNode& node : nodes)
+	{
+		if (node.reference == reference)
+		{
+			return node.driver;
+		}
+	}
+	return SinkDriver::Unknown;
+}
+
 // Lists the control devices the driver currently has, keeping the selection when that sink
 // is still there.
 void ReloadDevices(HWND hwnd)
@@ -2389,8 +2416,9 @@ void ReloadDevices(HWND hwnd)
 		return;
 	}
 
-	// A sink on the inbox A2DP driver is an A2DP node with no control device, and it is exactly
-	// the sink the switch is for: list it too, so the window can take it over.
+	// A sink with no control device is an A2DP node too: the inbox driver owns it, or this
+	// driver owns it but the node has not started. List it, so the switch that fixes it is
+	// reachable.
 	std::vector<SinkNode> nodes;
 	std::string nodeError;
 	if (!EnumerateSinkNodes(nodes, nodeError))
@@ -2399,7 +2427,9 @@ void ReloadDevices(HWND hwnd)
 	}
 	for (const SinkNode& node : nodes)
 	{
-		if (node.driver != SinkDriver::Windows)
+		// An unrecognized service is not an A2DP source this window can switch; the sink still
+		// appears in `OpenA2dpCtl driver`.
+		if (node.driver == SinkDriver::Unknown)
 		{
 			continue;
 		}
@@ -2428,7 +2458,13 @@ void ReloadDevices(HWND hwnd)
 	size_t playing = devices.size();
 	for (size_t i = 0; i < devices.size(); ++i)
 	{
-		DeviceState deviceState = devices[i].path.empty() ? DeviceState::WindowsDriver : DeviceState::Connected;
+		DeviceState deviceState = DeviceState::Connected;
+		if (devices[i].path.empty())
+		{
+			deviceState = NodeDriverOf(nodes, devices[i].reference) == SinkDriver::OpenA2dp
+									? DeviceState::OpenA2dpDriver
+									: DeviceState::WindowsDriver;
+		}
 		if (!devices[i].path.empty())
 		{
 			(void)TryReadDeviceState(devices[i], deviceState, &names[i]);
