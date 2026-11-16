@@ -110,6 +110,7 @@ constexpr wchar_t kSbcTabText[] = L"SBC";
 constexpr wchar_t kAacTabText[] = L"AAC";
 constexpr wchar_t kAptxTabText[] = L"aptX";
 constexpr wchar_t kAptxHdTabText[] = L"aptX HD";
+constexpr wchar_t kAptxLlTabText[] = L"aptX LL";
 constexpr wchar_t kLdacTabText[] = L"LDAC";
 constexpr wchar_t kAutomaticText[] = L"Automatic (the best both ends support)";
 // The widest sample-rate entry any tab can hold, so the columns do not move when the list is
@@ -126,6 +127,7 @@ constexpr wchar_t kSbcHintText[] = L"The frame shape, bitpool and frames per pac
 constexpr wchar_t kAacHintText[] = L"The bitrate AAC aims for, capped by what one media packet carries.";
 constexpr wchar_t kAptxHintText[] = L"16-bit stereo at a fixed bitpool: the sample rate is the only setting.";
 constexpr wchar_t kAptxHdHintText[] = L"24-bit stereo at a fixed bitpool: the sample rate is the only setting.";
+constexpr wchar_t kAptxLlHintText[] = L"Low latency, 16-bit stereo: force it from the codec list; it plays the classic aptX bitstream.";
 constexpr wchar_t kLdacHintText[] = L"The quality LDAC encodes at. It is local: the sink is never told "
 									L"which mode is in use.";
 // The widest entry each field's list can hold, keyed by control. The sample rate list is rebuilt
@@ -167,6 +169,7 @@ enum class CodecTab {
 	Aptx,
 	AptxHd,
 	Ldac,
+	AptxLl,
 	Count,
 };
 constexpr int kTabCount = static_cast<int>(CodecTab::Count);
@@ -186,6 +189,7 @@ constexpr TabInfo kTabInfo[] = {
 	{kAptxTabText, kAptxHintText},
 	{kAptxHdTabText, kAptxHdHintText},
 	{kLdacTabText, kLdacHintText},
+	{kAptxLlTabText, kAptxLlHintText},
 };
 static_assert(ARRAYSIZE(kTabInfo) == static_cast<size_t>(kTabCount),
 			  "a caption and a hint for every codec tab");
@@ -706,7 +710,8 @@ constexpr RowTip kRowTips[] = {
 	{"preference",
 	 L"The saved codec choice for this headset.\n\n"
 	 L"Automatic uses the best codec both ends support, in this order: LDAC, then aptX HD, "
-	 L"aptX, AAC and SBC. Forcing one helps when testing or when Automatic chooses a codec "
+	 L"aptX, AAC and SBC. aptX LL is never automatic: force it when its lower latency is "
+	 L"worth its lower margin. Forcing one helps when testing or when Automatic chooses a codec "
 	 L"that stutters; a codec the headset does not advertise is refused rather than replaced. "
 	 L"The settings tabs do not change this choice, and it is stored per headset."},
 	{"LDAC quality",
@@ -1131,6 +1136,8 @@ int TabOfCodec(uint32_t codec)
 		return static_cast<int>(CodecTab::AptxHd);
 	case Ioctl::kCodecLdac:
 		return static_cast<int>(CodecTab::Ldac);
+	case Ioctl::kCodecAptxLl:
+		return static_cast<int>(CodecTab::AptxLl);
 	default:
 		return -1;
 	}
@@ -1148,6 +1155,8 @@ uint32_t CodecOfTab(int tab)
 		return Ioctl::kCodecAptx;
 	case CodecTab::AptxHd:
 		return Ioctl::kCodecAptxHd;
+	case CodecTab::AptxLl:
+		return Ioctl::kCodecAptxLl;
 	default:
 		return Ioctl::kCodecLdac;
 	}

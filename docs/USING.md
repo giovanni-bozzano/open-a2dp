@@ -113,7 +113,7 @@ file of its own:
 - `%ProgramData%\OpenA2dp\devices\<address>.ini` — settings for that sink.
 
 The file has one section per codec (`[sbc]`, `[aac]`, `[aptx]`, `[aptxhd]`,
-`[ldac]`) plus `[general]`, and one `key = value` line under each. `#` starts a
+`[ldac]`, `[aptxll]`) plus `[general]`, and one `key = value` line under each. `#` starts a
 comment. Only values that differ from the driver default are written, so an
 untouched sink has no file. A section or key this build does not know is ignored;
 a value the driver cannot serve refuses the whole file. `default.ini` is created
@@ -121,7 +121,7 @@ by hand and shares the same layout.
 
 | Setting | Section and key | CLI | Values | Default |
 |---|---|---|---|---|
-| Codec | `[general] codec` | `codec ...` | `auto`, `sbc`, `aac`, `aptx`, `aptxhd`, `ldac` | `auto` |
+| Codec | `[general] codec` | `codec ...` | `auto`, `sbc`, `aac`, `aptx`, `aptxhd`, `ldac`, `aptxll` | `auto` |
 | Pacing lead | `[general] prerollMs` | `--preroll` | 0, or 20..200 ms | 60 ms |
 | Pause grace | `[general] pauseGraceMs` | `--pause-grace` | 0, or 1000..60000 ms | 3 s |
 | SBC bitpool | `[sbc] bitpool` | `--bitpool` | 0, or 2..250 | sink-selected, capped at 53 |
@@ -134,7 +134,9 @@ by hand and shares the same layout.
 | Rate and channels | `[<codec>] rate`, `[<codec>] channels` | `format` | `auto`, or an offered rate with 1 or 2 channels | auto |
 
 Automatic codec order is LDAC, aptX HD, aptX, AAC, SBC, skipping any codec the
-sink does not advertise or whose encoder is not registered.
+sink does not advertise or whose encoder is not registered. aptX LL is never
+automatic because it trades jitter margin for latency; force it with
+`codec aptxll` when that trade is the one you want.
 
 ## Endpoint formats
 

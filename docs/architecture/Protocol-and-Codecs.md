@@ -30,6 +30,7 @@ configure the stream without a discovery from the PC.
 | 3 | aptX HD | Always | The aptX HD encoder is registered and the pin can carry 24-bit stereo |
 | 4 | aptX | Always | The aptX encoder is registered and the pin can carry stereo |
 | 5 | LDAC | Always | The LDAC encoder is registered, the link carries its payload, and the pin is 44.1 kHz or above in stereo |
+| 6 | aptX LL | Always | The aptX LL encoder is registered, the pin is 16-bit stereo, and the codec is forced |
 
 Every SEP stays advertised so the sink can always configure a codec whose
 provider is present. Registration controls selection, not advertisement.
@@ -41,6 +42,10 @@ A forced codec wins when it is available. Otherwise the order is:
 ```text
 LDAC > aptX HD > aptX > AAC > SBC
 ```
+
+aptX LL is deliberately absent from that order: it trades margin for latency, so it is
+chosen only when the preference forces it. Its bitstream is classic aptX's, and only the
+vendor identity and the buffer levels in its IE differ.
 
 The session scores the sink's candidate SEPs in that order. A sink that rejects a
 `SET_CONFIGURATION` moves to the next candidate on the same connection, so a
@@ -68,6 +73,7 @@ safety net, not the normal path.
 | aptX | 44.1, 48 kHz | stereo | 16-bit; 24-in-32 narrowed | RTP + concatenated 4-byte frames |
 | aptX HD | 44.1, 48 kHz | stereo | 24-in-32 | RTP + concatenated 6-byte frames |
 | LDAC | 44.1, 48, 88.2, 96 kHz | stereo | 16-bit or 24-in-32 | RTP + the encoder's frame sequence |
+| aptX LL | 44.1, 48 kHz | stereo | 16-bit | RTP + concatenated 4-byte frames |
 
 - **SBC** uses 16 blocks, 8 subbands, joint stereo or loudness by default, with
   the bitpool capped at 53 and the sink's range. At 44.1 kHz that is a 119-byte

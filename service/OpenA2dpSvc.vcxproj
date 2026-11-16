@@ -25,6 +25,7 @@
 	<ClCompile Include="..\codecs\sbc\SbcEncoder.cpp" />
 	<ClCompile Include="..\codecs\aptx\classic\AptxCodec.cpp" />
 	<ClCompile Include="..\codecs\aptx\hd\AptxHdCodec.cpp" />
+	<ClCompile Include="..\codecs\aptx\ll\AptxLlCodec.cpp" />
 	<ClCompile Include="..\codecs\aptx\hd\AptxHdStreamEncoder.cpp" />
 	<ClCompile Include="..\codecs\aptx\classic\AptxStreamEncoder.cpp" />
 	<ClCompile Include="..\codecs\ldac\LdacCodec.cpp" />

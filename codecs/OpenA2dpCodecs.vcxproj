@@ -25,9 +25,11 @@
 	<ClInclude Include="..\common\include\OpenA2dp\SbcFilter.h" />
 	<ClInclude Include="include\OpenA2dp\AptxCodec.h" />
 	<ClInclude Include="include\OpenA2dp\AptxHdCodec.h" />
+	<ClInclude Include="include\OpenA2dp\AptxLlCodec.h" />
 	<ClInclude Include="include\OpenA2dp\AptxStreamEncoder.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\Aptx.h" />
 	<ClInclude Include="..\common\include\OpenA2dp\VendorAptx.h" />
+	<ClInclude Include="..\common\include\OpenA2dp\AptxLl.h" />
 	<ClInclude Include="aptx\classic\include\aptXbtenc.h" />
 	<ClInclude Include="aptx\classic\src\AptxEncoder.h" />
 	<ClInclude Include="aptx\classic\src\AptxParameters.h" />
@@ -64,6 +66,7 @@
 	<ClCompile Include="aac\LatmWriter.cpp" />
 	<ClCompile Include="aptx\classic\AptxCodec.cpp" />
 	<ClCompile Include="aptx\hd\AptxHdCodec.cpp" />
+	<ClCompile Include="aptx\ll\AptxLlCodec.cpp" />
 	<ClCompile Include="aptx\hd\AptxHdStreamEncoder.cpp" />
 	<ClCompile Include="aptx\classic\AptxStreamEncoder.cpp" />
 	<ClCompile Include="ldac\LdacCodec.cpp" />

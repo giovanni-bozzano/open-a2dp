@@ -5,6 +5,7 @@
 #include <OpenA2dp/AacStreamEncoder.h>
 #include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/AptxHd.h>
+#include <OpenA2dp/AptxLl.h>
 #include <OpenA2dp/AptxHdStreamEncoder.h>
 #include <OpenA2dp/AptxStreamEncoder.h>
 #include <OpenA2dp/LdacStreamEncoder.h>
@@ -288,6 +289,7 @@ void DeviceLoop(const std::wstring& linkName)
 		return;
 	}
 	(void)RegisterEncoder(h, Ioctl::kCodecAptx, "aptX");
+	(void)RegisterEncoder(h, Ioctl::kCodecAptxLl, "aptX LL");
 	(void)RegisterEncoder(h, Ioctl::kCodecAptxHd, "aptX HD");
 	(void)RegisterEncoder(h, Ioctl::kCodecLdac, "LDAC");
 
@@ -436,33 +438,46 @@ void DeviceLoop(const std::wstring& linkName)
 				continue;
 			}
 
-			if (ev.codec == Ioctl::kCodecAptx) {
-				Log("[svc] aptX stream start: %u Hz, %u ch, %u-bit", ev.sampleRate, ev.channels,
+			if (ev.codec == Ioctl::kCodecAptx || ev.codec == Ioctl::kCodecAptxLl) {
+				// LL is classic aptX on the wire; only its vendor identity and buffer levels
+				// differ, so both codecs use the same encoder and the same record span.
+				const bool ll = ev.codec == Ioctl::kCodecAptxLl;
+				const char* name = ll ? "aptX LL" : "aptX";
+				Log("[svc] %s stream start: %u Hz, %u ch, %u-bit", name, ev.sampleRate, ev.channels,
 					ev.pcmValidBits);
 				// The endpoint runs 24-in-32 while aptX HD can, even when classic is selected, so
-				// the stream narrows it instead of failing: the sink then hears classic aptX.
+				// the stream narrows it instead of failing: the sink then hears aptX.
 				if (ev.channels != 2 ||
 					(ev.pcmValidBits != Aptx::kBitsPerSample && ev.pcmValidBits != 24)) {
-					Log("[svc] aptX needs 16- or 24-bit stereo, got %u ch %u-bit", ev.channels, ev.pcmValidBits);
+					Log("[svc] %s needs 16- or 24-bit stereo, got %u ch %u-bit", name, ev.channels,
+						ev.pcmValidBits);
 					continue;
 				}
 
-				uint8_t ie[Aptx::kIeLength] = {};
-				Aptx::WriteIe(ev.sampleRate == 44100 ? Aptx::kSampleRate44100 : Aptx::kSampleRate48000, ie);
+				uint8_t ie[AptxLl::kIeLength] = {};
+				const uint8_t rate = ev.sampleRate == 44100
+					? static_cast<uint8_t>(ll ? AptxLl::kSampleRate44100 : Aptx::kSampleRate44100)
+					: static_cast<uint8_t>(ll ? AptxLl::kSampleRate48000 : Aptx::kSampleRate48000);
+				if (ll) {
+					AptxLl::WriteIe(rate, ie);
+				} else {
+					Aptx::WriteIe(rate, ie);
+				}
 				A2dpCodecConfig config = {};
 				config.codec = CodecType::Vendor;
-				std::memcpy(config.ie, ie, sizeof(ie));
-				config.ieLength = static_cast<uint8_t>(sizeof(ie));
+				config.ieLength = static_cast<uint8_t>(ll ? AptxLl::kIeLength : Aptx::kIeLength);
+				std::memcpy(config.ie, ie, config.ieLength);
 
-				auto codec = CreateVendorCodec(Aptx::kVendorId, Aptx::kCodecId);
+				auto codec = ll ? CreateVendorCodec(AptxLl::kVendorId, AptxLl::kCodecId)
+								: CreateVendorCodec(Aptx::kVendorId, Aptx::kCodecId);
 				if (!codec) {
-					Log("[svc] aptX codec is not available");
+					Log("[svc] %s codec is not available", name);
 					continue;
 				}
 				std::unique_ptr<IA2dpEncoder> encoder;
 				const HRESULT hr = codec->CreateEncoder(config, encoder);
 				if (FAILED(hr)) {
-					Log("[svc] aptX CreateEncoder failed: 0x%08X", (unsigned)hr);
+					Log("[svc] %s CreateEncoder failed: 0x%08X", name, (unsigned)hr);
 					continue;
 				}
 

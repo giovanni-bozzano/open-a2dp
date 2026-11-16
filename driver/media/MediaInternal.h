@@ -113,7 +113,7 @@ uint32_t SbcPacketSamples(DEVICE_CONTEXT* ctx);
 void ApplyLeadFloor(DEVICE_CONTEXT* ctx, uint32_t unitSamples);
 void OnMediaWorkItem(_In_ WDFWORKITEM workItem);
 void StartAac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength);
-void StartAptx(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength);
+void StartAptx(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength, uint32_t codecValue);
 void StartAptxHd(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength);
 void StartLdac(DEVICE_CONTEXT* ctx, const UCHAR* ie, SIZE_T ieLength);
 } // namespace OpenA2dpDriver::Media

@@ -99,7 +99,8 @@ static void ContinueMediaOpenRetry(DEVICE_CONTEXT* ctx)
 static bool ProviderCodec(uint32_t codecValue) noexcept
 {
 	return codecValue == Ioctl::kCodecAac || codecValue == Ioctl::kCodecAptx ||
-		codecValue == Ioctl::kCodecAptxHd || codecValue == Ioctl::kCodecLdac;
+		codecValue == Ioctl::kCodecAptxHd || codecValue == Ioctl::kCodecLdac ||
+		codecValue == Ioctl::kCodecAptxLl;
 }
 
 static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t& codecValue)
@@ -126,6 +127,11 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 	const bool ldacUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecLdac) && offers(Ioctl::kSinkCodecLdac) &&
 		AptxPinDepthUsable(ctx->PinValidBits, Ldac::kBitsPerSample) && ctx->PinChannels == 2 &&
 		ldacPayload >= Ldac::kMinMtuBytes;
+	// LL is a latency choice, so it is selectable only when forced: it never enters the
+	// automatic order below.
+	const bool aptxLlUsable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptxLl) &&
+		offers(Ioctl::kSinkCodecAptxLl) && AptxPinDepthUsable(ctx->PinValidBits, AptxLl::kBitsPerSample) &&
+		ctx->PinChannels == 2;
 	// A forced codec that cannot run keeps the stream silent, which is what the preference
 	// asks for - except while a provider that served the configured stream is missing: the
 	// fallback then takes a codec the driver encodes itself, and the provider's return
@@ -161,6 +167,14 @@ static bool DesiredCodec(DEVICE_CONTEXT* ctx, Avdtp::CodecType& codec, uint32_t&
 			{
 				codec = Avdtp::CodecType::Vendor;
 				codecValue = Ioctl::kCodecAptx;
+				return true;
+			}
+			break;
+		case Ioctl::kCodecAptxLl:
+			if (aptxLlUsable)
+			{
+				codec = Avdtp::CodecType::Vendor;
+				codecValue = Ioctl::kCodecAptxLl;
 				return true;
 			}
 			break;

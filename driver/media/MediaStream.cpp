@@ -76,13 +76,17 @@ void MediaStart(_In_ DEVICE_CONTEXT* ctx, Avdtp::CodecType codec, _In_reads_byte
 		{
 			StartLdac(ctx, ie, ieLength);
 		}
+		else if (AptxLl::ParseIe(ie, ieLength, capabilities))
+		{
+			StartAptx(ctx, ie, ieLength, Ioctl::kCodecAptxLl);
+		}
 		else if (AptxHd::ParseIe(ie, ieLength, capabilities))
 		{
 			StartAptxHd(ctx, ie, ieLength);
 		}
 		else
 		{
-			StartAptx(ctx, ie, ieLength);
+			StartAptx(ctx, ie, ieLength, Ioctl::kCodecAptx);
 		}
 		return;
 	}

@@ -296,6 +296,10 @@ const char* CodecName(uint32_t codec)
 	{
 		return "aptX HD";
 	}
+	if (codec == Ioctl::kCodecAptxLl)
+	{
+		return "aptX LL";
+	}
 	if (codec == Ioctl::kCodecAptx)
 	{
 		return "aptX";
@@ -379,6 +383,10 @@ std::string CodecListText(uint32_t codecs)
 	if ((codecs & Ioctl::kSinkCodecAptxHd) != 0)
 	{
 		text += text.empty() ? "aptX HD" : ", aptX HD";
+	}
+	if ((codecs & Ioctl::kSinkCodecAptxLl) != 0)
+	{
+		text += text.empty() ? "aptX LL" : ", aptX LL";
 	}
 	if ((codecs & Ioctl::kSinkCodecLdac) != 0)
 	{

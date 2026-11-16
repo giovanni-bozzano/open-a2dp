@@ -17,6 +17,7 @@
 
 #include <OpenA2dp/Aptx.h>
 #include <OpenA2dp/AptxHd.h>
+#include <OpenA2dp/AptxLl.h>
 #include <OpenA2dp/AvdtpSource.h>
 #include <OpenA2dp/Ioctl.h>
 #include <OpenA2dp/Ldac.h>
@@ -141,6 +142,7 @@ inline const char* CodecValueName(uint32_t codec)
 	case OpenA2dp::Ioctl::kCodecAac: return "AAC";
 	case OpenA2dp::Ioctl::kCodecAptxHd: return "aptX HD";
 	case OpenA2dp::Ioctl::kCodecLdac: return "LDAC";
+	case OpenA2dp::Ioctl::kCodecAptxLl: return "aptX LL";
 	default: return "?";
 	}
 }
@@ -158,6 +160,10 @@ inline const char* CodecLabel(OpenA2dp::Avdtp::CodecType codec, const uint8_t* i
 	if (OpenA2dp::Ldac::ParseIe(ie, ieLength, capabilities, modes))
 	{
 		return "LDAC";
+	}
+	if (OpenA2dp::AptxLl::ParseIe(ie, ieLength, capabilities))
+	{
+		return "aptX LL";
 	}
 	if (OpenA2dp::AptxHd::ParseIe(ie, ieLength, capabilities))
 	{
@@ -412,6 +418,9 @@ struct DEVICE_CONTEXT
 	// The sample-rate/channel-mode byte of the aptX HD capabilities the sink advertised in the
 	// last discovery, 0 until one ran. The endpoint's 24-bit formats follow it.
 	volatile LONG SinkHdCapabilities;
+	// The same byte for aptX LL. LL is selected only when the user forces it, but the
+	// advertisement still decides whether the 16-bit formats are listed for it.
+	volatile LONG SinkAptxLlCapabilities;
 	// The same byte for classic aptX; its 16-bit formats follow it.
 	volatile LONG SinkAptxCapabilities;
 	// LDAC's two masks as one word: the sampling rates in the high byte, the channel modes in

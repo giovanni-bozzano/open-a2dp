@@ -332,6 +332,8 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 	const uint8_t sinkFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkSbcCapabilities, 0, 0));
 	const uint8_t hdFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkHdCapabilities, 0, 0));
 	const uint8_t aptxFormats = static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkAptxCapabilities, 0, 0));
+	const uint8_t aptxLlFormats =
+		static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkAptxLlCapabilities, 0, 0));
 	// LDAC's advertisement packs the rate mask in the high byte and the channel modes in the low
 	// one; only the rate mask decides formats here, because LDAC runs stereo only.
 	const uint8_t ldacRates =
@@ -342,11 +344,15 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 	// formats follow it just like SBC's, because it is another way to play them.
 	const bool aptxAvailable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptx) &&
 		(sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecAptx)) != 0;
+	const bool aptxLlAvailable = ServiceCodecRegistered(ctx, Ioctl::kCodecAptxLl) &&
+		(sinkCodecs & static_cast<LONG>(Ioctl::kSinkCodecAptxLl)) != 0;
 	const Ioctl::Preference preference = StoredPreference(ctx);
 	const bool forcedHd = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
 		preference.codec == Ioctl::kCodecAptxHd;
+	// LL plays the same 16-bit formats as classic aptX, so a pin on either narrows the list
+	// the same way.
 	const bool forcedAptx = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
-		preference.codec == Ioctl::kCodecAptx;
+		(preference.codec == Ioctl::kCodecAptx || preference.codec == Ioctl::kCodecAptxLl);
 	// LDAC plays 88.2 and 96 kHz as well, so its advertisement is what lists those formats, and
 	// it narrows a 24-in-32 stream the way classic aptX does.
 	const bool ldacAvailable = ServiceCodecRegistered(ctx, Ioctl::kCodecLdac) &&
@@ -365,7 +371,9 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 		const uint8_t aptxBit = sampleRate == 44100 ? VendorAptx::kSampleRate44100
 			: sampleRate == 48000 ? VendorAptx::kSampleRate48000 : 0;
 		const uint8_t ldacBit = Ldac::RateBit(sampleRate);
-		const bool aptxOk = stereo && aptxBit != 0 && aptxAvailable && (aptxFormats & aptxBit) != 0;
+		const bool aptxOk = stereo && aptxBit != 0 &&
+			((aptxAvailable && (aptxFormats & aptxBit) != 0) ||
+			 (aptxLlAvailable && (aptxLlFormats & aptxBit) != 0));
 		const bool ldacOk = stereo && ldacBit != 0 && ldacAvailable && (ldacRates & ldacBit) != 0;
 		bool keep = false;
 		if (AudioRenderValidBitsAt(i) == AptxHd::kBitsPerSample)
@@ -377,7 +385,7 @@ ULONG DesiredFormats(_In_ DEVICE_CONTEXT* ctx)
 			{
 				keep = hdOk;
 			}
-			else if (forcedAptx && aptxAvailable)
+			else if (forcedAptx && (aptxAvailable || aptxLlAvailable))
 			{
 				keep = aptxOk;
 			}
@@ -463,6 +471,17 @@ bool CodecCanCarryFormat(_In_ DEVICE_CONTEXT* ctx, ULONG codec, ULONG sampleRate
 			   SbcConfig::SupportsFormat(sinkFormats, sampleRate, static_cast<uint8_t>(channels));
 	case Ioctl::kCodecAac:
 		return AacConfig::EncoderSupportsRate(sampleRate) && (channels == 1 || channels == 2);
+	case Ioctl::kCodecAptxLl:
+	{
+		if (channels != 2 || (sampleRate != 44100 && sampleRate != 48000))
+		{
+			return false;
+		}
+		const uint8_t advertised =
+			static_cast<uint8_t>(InterlockedCompareExchange(&ctx->SinkAptxLlCapabilities, 0, 0));
+		const uint8_t bit = sampleRate == 44100 ? VendorAptx::kSampleRate44100 : VendorAptx::kSampleRate48000;
+		return advertised == 0 || (advertised & bit) != 0;
+	}
 	case Ioctl::kCodecAptx:
 	case Ioctl::kCodecAptxHd:
 	{

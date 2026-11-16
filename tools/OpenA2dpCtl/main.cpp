@@ -262,6 +262,10 @@ int CodecIndexOf(const std::string& name)
 	{
 		return static_cast<int>(Ioctl::kCodecAptxHd);
 	}
+	if (name == "aptxll")
+	{
+		return static_cast<int>(Ioctl::kCodecAptxLl);
+	}
 	return name == "ldac" ? static_cast<int>(Ioctl::kCodecLdac) : -1;
 }
 
@@ -529,6 +533,15 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 				CodecListText(sink.sinkCodecs).c_str());
 		return 1;
 	}
+	if (codecArg == "aptxll" && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecAptxLl) == 0)
+	{
+		CloseHandle(handle);
+		std::fprintf(stderr,
+					 "the sink does not advertise aptX LL (it offers %s); use `codec auto` or `codec sbc`. "
+					 "No preference was stored.\n",
+				CodecListText(sink.sinkCodecs).c_str());
+		return 1;
+	}
 	if (isLdac && sink.sinkCodecs != 0 && (sink.sinkCodecs & Ioctl::kSinkCodecLdac) == 0)
 	{
 		CloseHandle(handle);
@@ -561,6 +574,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 		preference.codec = isLdac ? Ioctl::kCodecLdac
 			: isAptxHd ? Ioctl::kCodecAptxHd
 			: isAptx ? Ioctl::kCodecAptx
+			: codecArg == "aptxll" ? Ioctl::kCodecAptxLl
 			: codecArg == "aac"
 			? Ioctl::kCodecAac
 			: Ioctl::kCodecSbc;
@@ -618,6 +632,7 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 				   : preference.codec == Ioctl::kCodecLdac   ? "LDAC"
 				   : preference.codec == Ioctl::kCodecAptxHd ? "aptX HD"
 				   : preference.codec == Ioctl::kCodecAptx ? "aptX"
+				   : preference.codec == Ioctl::kCodecAptxLl ? "aptX LL"
 				   : preference.codec == Ioctl::kCodecAac     ? "AAC"
 																 : "SBC",
 			DeviceLabel(device).c_str());
@@ -635,6 +650,14 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	{
 		std::printf("\nnote: no aptX encoder is registered, so aptX is not offered.\n");
 	}
+	if (force && preference.codec == Ioctl::kCodecAptxLl)
+	{
+		const bool llRegistered = (status.encoderRegistered & Ioctl::EncoderBit(Ioctl::kCodecAptxLl)) != 0;
+		if (!llRegistered)
+		{
+			std::printf("\nnote: no aptX LL encoder is registered, so aptX LL is not offered.\n");
+		}
+	}
 	if (force && preference.codec == Ioctl::kCodecAptxHd && !hdRegistered)
 	{
 		std::printf("\nnote: no aptX HD encoder is registered, so aptX HD is not offered.\n");
@@ -648,12 +671,14 @@ int CommandCodec(const std::vector<Device>& devices, const std::string& spec, co
 	const bool wantsHd = force ? preference.codec == Ioctl::kCodecAptxHd : hdRegistered && !ldacRegistered;
 	const bool wantsAptx =
 		force ? preference.codec == Ioctl::kCodecAptx : aptxRegistered && !hdRegistered && !ldacRegistered;
+	const bool wantsAptxLl = force && preference.codec == Ioctl::kCodecAptxLl;
 	const bool wantsAac = force ? preference.codec == Ioctl::kCodecAac
 								: aacRegistered && !hdRegistered && !aptxRegistered && !ldacRegistered;
 	const bool wantsSbc = force && preference.codec == Ioctl::kCodecSbc;
 	const bool codecChanges = (wantsLdac && status.codec != Ioctl::kCodecLdac) ||
 							  (wantsHd && status.codec != Ioctl::kCodecAptxHd) ||
 							  (wantsAptx && status.codec != Ioctl::kCodecAptx) ||
+							  (wantsAptxLl && status.codec != Ioctl::kCodecAptxLl) ||
 							  (wantsAac && status.codec != Ioctl::kCodecAac) ||
 							  (wantsSbc && status.codec != Ioctl::kCodecSbc);
 	if (streaming && (codecChanges || overrides.ParameterChange()))

@@ -20,7 +20,7 @@ namespace OpenA2dp::Ioctl {
 
 // Development baseline; driver, service and tools must come from the same build.
 // No compatibility with earlier development layouts is provided.
-constexpr uint32_t kAbiVersion = 12;
+constexpr uint32_t kAbiVersion = 13;
 
 // Every OpenA2dp device instance (one per sink) exposes a control device.
 // The SDDL limits access to SYSTEM and Administrators, so the rings cannot be
@@ -68,7 +68,7 @@ constexpr uint32_t EffectivePauseGraceMs(uint32_t preferred) noexcept
 // Clock span the encoder service covers with one record (aptX, aptX HD); AAC writes one record
 // per access unit instead. The driver holds its pacing lead above a record, because a lead
 // shorter than the interval in which the producer hands audio over cannot be served.
-constexpr uint32_t kServiceRecordMs = 10;
+constexpr uint32_t kServiceRecordMs = 10; // aptX, aptX HD, aptX LL and LDAC records
 
 // Ring capacities, bytes (powers of two). The frame ring holds ~1.6 s at 320 kbps. PCM is sized
 // by time at the widest stream the endpoint offers rather than as a count of bytes: 96 kHz
@@ -91,6 +91,7 @@ constexpr uint32_t kCodecAptx = 0x01;
 constexpr uint32_t kCodecAac = 0x02;
 constexpr uint32_t kCodecAptxHd = 0x03;
 constexpr uint32_t kCodecLdac = 0x04;
+constexpr uint32_t kCodecAptxLl = 0x05;
 
 enum class MediaState : uint32_t {
 	Idle = 0,
@@ -145,6 +146,7 @@ constexpr uint32_t kSinkCodecAac = 1u << 1;
 constexpr uint32_t kSinkCodecAptxHd = 1u << 2;
 constexpr uint32_t kSinkCodecAptx = 1u << 3;
 constexpr uint32_t kSinkCodecLdac = 1u << 4;
+constexpr uint32_t kSinkCodecAptxLl = 1u << 5;
 
 // Status.encoderRegistered and DEVICE_CONTEXT::EncoderRegistered hold one bit per registered
 // encoder codec. Registration is per codec because each provider supplies one codec, and a
@@ -196,7 +198,7 @@ struct VersionInfo {
 
 struct RegisterEncoderIn {
 	uint32_t abiVersion;       // must equal kAbiVersion
-	uint32_t codec;            // kCodecAac, kCodecAptx or kCodecAptxHd
+	uint32_t codec;            // kCodecAac, kCodecAptx, kCodecAptxHd, kCodecLdac or kCodecAptxLl
 	uint32_t maxFramePayload;  // service limit; 0 = no limit (driver clamps)
 	uint32_t reserved;
 };
@@ -410,7 +412,7 @@ struct Preference {
 // pick, so a pinned format is offered alone: that is the only way the format the user wants is
 // the one the engine plays. An entry applies while its codec is the one in use, so pinning
 // 96 kHz for LDAC leaves SBC its own rate instead of making the two conflict.
-constexpr uint32_t kCodecCount = 5; // kCodecSbc, kCodecAptx, kCodecAac, kCodecAptxHd, kCodecLdac
+constexpr uint32_t kCodecCount = 6; // kCodecSbc, kCodecAptx, kCodecAac, kCodecAptxHd, kCodecLdac, kCodecAptxLl
 
 struct EndpointFormat {
 	uint32_t abiVersion;
@@ -461,8 +463,8 @@ constexpr bool ValidEndpointFormat(const EndpointFormat& format) noexcept
 	return true;
 }
 
-static_assert(kCodecCount == kCodecLdac + 1, "every codec has an endpoint format entry");
-static_assert(sizeof(EndpointFormat) == 48, "EndpointFormat layout is part of the driver/CLI ABI");
+static_assert(kCodecCount == kCodecAptxLl + 1, "every codec has an endpoint format entry");
+static_assert(sizeof(EndpointFormat) == 56, "EndpointFormat layout is part of the driver/CLI ABI");
 
 // Range SbcFramesPerPacket accepts (see SbcFrame::kMaxFramesPerPacket).
 constexpr uint32_t kSbcMinFramesPerPacket = 1;
@@ -511,7 +513,7 @@ constexpr bool ValidPreference(const Preference& preference) noexcept
 	}
 	return preference.codec == kCodecSbc || preference.codec == kCodecAptx ||
 		   preference.codec == kCodecAac || preference.codec == kCodecAptxHd ||
-		   preference.codec == kCodecLdac;
+		   preference.codec == kCodecLdac || preference.codec == kCodecAptxLl;
 }
 
 static_assert(sizeof(Preference) == 48, "Preference layout is part of the driver/CLI ABI");

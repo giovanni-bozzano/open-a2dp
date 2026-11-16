@@ -12,9 +12,10 @@ namespace OpenA2dp::Avdtp {
 constexpr size_t kMaxSignalPacket = 128;
 constexpr size_t kMaxSinkSeps = 8;
 constexpr size_t kMaxCodecIe = 32;
-constexpr size_t kMaxLocalSeps = 5; // one per local SEID: SBC, AAC, aptX HD, aptX, LDAC
+constexpr size_t kMaxLocalSeps = 6; // one per local SEID: SBC, AAC, aptX HD, aptX, LDAC, aptX LL
 // SEID 1 is always SBC (mandatory fallback); SEID 2 is AAC; SEID 3 is aptX HD and SEID 4 is
-// classic aptX. All are always advertised: whether a codec may actually be selected is
+// classic aptX; SEID 5 is LDAC and SEID 6 is aptX LL. All are always advertised: whether a
+// codec may actually be selected is
 // decided per negotiation by the selector, because the encoder service can register after
 // the session was created (and can disappear again).
 constexpr uint8_t kLocalSeid = 1;
@@ -22,6 +23,7 @@ constexpr uint8_t kLocalAacSeid = 2;
 constexpr uint8_t kLocalAptxHdSeid = 3;
 constexpr uint8_t kLocalAptxSeid = 4;
 constexpr uint8_t kLocalLdacSeid = 5;
+constexpr uint8_t kLocalAptxLlSeid = 6;
 
 enum class SessionState : uint8_t {
 	Idle,
@@ -98,7 +100,8 @@ public:
 	}
 
 	// Adds or replaces an extra local SEP (SEID 2 = AAC, SEID 3 = aptX HD, SEID 4 = classic
-	// aptX, SEID 5 = LDAC). SEID 1 is the mandatory SBC SEP and cannot be replaced. False when
+	// aptX, SEID 5 = LDAC, SEID 6 = aptX LL). SEID 1 is the mandatory SBC SEP and cannot be
+	// replaced. False when
 	// the SEP cannot be added: SEID 0 or 1, an IE that does not fit, or a full table. The caller
 	// reports it, because a SEP that silently does not fit is never advertised and the codec it
 	// carries can never be negotiated.

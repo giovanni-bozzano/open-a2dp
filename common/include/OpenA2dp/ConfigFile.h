@@ -133,6 +133,7 @@ inline int CodecFromName(const char* name, size_t length) noexcept
 		{"aac", Ioctl::kCodecAac},
 		{"aptxhd", Ioctl::kCodecAptxHd},
 		{"ldac", Ioctl::kCodecLdac},
+		{"aptxll", Ioctl::kCodecAptxLl},
 	};
 	if (KeyIs(name, length, "auto"))
 	{
@@ -157,6 +158,7 @@ inline const char* CodecName(uint32_t codec) noexcept
 	case Ioctl::kCodecAac: return "aac";
 	case Ioctl::kCodecAptxHd: return "aptxhd";
 	case Ioctl::kCodecLdac: return "ldac";
+	case Ioctl::kCodecAptxLl: return "aptxll";
 	default: return "auto";
 	}
 }
@@ -406,6 +408,7 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 		{"[aptx]\r\n", Ioctl::kCodecAptx},
 		{"[aptxhd]\r\n", Ioctl::kCodecAptxHd},
 		{"[ldac]\r\n", Ioctl::kCodecLdac},
+		{"[aptxll]\r\n", Ioctl::kCodecAptxLl},
 	};
 	for (const auto& section : kSections)
 	{

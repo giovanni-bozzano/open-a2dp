@@ -3,6 +3,7 @@
 #include <OpenA2dp/AacCodec.h>
 #include <OpenA2dp/AptxCodec.h>
 #include <OpenA2dp/AptxHdCodec.h>
+#include <OpenA2dp/AptxLlCodec.h>
 #include <OpenA2dp/LdacCodec.h>
 
 namespace OpenA2dp {
@@ -33,6 +34,9 @@ std::unique_ptr<IA2dpCodec> CreateVendorCodec(uint32_t vendorId, uint16_t codecI
 	}
 	if (vendorId == Ldac::kVendorId && codecId == Ldac::kCodecId) {
 		return std::make_unique<LdacCodec>();
+	}
+	if (vendorId == AptxLl::kVendorId && codecId == AptxLl::kCodecId) {
+		return std::make_unique<AptxLlCodec>();
 	}
 	return nullptr;
 }

@@ -13,6 +13,7 @@ its own licence, and the repository licence does not replace it.
 | AAC-LC | Windows Media Foundation, called from `codecs/aac` | No AAC encoder code or binary is distributed by this project |
 | aptX | Qualcomm's AOSP encoder, vendored in `codecs/aptx/classic` | Apache-2.0, including its patent grant |
 | aptX HD | Qualcomm's AOSP encoder, vendored in `codecs/aptx/hd` | Apache-2.0, including its patent grant |
+| aptX LL | The classic aptX encoder, reused under the LL identity | Apache-2.0, including its patent grant |
 | LDAC | Sony's AOSP encoder, vendored in `codecs/ldac` | Apache-2.0 |
 
 The vendored aptX, aptX HD and LDAC encoder sources are unmodified from AOSP and

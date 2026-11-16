@@ -48,6 +48,11 @@ void ConfigFormat(Avdtp::CodecType codec, const uint8_t* ie, size_t ieLength, ui
 			sampleRate = Ldac::RateValue(capabilities);
 			channels = (channelModes & Ldac::kChannelStereo) != 0 ? 2u : 1u;
 		}
+		else if (AptxLl::ParseIe(ie, ieLength, capabilities))
+		{
+			sampleRate = (capabilities & VendorAptx::kSampleRate44100) != 0 ? 44100u : 48000u;
+			channels = (capabilities & VendorAptx::kChannelStereo) != 0 ? 2u : 1u;
+		}
 		else if (AptxHd::ParseIe(ie, ieLength, capabilities) || Aptx::ParseIe(ie, ieLength, capabilities))
 		{
 			sampleRate = (capabilities & VendorAptx::kSampleRate44100) != 0 ? 44100u : 48000u;
@@ -290,6 +295,55 @@ uint32_t SelectConfig(void* context, Avdtp::CodecType codec, const uint8_t* remo
 			return AcceptSelected(ctx, codec, configIe, configIeLength, 5);
 		}
 
+		uint8_t llCapabilities = 0;
+		if (AptxLl::ParseIe(remoteIe, remoteIeLength, llCapabilities))
+		{
+			// LL is a latency choice, not a quality one, so the automatic order never picks
+			// it: the user has to force it. The advertisement is still recorded, because the
+			// settings window refuses to force a codec the sink does not offer.
+			const bool llOffered = (InterlockedOr(&ctx->SinkCodecs,
+				static_cast<LONG>(Ioctl::kSinkCodecAptxLl)) &
+				static_cast<LONG>(Ioctl::kSinkCodecAptxLl)) != 0;
+			InterlockedExchange(&ctx->SinkAptxLlCapabilities, llCapabilities);
+			if (!llOffered)
+			{
+				OA2DP_INFO(ctx, "AVDTP", "sink offers aptX LL (rates 0x%02X, modes 0x%02X)",
+					static_cast<unsigned>(llCapabilities & AptxLl::kSampleRateMask),
+					static_cast<unsigned>(llCapabilities & AptxLl::kChannelMask));
+				const NTSTATUS formatStatus = AudioApplyEndpointFormats(ctx);
+				if (!NT_SUCCESS(formatStatus))
+				{
+					OA2DP_WARN(ctx, "AVDTP",
+						"applying the sink's formats to the endpoint failed 0x%08X", formatStatus);
+				}
+			}
+			if (!forceCodec || preference.codec != Ioctl::kCodecAptxLl ||
+				!ServiceCodecRegistered(ctx, Ioctl::kCodecAptxLl))
+			{
+				return 0;
+			}
+			if (ctx->PinChannels != 2 ||
+				!AptxPinDepthUsable(ctx->PinValidBits, AptxLl::kBitsPerSample))
+			{
+				OA2DP_WARN(ctx, "AVDTP",
+					"aptX LL needs 16-bit stereo, the endpoint format is %u ch %u-bit",
+					static_cast<unsigned>(ctx->PinChannels),
+					static_cast<unsigned>(ctx->PinValidBits));
+				return 0;
+			}
+			const uint8_t llRate = ctx->PinSampleRate == 44100 ? AptxLl::kSampleRate44100
+				: ctx->PinSampleRate == 48000 ? AptxLl::kSampleRate48000 : 0;
+			if (llRate == 0 || (llCapabilities & llRate) == 0)
+			{
+				OA2DP_WARN(ctx, "AVDTP",
+					"the sink cannot serve the endpoint's %u Hz with aptX LL", ctx->PinSampleRate);
+				return 0;
+			}
+			AptxLl::WriteIe(llRate, configIe);
+			configIeLength = AptxLl::kIeLength;
+			return AcceptSelected(ctx, codec, configIe, configIeLength, 3);
+		}
+
 		uint8_t capabilities = 0;
 		const bool hd = AptxHd::ParseIe(remoteIe, remoteIeLength, capabilities);
 		const bool aptx = !hd && Aptx::ParseIe(remoteIe, remoteIeLength, capabilities);
@@ -443,6 +497,29 @@ uint8_t ValidateConfig(void* context, Avdtp::CodecType codec, const uint8_t* ie,
 			return 0;
 		}
 		uint8_t capabilities = 0;
+		if (AptxLl::ParseIe(ie, ieLength, capabilities))
+		{
+			// A sink may configure LL itself, but only a forced preference makes it this
+			// driver's choice; otherwise the user asked for another codec.
+			Ioctl::Preference preference;
+			{
+				KIRQL irql;
+				KeAcquireSpinLock(&ctx->PreferenceLock, &irql);
+				preference = ctx->Preference;
+				KeReleaseSpinLock(&ctx->PreferenceLock, irql);
+			}
+			if ((preference.flags & Ioctl::kPreferenceForceCodec) == 0 ||
+				preference.codec != Ioctl::kCodecAptxLl)
+			{
+				return static_cast<uint8_t>(Avdtp::ErrorCode::NotSupportedCodecType);
+			}
+			const uint8_t llError = AptxLl::ValidateIe(ie, ieLength);
+			if (llError != 0)
+			{
+				return llError;
+			}
+			return ValidateAptxConfiguration(ctx, Ioctl::kCodecAptxLl, AptxLl::kBitsPerSample, capabilities);
+		}
 		if (AptxHd::ParseIe(ie, ieLength, capabilities))
 		{
 			const uint8_t error = AptxHd::ValidateIe(ie, ieLength);
@@ -527,6 +604,11 @@ bool SelectedCodecValue(DEVICE_CONTEXT* ctx, uint32_t& codecValue)
 		codecValue = Ioctl::kCodecLdac;
 		return true;
 	}
+	if (AptxLl::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
+	{
+		codecValue = Ioctl::kCodecAptxLl;
+		return true;
+	}
 	if (AptxHd::ParseIe(ctx->Session.SelectedIe(), ctx->Session.SelectedIeLength(), capabilities))
 	{
 		codecValue = Ioctl::kCodecAptxHd;
@@ -589,6 +671,10 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	Aptx::WriteIe(static_cast<uint8_t>(Aptx::kSampleRate44100 | Aptx::kSampleRate48000), aptxIe);
 	AddLocalSep(ctx, Avdtp::kLocalAptxSeid, Ioctl::kCodecAptx, Avdtp::CodecType::Vendor, aptxIe,
 		sizeof(aptxIe));
+	uint8_t aptxLlIe[AptxLl::kIeLength] = {};
+	AptxLl::WriteIe(static_cast<uint8_t>(AptxLl::kSampleRate44100 | AptxLl::kSampleRate48000), aptxLlIe);
+	AddLocalSep(ctx, Avdtp::kLocalAptxLlSeid, Ioctl::kCodecAptxLl, Avdtp::CodecType::Vendor, aptxLlIe,
+		sizeof(aptxLlIe));
 	uint8_t ldacIe[Ldac::kIeLength] = {};
 	// Every rate the endpoint can be opened at: the sink picks among them, and SelectConfig
 	// narrows the choice to the endpoint's own rate.
@@ -621,6 +707,7 @@ void ResetSession(DEVICE_CONTEXT* ctx)
 	InterlockedExchange(&ctx->SinkCodecs, 0);
 	InterlockedExchange(&ctx->SinkHdCapabilities, 0);
 	InterlockedExchange(&ctx->SinkAptxCapabilities, 0);
+	InterlockedExchange(&ctx->SinkAptxLlCapabilities, 0);
 	InterlockedExchange(&ctx->SinkLdacCapabilities, 0);
 	ctx->AppliedPreferenceParameters = InterlockedCompareExchange(&ctx->PreferenceParameters, 0, 0);
 	// Packets queued for the previous session must not reach the next one.
