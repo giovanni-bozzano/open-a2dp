@@ -749,7 +749,7 @@ try {
     if ((Run 'sc.exe' 'query OpenA2dpSvc' 20) -ne 0) {
         if ((Run 'sc.exe' "create OpenA2dpSvc binPath= `"$svcExe`" start= auto DisplayName= `"OpenA2DP AAC encoder`"" 20) -ne 0) { throw 'sc create failed' }
     }
-    if ((Run 'sc.exe' "config OpenA2dpSvc binPath= `"$svcExe`" start= auto" 20) -ne 0) { throw 'sc config failed' }
+    if ((Run 'sc.exe' "config OpenA2dpSvc binPath= `"$svcExe`" start= auto DisplayName= `"OpenA2DP AAC encoder`"" 20) -ne 0) { throw 'sc config failed' }
     [void](Run 'sc.exe' 'description OpenA2dpSvc "AAC-LC encoder for the OpenA2DP A2DP source driver."' 20)
     [void](Run 'sc.exe' 'failure OpenA2dpSvc reset= 86400 actions= restart/5000/restart/5000/restart/5000' 20)
     $code = Run 'sc.exe' 'start OpenA2dpSvc' 30
