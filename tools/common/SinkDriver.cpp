@@ -122,6 +122,15 @@ bool CollectDriverEntries(HDEVINFO set, SP_DEVINFO_DATA& dev, std::vector<Driver
 	return true;
 }
 
+// The driver store keeps every package that was ever deployed, and SetupAPI lists each version
+// that matches the node. A switch has to install the newest one, which is the package Windows
+// itself prefers: entries that match a node equally well are settled by their DriverVer.
+bool NewerPackage(const SP_DRVINFO_DATA_W& candidate, const SP_DRVINFO_DATA_W& current)
+{
+	const int byDate = CompareFileTime(&candidate.DriverDate, &current.DriverDate);
+	return byDate != 0 ? byDate > 0 : candidate.DriverVersion > current.DriverVersion;
+}
+
 // Opens the A2DP node for a sink. `error` is set only when the enumeration itself fails.
 bool FindNode(const std::string& reference, HDEVINFO& set, SP_DEVINFO_DATA& dev, std::string& error)
 {
@@ -376,19 +385,26 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	// Only the entry matched by the service id is the A2DP source driver. A package the node
 	// also lists through `..._GENERIC` is the enumerator's catch-all, and installing it is not a
 	// move to the Windows driver, so it is not offered as one.
+	const DriverEntry* newest = nullptr;
 	for (const DriverEntry& entry : entries)
 	{
 		if (entry.ours)
 		{
-			if (state.openA2dpInf.empty())
+			// The store can hold several deployed versions of this package; the newest is the one
+			// a switch installs, so a sink never moves to an older build than the one in the store.
+			if (newest == nullptr || NewerPackage(entry.info, newest->info))
 			{
-				state.openA2dpInf = Utf8(entry.infPath);
+				newest = &entry;
 			}
 		}
 		else if (IsA2dpServiceId(entry.hardwareId) && state.windowsInf.empty())
 		{
 			state.windowsInf = Utf8(entry.infPath);
 		}
+	}
+	if (newest != nullptr)
+	{
+		state.openA2dpInf = Utf8(newest->infPath);
 	}
 
 	// The reader is told what stands in the way, in the terms of the sink in front of them.

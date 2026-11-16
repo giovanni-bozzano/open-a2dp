@@ -38,7 +38,7 @@ struct SinkDriverState
 	// The A2DP devnode carrying this sink's address.
 	std::string instanceId;
 	std::string windowsInf; // full path to the inbox A2DP INF; empty when it is not a candidate
-	std::string openA2dpInf; // full path to the OpenA2dp INF in the driver store
+	std::string openA2dpInf; // full path to the newest OpenA2dp INF in the driver store
 	// Why a switch is not possible right now; empty when it is. Written for a reader, not for
 	// a log: it is shown next to the sink.
 	std::string problem;

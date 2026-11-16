@@ -30,8 +30,10 @@ own `..._LOCALMFG&nnnn`; neither is an A2DP source.
 A sink moves between `BthA2dp` and `OpenA2DP` one node at a time.
 `tools/common/SinkDriver.*` reads the node's bound service, its instance id and
 its compatible list, then calls `DiInstallDevice` on the package entry for that
-node. The install restarts the node, so its endpoints, stream and control device
-go with it; the sink stays paired.
+node. The driver store can hold more than one deployed version of that package;
+the newest one is installed, which is the entry Windows itself would prefer. The
+install restarts the node, so its endpoints, stream and control device go with
+it; the sink stays paired.
 
 The switch is verified, not trusted: the tool reads the bound service and the
 node's problem code back. A package that installs but loses the bind, or that

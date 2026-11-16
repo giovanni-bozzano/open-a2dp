@@ -19,7 +19,8 @@ OpenA2dpCtl driver windows         # hand it back
 Only that sink's A2DP node is rebound. The other sinks keep the driver they are
 on. The node restarts, so an open stream on that sink stops; the window pauses a
 player that holds the node and tells you which program it paused. A program that
-cannot be paused refuses the switch and leaves the binding alone.
+cannot be paused refuses the switch and leaves the binding alone. If the
+driver store holds more than one OpenA2DP package, the newest one is installed.
 
 After a switch, Windows creates a new endpoint for the sink. The sink stays
 paired and reconnects through the new driver.
