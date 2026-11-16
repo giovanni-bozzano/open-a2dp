@@ -1,6 +1,6 @@
 # Build and deploy
 
-[README](../README.md) | [Using OpenA2dp](USING.md) | [Testing](TESTING.md)
+[README](../README.md) | [Using OpenA2DP](USING.md) | [Testing](TESTING.md)
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ From an elevated prompt:
 the update without rebooting:
 
 1. Stops the encoder service and both tools, which hold handles on the driver.
-2. Disables the OpenA2dp device node so the driver unloads.
+2. Disables the OpenA2DP device node so the driver unloads.
 3. Confirms the driver unloaded; if it did not, re-enables the node and aborts.
 4. Installs the package while no image is loaded.
 5. Enables the node so the new image starts.

@@ -25,7 +25,7 @@
 #include <OpenA2dp/Rtp.h>
 #include <OpenA2dp/SbcFixed.h>
 
-// Log format: "OpenA2dp <LEVEL> [<sink name> (<address>)] <Category>: <message>".
+// Log format: "OpenA2DP <LEVEL> [<sink name> (<address>)] <Category>: <message>".
 // ctx may be nullptr before a device exists (the tag is then "-"). Every level is
 // emitted at DPFLTR_INFO_LEVEL on purpose: a debug-filter mask that shows the
 // driver's messages at all must never hide the warnings and errors among them; the
@@ -33,7 +33,7 @@
 // it is safe to print at any IRQL (completion routines run at DISPATCH_LEVEL).
 #define OA2DP_TAG(ctx) OA2dpTagOf(ctx)
 #define OA2DP_LOG_AT(levelName, ctx, category, fmt, ...) \
-	DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "OpenA2dp " levelName " [%s] " category ": " fmt "\n", \
+	DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "OpenA2DP " levelName " [%s] " category ": " fmt "\n", \
 		OA2DP_TAG(ctx), __VA_ARGS__)
 #define OA2DP_INFO(ctx, category, fmt, ...) OA2DP_LOG_AT("INFO ", ctx, category, fmt, __VA_ARGS__)
 #define OA2DP_WARN(ctx, category, fmt, ...) OA2DP_LOG_AT("WARN ", ctx, category, fmt, __VA_ARGS__)

@@ -7,7 +7,7 @@ Start-HwTest -Id 'T19' -Title 'Live codec switch in one connection' -Level 'assi
     -Body {
         Require-Codec 'aac' | Out-Null
         Assert-CtlOk (Invoke-Ctl 'codec' 'auto') 'setting the codec preference to auto' | Out-Null
-        Prompt-Operator 'Disconnect the sink if it is still connected, connect it again, and start playback to the OpenA2dp endpoint.'
+        Prompt-Operator 'Disconnect the sink if it is still connected, connect it again, and start playback to the OpenA2DP endpoint.'
         Start-Audio
         Assert-Streaming -Codec 'AAC' -TimeoutSec 45 | Out-Null
 

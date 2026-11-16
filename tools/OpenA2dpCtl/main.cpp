@@ -29,7 +29,7 @@ namespace {
 using namespace OpenA2dp;
 using namespace OpenA2dp::Tools;
 
-constexpr const char* kUsage = R"(OpenA2dpCtl - inspect and configure the OpenA2dp A2DP source driver.
+constexpr const char* kUsage = R"(OpenA2dpCtl - inspect and configure the OpenA2DP A2DP source driver.
 
 Usage:
   OpenA2dpCtl [status] [--device <mac|index>] [--verbose]
@@ -49,7 +49,7 @@ Usage:
 
 Commands:
   status    Show the AVDTP/media state, codec, preference and counters (default).
-  list      List the present OpenA2dp devices.
+  list      List the present OpenA2DP devices.
   codec     Set the codec preference, stored for this sink and restored
             when the device starts. If a stream is active it is renegotiated
             immediately; otherwise the preference applies at the next AVDTP
@@ -83,7 +83,7 @@ Commands:
             to the sink holds the node open, so it is paused first: Windows
             cannot restart the node while a stream is open. A program that
             cannot be paused makes the switch refuse (exit 3) and nothing is
-            changed. The OpenA2dp package has to be deployed once
+            changed. The OpenA2DP package has to be deployed once
             (scripts/deploy-vm.ps1) for the forward switch, and the inbox
             driver has to still be a candidate for the node for the way back.
   reset     Clear this sink's stored codec preference and endpoint format, so
@@ -155,7 +155,7 @@ bool FindDevice(const std::vector<Device>& devices, const std::string& spec, siz
 {
 	if (devices.empty())
 	{
-		error = "no OpenA2dp devices found (is the driver bound to a paired sink?)";
+		error = "no OpenA2DP devices found (is the driver bound to a paired sink?)";
 		return false;
 	}
 	if (spec.empty())
@@ -165,7 +165,7 @@ bool FindDevice(const std::vector<Device>& devices, const std::string& spec, siz
 			index = 0;
 			return true;
 		}
-		error = "multiple OpenA2dp devices; select one with --device";
+		error = "multiple OpenA2DP devices; select one with --device";
 		return false;
 	}
 	std::string normalized;
@@ -339,7 +339,7 @@ int CommandList(const std::vector<Device>& devices)
 {
 	if (devices.empty())
 	{
-		std::printf("No OpenA2dp devices found.\n");
+		std::printf("No OpenA2DP devices found.\n");
 		return 1;
 	}
 

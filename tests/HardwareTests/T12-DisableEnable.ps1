@@ -8,7 +8,7 @@ Start-HwTest -Id 'T12' -Title 'Disable and enable the device node while streamin
         Start-Audio
         Assert-Streaming -Codec 'SBC' | Out-Null
         $node = Get-OpenA2dpNode
-        Assert-True ($node -ne $null) 'no OpenA2dp device node: is the sink connected and on this driver?'
+        Assert-True ($node -ne $null) 'no OpenA2DP device node: is the sink connected and on this driver?'
 
         # The disable is bounded by Set-NodeState: a disable that does not complete is the hang
         # this test exists for, and it fails with the node's state rather than waiting.

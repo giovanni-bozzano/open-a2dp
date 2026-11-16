@@ -1,15 +1,15 @@
 # Documentation
 
-OpenA2dp's documentation is split by what a reader is trying to do. Read the
+OpenA2DP's documentation is split by what a reader is trying to do. Read the
 entry that matches the task, then follow its links instead of reading everything.
 
 ## Start here
 
 | I want to... | Read |
 |---|---|
-| See what OpenA2dp adds over the Windows driver | [README](../README.md) |
+| See what OpenA2DP adds over the Windows driver | [README](../README.md) |
 | Build it, deploy it, or remove it | [Build and deploy](BUILD.md) |
-| Use the window or the command line | [Using OpenA2dp](USING.md) |
+| Use the window or the command line | [Using OpenA2DP](USING.md) |
 | Work out why a stream is misbehaving | [Diagnostics](DIAGNOSTICS.md) |
 | Run the tests | [Testing](TESTING.md) |
 | Understand the design | [Architecture](architecture/README.md) |

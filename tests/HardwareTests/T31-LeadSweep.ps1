@@ -11,7 +11,7 @@ Start-HwTest -Id 'T31' -Title 'Lead sweep down to the first underrun' -Level 'as
     -AllowWarn @('underrun', 'dropped \d+ ms of buffered') `
     -Body {
         Require-Codec 'sbc' | Out-Null
-        Prompt-Operator 'Connect the sink and start playback to the OpenA2dp endpoint.'
+        Prompt-Operator 'Connect the sink and start playback to the OpenA2DP endpoint.'
         Start-Audio
         Assert-Streaming -Codec 'SBC' -TimeoutSec 45 | Out-Null
 

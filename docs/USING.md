@@ -1,4 +1,4 @@
-# Using OpenA2dp
+# Using OpenA2DP
 
 [README](../README.md) | [Build and deploy](BUILD.md) | [Diagnostics](DIAGNOSTICS.md)
 
@@ -8,7 +8,7 @@ Administrators only; the settings window asks for elevation itself.
 ## Switch a sink over
 
 A sink stays on the Windows driver until it is switched. Both tools do the switch
-per sink, and neither needs the sink to be on OpenA2dp first:
+per sink, and neither needs the sink to be on OpenA2DP first:
 
 ```powershell
 OpenA2dpCtl driver                  # one line per A2DP node and its driver
@@ -39,7 +39,7 @@ paired and reconnects through the new driver.
 | **Reset counters** | Start a fresh measurement window without interrupting playback. |
 | **Details** | Show every status and preference field with its decimal and hex value. |
 | **Copy** | Put the report on the clipboard, identical to `OpenA2dpCtl status --verbose`. |
-| **Use Windows driver** / **Use OpenA2dp driver** | Move this sink between the two drivers. |
+| **Use Windows driver** / **Use OpenA2DP driver** | Move this sink between the two drivers. |
 
 The window refreshes itself, including sinks that start or stop playing while it
 is open. A field's tooltip explains the setting it changes; a status row whose
@@ -63,7 +63,7 @@ OpenA2dpCtl help
 | Command | What it does |
 |---|---|
 | `status` | AVDTP and media state, codec, sink formats, endpoint format, preference, buffers and counters. The default command. |
-| `list` | The OpenA2dp devices that are present, with name and address. |
+| `list` | The OpenA2DP devices that are present, with name and address. |
 | `codec` | Set the codec preference and codec parameters for this sink. Without a codec name, keep the selection and apply only the flags given. |
 | `format` | Show or set the PCM format each codec's streams are played at. |
 | `driver` | Show the A2DP driver for each node, or switch this sink. |
@@ -75,7 +75,7 @@ OpenA2dpCtl help
 ### Selecting a sink
 
 `--device` takes a Bluetooth address (`AA:BB:CC:DD:EE:FF`), a 1-based list index,
-or a partial address. One OpenA2dp device is the default when only one is present.
+or a partial address. One OpenA2DP device is the default when only one is present.
 
 ### Codec options
 

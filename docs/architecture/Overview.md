@@ -2,7 +2,7 @@
 
 [Architecture index](README.md) | [Kernel driver](Driver-Lifecycle.md) | [Encoder service](Encoder-Service.md)
 
-OpenA2dp replaces the A2DP source function driver for the remote sinks the user
+OpenA2DP replaces the A2DP source function driver for the remote sinks the user
 switches. It owns codec negotiation, the audio endpoint Windows plays to, the
 L2CAP media transport and RTP. The Bluetooth core, radio driver, pairing, HFP and
 AVRCP remain with Windows, so a switched sink behaves like any other paired audio

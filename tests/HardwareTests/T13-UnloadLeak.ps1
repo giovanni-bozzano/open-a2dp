@@ -13,7 +13,7 @@ Start-HwTest -Id 'T13' -Title 'Driver unloads with no leaked pool or handles' -L
         Wait-Status -TimeoutSec 20 -Describe 'the stream to stop' -Where { param($s) $s.Media -ne 'Streaming' } | Out-Null
 
         $node = Get-OpenA2dpNode
-        Assert-True ($node -ne $null) 'no OpenA2dp device node: is the sink connected and on this driver?'
+        Assert-True ($node -ne $null) 'no OpenA2DP device node: is the sink connected and on this driver?'
         Set-NodeState -InstanceId $node.PNPDeviceID -Action disable -Expect 'Disabled' -TimeoutSec 60
 
         $deadline = (Get-Date).AddSeconds(30)

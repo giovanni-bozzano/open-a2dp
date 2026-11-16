@@ -1,6 +1,6 @@
 # Diagnostics
 
-[README](../README.md) | [Using OpenA2dp](USING.md) | [Testing](TESTING.md)
+[README](../README.md) | [Using OpenA2DP](USING.md) | [Testing](TESTING.md)
 
 ## Start with the report
 
@@ -76,7 +76,7 @@ is nonzero, but they should not make an otherwise clean stream look faulty.
 The driver logs through `DbgPrintEx` with the `IHVDRIVER` facility at info level:
 
 ```text
-OpenA2dp <LEVEL> [<sink> (<address>)] <Category>: <message>
+OpenA2DP <LEVEL> [<sink> (<address>)] <Category>: <message>
 ```
 
 The service writes `[svc]` lines to the same debugger output. There is no service

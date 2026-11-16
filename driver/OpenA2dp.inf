@@ -52,7 +52,7 @@ KmdfService = OpenA2dp, OpenA2dp_WdfSection
 KmdfLibraryVersion = $KMDFVERSION$
 
 [Strings]
-ProviderName         = "OpenA2dp"
-DiskName             = "OpenA2dp Installation Disk"
-OpenA2dp.DeviceDesc  = "OpenA2dp Bluetooth A2DP Source"
-OpenA2dp.ServiceDesc = "OpenA2dp Bluetooth A2DP Source Driver"
+ProviderName         = "OpenA2DP"
+DiskName             = "OpenA2DP Installation Disk"
+OpenA2dp.DeviceDesc  = "OpenA2DP Bluetooth A2DP Source"
+OpenA2dp.ServiceDesc = "OpenA2DP Bluetooth A2DP Source Driver"

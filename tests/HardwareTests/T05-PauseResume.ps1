@@ -21,7 +21,7 @@ Start-HwTest -Id 'T5' -Title 'Pause/resume and default-output switching' -Level 
         Wait-Status -TimeoutSec 30 -Describe 'the stream to run again after the resume' -Where { param($s) $s.Media -eq 'Streaming' } | Out-Null
         Assert-LogMatch -Pattern 'stream run' -Describe 'the driver ran the stream again' -Kernel
 
-        Prompt-Operator 'Switch the default output to the speakers and back to the OpenA2dp endpoint.'
+        Prompt-Operator 'Switch the default output to the speakers and back to the OpenA2DP endpoint.'
         Wait-Status -TimeoutSec 30 -Describe 'the stream to run on the sink after the switch back' -Where { param($s) $s.Media -eq 'Streaming' } | Out-Null
         Assert-PacketsAdvancing | Out-Null
         Confirm-Operator 'Is the tone audible again from the sink?'

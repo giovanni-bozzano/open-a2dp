@@ -783,7 +783,7 @@ function Start-HwTest {
         Assert-True (Test-Elevated) 'the tools and the device control need an elevated prompt; re-run this from an Administrator console.'
         $script:Hw.Ctl = Resolve-Ctl $Ctl
         Assert-True (Test-Path -LiteralPath $script:Hw.Ctl) "OpenA2dpCtl not found at $($script:Hw.Ctl)"
-        Write-Note "device: $(if ($Device) { $Device } else { 'the single OpenA2dp sink' }); ctl: $($script:Hw.Ctl)"
+        Write-Note "device: $(if ($Device) { $Device } else { 'the single OpenA2DP sink' }); ctl: $($script:Hw.Ctl)"
         if ($script:Hw.DriverLog) {
             Assert-True (Test-Path -LiteralPath $script:Hw.DriverLog) "the kernel log $DriverLog does not exist"
         } else {

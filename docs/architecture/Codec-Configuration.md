@@ -1,6 +1,6 @@
 # Configuration
 
-[Architecture index](README.md) | [Using OpenA2dp](../USING.md) | [Protocol and codecs](Protocol-and-Codecs.md)
+[Architecture index](README.md) | [Using OpenA2DP](../USING.md) | [Protocol and codecs](Protocol-and-Codecs.md)
 
 Configuration has two surfaces: the PCM formats the endpoint offers Windows, and
 the per-sink settings the driver stores. Both are per codec, both survive a
@@ -106,7 +106,7 @@ The tools write `[general]` and codec parameters through `SET_PREFERENCE`, and a
 codec's `rate`/`channels` through `SET_ENDPOINT_FORMAT`. The driver rewrites the
 sink's file whenever either changes, so the file and the running driver agree.
 `OpenA2dpCtl reset` and the window's **Restore defaults** clear both. The
-settings themselves are listed in [Using OpenA2dp](../USING.md#settings).
+settings themselves are listed in [Using OpenA2DP](../USING.md#settings).
 
 ## How a change applies
 

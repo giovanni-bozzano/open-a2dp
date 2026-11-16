@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deploys the test-signed OpenA2dp driver on this machine, or into the test VM with -Vm.
+    Deploys the test-signed OpenA2DP driver on this machine, or into the test VM with -Vm.
 
 .DESCRIPTION
     This machine is the default target: the package, the tools and the test certificate are
@@ -18,7 +18,7 @@
     Update strategy (no reboot, ever):
       1. stop the encoder service, the CLI and the settings window (they hold handles on the
          driver);
-      2. disable the OpenA2dp device node so the driver unloads;
+      2. disable the OpenA2DP device node so the driver unloads;
       3. confirm the driver really unloaded; if not, re-enable and ABORT;
       4. install the new package while nothing is loaded;
       5. enable the device so the new image loads fresh;
@@ -31,7 +31,7 @@
 .PARAMETER Configuration  Debug (default) or Release.
 .PARAMETER Vm             Deploy into the test VM instead of this machine. The VM options below
                           need it; without it they are refused rather than ignored.
-.PARAMETER Uninstall      Restore check instead of a deploy: remove the OpenA2dp driver package,
+.PARAMETER Uninstall      Restore check instead of a deploy: remove the OpenA2DP driver package,
                           the encoder service and the per-sink device node, then verify that the
                           driver, its service, its control links and its package are gone and
                           that a sink is bound to BthA2dp again. Leaves the copied binaries in
@@ -509,7 +509,7 @@ function Invoke-Restore {
         if ($line -match 'Published Name:\s+(\S+)') { $published = $Matches[1] }
         elseif ($published -and $line -match 'Original Name:\s+opena2dp\.inf') { $packages += $published }
     }
-    if ($packages.Count -eq 0) { Log 'no OpenA2dp package in the driver store' }
+    if ($packages.Count -eq 0) { Log 'no OpenA2DP package in the driver store' }
     foreach ($pkg in $packages) {
         Log "removing driver package $pkg"
         [void](Run 'pnputil.exe' "/delete-driver $pkg /uninstall /force" 120)
@@ -527,11 +527,11 @@ function Invoke-Restore {
     $bthA2dp = { @(Get-CimInstance Win32_PnPEntity -Filter "Service='BthA2dp'" -ErrorAction SilentlyContinue).Count -gt 0 }
     if (-not (Wait-Until $bthA2dp 30)) { Log 'warning: nothing is bound to BthA2dp yet; is a sink paired and connected?' }
 
-    if (@(Get-Devices).Count -gt 0) { $problems += 'an OpenA2dp device node is still present' }
-    if ((& sc.exe query OpenA2dp 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2dp driver service is still registered' }
-    if ((& sc.exe query OpenA2dpSvc 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2dp encoder service is still registered' }
+    if (@(Get-Devices).Count -gt 0) { $problems += 'an OpenA2DP device node is still present' }
+    if ((& sc.exe query OpenA2dp 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2DP driver service is still registered' }
+    if ((& sc.exe query OpenA2dpSvc 2>&1 | Out-String) -notmatch '1060') { $problems += 'the OpenA2DP encoder service is still registered' }
     if (Get-CimInstance Win32_SystemDriver -Filter "Name='OpenA2dp'" -ErrorAction SilentlyContinue) { $problems += 'Win32_SystemDriver still lists OpenA2dp' }
-    if ((& pnputil.exe /enum-drivers 2>&1 | Out-String) -match 'opena2dp\.inf') { $problems += 'the OpenA2dp package is still in the driver store' }
+    if ((& pnputil.exe /enum-drivers 2>&1 | Out-String) -match 'opena2dp\.inf') { $problems += 'the OpenA2DP package is still in the driver store' }
     if (Test-Path (Join-Path $env:SystemRoot 'System32\drivers\OpenA2dp.sys')) { $problems += 'OpenA2dp.sys is still in System32\drivers' }
 
     $sinks = @(Get-CimInstance Win32_PnPEntity -Filter "Service='BthA2dp'" -ErrorAction SilentlyContinue)
@@ -542,7 +542,7 @@ function Invoke-Restore {
     if (Test-Path $ctl) {
         $listing = (& $ctl list 2>&1 | Out-String)
         Log ('    OpenA2dpCtl list: ' + (($listing.Trim() -split "`r?`n") -join ' | '))
-        if ($listing -notmatch 'No OpenA2dp devices found') { $problems += 'OpenA2dpCtl still finds a control device' }
+        if ($listing -notmatch 'No OpenA2DP devices found') { $problems += 'OpenA2dpCtl still finds a control device' }
     }
 
     # 4. Trusting the test certificate is part of the deploy, so a restore takes it back out of
@@ -602,7 +602,7 @@ try {
 
     $devices = Get-Devices
     $ids = @($devices | ForEach-Object { $_.PNPDeviceID })
-    Log "present OpenA2dp devices: $($ids.Count)"
+    Log "present OpenA2DP devices: $($ids.Count)"
     $ids | ForEach-Object { Log "    $_" }
     Log "driver state: $(Get-DriverState)"
 
@@ -747,10 +747,10 @@ try {
     # 8. Install / refresh and start the encoder service.
     $svcExe = "$dir\OpenA2dpSvc.exe"
     if ((Run 'sc.exe' 'query OpenA2dpSvc' 20) -ne 0) {
-        if ((Run 'sc.exe' "create OpenA2dpSvc binPath= `"$svcExe`" start= auto DisplayName= `"OpenA2dp AAC encoder`"" 20) -ne 0) { throw 'sc create failed' }
+        if ((Run 'sc.exe' "create OpenA2dpSvc binPath= `"$svcExe`" start= auto DisplayName= `"OpenA2DP AAC encoder`"" 20) -ne 0) { throw 'sc create failed' }
     }
     if ((Run 'sc.exe' "config OpenA2dpSvc binPath= `"$svcExe`" start= auto" 20) -ne 0) { throw 'sc config failed' }
-    [void](Run 'sc.exe' 'description OpenA2dpSvc "AAC-LC encoder for the OpenA2dp A2DP source driver."' 20)
+    [void](Run 'sc.exe' 'description OpenA2dpSvc "AAC-LC encoder for the OpenA2DP A2DP source driver."' 20)
     [void](Run 'sc.exe' 'failure OpenA2dpSvc reset= 86400 actions= restart/5000/restart/5000/restart/5000' 20)
     $code = Run 'sc.exe' 'start OpenA2dpSvc' 30
     if ($code -notin 0, 1056) { throw "sc start failed ($code)" }

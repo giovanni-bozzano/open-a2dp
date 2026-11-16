@@ -5,7 +5,7 @@ param([string]$Device, [string]$Ctl, [string]$DriverLog, [string]$ResultDir, [sw
 Start-HwTest -Id 'T4' -Title 'Sink-initiated connect with audio already running' -Level 'assisted' -Repeat 3 `
     -Device $Device -Ctl $Ctl -DriverLog $DriverLog -ResultDir $ResultDir -NonInteractive:$NonInteractive `
     -Body {
-        Prompt-Operator 'Have a player ready with the OpenA2dp endpoint as output: power the sink on and start playback as soon as the endpoint appears.'
+        Prompt-Operator 'Have a player ready with the OpenA2DP endpoint as output: power the sink on and start playback as soon as the endpoint appears.'
         Start-Audio
 
         Assert-LogMatch -Pattern 'sink-initiated with audio running; starting discovery|audio started on a silent sink-initiated link; starting discovery|incoming media channel open' `

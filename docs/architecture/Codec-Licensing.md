@@ -2,7 +2,7 @@
 
 [Architecture index](README.md) | [Root licence](../../LICENSE)
 
-OpenA2dp's own code is Apache-2.0. The codecs are separate: each encoder carries
+OpenA2DP's own code is Apache-2.0. The codecs are separate: each encoder carries
 its own licence, and the repository licence does not replace it.
 
 ## What ships

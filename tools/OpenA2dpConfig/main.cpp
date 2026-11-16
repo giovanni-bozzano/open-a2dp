@@ -103,7 +103,7 @@ constexpr wchar_t kRestoreText[] = L"Restore defaults";
 constexpr wchar_t kResetCountersText[] = L"Reset counters";
 // The switch names the driver the sink is not on, so the caption reads as the action.
 constexpr wchar_t kUseWindowsText[] = L"Use Windows driver";
-constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2dp driver";
+constexpr wchar_t kUseOpenA2dpText[] = L"Use OpenA2DP driver";
 constexpr wchar_t kFinishSwitchText[] = L"Finish driver switch";
 constexpr wchar_t kCodecText[] = L"Codec";
 constexpr wchar_t kSbcTabText[] = L"SBC";
@@ -757,7 +757,7 @@ constexpr RowTip kRowTips[] = {
 	 L"REGISTERED - the service is running, so those codecs can be negotiated.\n"
 	 L"NOT REGISTERED - it is stopped, crashed, or from another build, so those codecs cannot "
 	 L"be used and the driver falls back to SBC, which usually sounds worse.\n\n"
-	 L"Check that the OpenA2dp service is running and from the same build as the driver. SBC "
+	 L"Check that the OpenA2DP service is running and from the same build as the driver. SBC "
 	 L"does not need the service."},
 	{"buffered",
 	 L"Audio the driver's buffers hold right now, in milliseconds and bytes.\n\n"
@@ -858,7 +858,7 @@ void RefreshStatusView(HWND hwnd)
 	{
 		return;
 	}
-	const std::wstring empty = state->message.empty() ? L"No OpenA2dp device is available." : state->message;
+	const std::wstring empty = state->message.empty() ? L"No OpenA2DP device is available." : state->message;
 	UpdateStatusView(hwnd, kStatusList, BuildStatusRows(*state), empty);
 }
 
@@ -2888,7 +2888,7 @@ void PaintGroups(HWND hwnd, HDC dc)
 std::wstring DriverTitle(SinkDriver driver)
 {
 	return driver == SinkDriver::Windows	? L"the Windows A2DP driver"
-		   : driver == SinkDriver::OpenA2dp ? L"the OpenA2dp driver"
+		   : driver == SinkDriver::OpenA2dp ? L"the OpenA2DP driver"
 											: L"no A2DP driver";
 }
 
@@ -3188,7 +3188,7 @@ int Run(HINSTANCE instance, int showCommand)
 	HFONT font = SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0) != 0
 					 ? CreateFontIndirectW(&metrics.lfMessageFont)
 					 : nullptr;
-	const HWND hwnd = CreateWindowExW(0, className, L"OpenA2dp - A2DP sink settings", kWindowStyle,
+	const HWND hwnd = CreateWindowExW(0, className, L"OpenA2DP - A2DP sink settings", kWindowStyle,
 									  CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top,
 									  nullptr, nullptr, instance, &font);
 	if (hwnd == nullptr)

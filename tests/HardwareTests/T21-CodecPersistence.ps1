@@ -6,7 +6,7 @@ Start-HwTest -Id 'T21' -Title 'Stored preference survives a device restart' -Lev
     -Device $Device -Ctl $Ctl -DriverLog $DriverLog -ResultDir $ResultDir -NonInteractive:$NonInteractive `
     -Body {
         $node = Get-OpenA2dpNode
-        Assert-True ($node -ne $null) 'no OpenA2dp device node: is the sink connected and on this driver?'
+        Assert-True ($node -ne $null) 'no OpenA2DP device node: is the sink connected and on this driver?'
 
         Write-Step 'store SBC and restart the device'
         Assert-CtlOk (Invoke-Ctl 'codec' 'sbc') 'storing the SBC preference' | Out-Null

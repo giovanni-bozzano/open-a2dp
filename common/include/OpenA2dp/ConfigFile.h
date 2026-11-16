@@ -365,7 +365,7 @@ inline size_t Write(const Settings& settings, char* text, size_t capacity) noexc
 	const Ioctl::Preference& preference = settings.preference;
 	const Ioctl::EndpointFormat& format = settings.endpointFormat;
 	Detail::Writer writer{text, capacity};
-	writer.String("# OpenA2dp settings for this sink. Delete the file to return the driver defaults.\r\n"
+	writer.String("# OpenA2DP settings for this sink. Delete the file to return the driver defaults.\r\n"
 				  "# Only what differs from the driver default is written; a key that is missing keeps its\r\n"
 				  "# default. One section per codec, plus [general] for what is not a codec's own setting.\r\n"
 				  "version = ");

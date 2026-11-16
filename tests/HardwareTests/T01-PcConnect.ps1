@@ -8,7 +8,7 @@ Start-HwTest -Id 'T1' -Title 'PC-initiated connect, play, audible' -Level 'assis
         Prompt-Operator 'Sink on and not connected (disconnect it first if an earlier run left it connected): click Connect in Windows Bluetooth settings.'
         Assert-LogMatch -Pattern 'signaling channel open' -Describe 'the signaling channel opened' -Kernel -TimeoutSec 30
 
-        Write-Step 'playing audio to the OpenA2dp endpoint'
+        Write-Step 'playing audio to the OpenA2DP endpoint'
         Start-Audio
         Assert-Streaming -Codec 'SBC' | Out-Null
 

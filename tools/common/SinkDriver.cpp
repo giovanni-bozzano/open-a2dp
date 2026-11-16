@@ -327,7 +327,7 @@ const char* SinkDriverName(SinkDriver driver)
 	case SinkDriver::Windows:
 		return "BthA2dp";
 	case SinkDriver::OpenA2dp:
-		return "OpenA2dp";
+		return "OpenA2DP";
 	default:
 		return "unknown";
 	}
@@ -394,7 +394,7 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	// The reader is told what stands in the way, in the terms of the sink in front of them.
 	if (state.current == SinkDriver::Unknown)
 	{
-		state.problem = "the node's service is neither BthA2dp nor OpenA2dp";
+		state.problem = "the node's service is neither BthA2dp nor OpenA2DP";
 	}
 	else if (state.current == SinkDriver::OpenA2dp && state.windowsInf.empty())
 	{
@@ -402,7 +402,7 @@ bool ReadSinkDriver(const std::string& reference, SinkDriverState& state, std::s
 	}
 	else if (state.current == SinkDriver::Windows && state.openA2dpInf.empty())
 	{
-		state.problem = "the OpenA2dp package is not in the driver store; deploy it first";
+		state.problem = "the OpenA2DP package is not in the driver store; deploy it first";
 	}
 	else
 	{

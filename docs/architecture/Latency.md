@@ -1,6 +1,6 @@
 # Latency
 
-[Architecture index](README.md) | [Using OpenA2dp](../USING.md) | [Testing](../TESTING.md)
+[Architecture index](README.md) | [Using OpenA2DP](../USING.md) | [Testing](../TESTING.md)
 
 The driver adds a bounded, reported delay between the Windows render packet and
 the signal leaving the PC. The sink's own buffering is outside that number and

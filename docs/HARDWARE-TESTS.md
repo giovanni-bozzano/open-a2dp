@@ -25,7 +25,7 @@ a Verifier bugcheck repeats on every boot until it is turned off.
 ### 1.1 Kernel log capture
 
 The driver logs through `DbgPrintEx` (`IHVDRIVER`, info level), one record per line:
-`OpenA2dp <LEVEL> [<sink> (<address>)] <Category>: <message>`.
+`OpenA2DP <LEVEL> [<sink> (<address>)] <Category>: <message>`.
 
 1. Elevated prompt: `reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Debug Print Filter" /v IHVDRIVER /t REG_DWORD /d 0xF /f`, then reboot.
    With WinDbg attached you can instead run `ed nt!Kd_IHVDRIVER_Mask 0xF` (no reboot).
@@ -83,11 +83,11 @@ The `BthA2dp` half needs the sink paired **and connected**: a powered-off sink h
 node, and the check cannot tell that apart from a failed restore. It reports
 `pair and connect the sink, then rerun` in that case.
 
-Expect `removing driver package oem<N>.inf` (or `no OpenA2dp package in the driver
-store`), a `BthA2dp: <name> status=...` line, `OpenA2dpCtl list: No OpenA2dp devices
+Expect `removing driver package oem<N>.inf` (or `no OpenA2DP package in the driver
+store`), a `BthA2dp: <name> status=...` line, `OpenA2dpCtl list: No OpenA2DP devices
 found`, then `RESTORED` and `Restore check passed` on the host.
 
-The check fails while any of these is still true: an `OpenA2dp` device node exists;
+The check fails while any of these is still true: an `OpenA2DP` device node exists;
 `sc query OpenA2dp` or `sc query OpenA2dpSvc` does not answer 1060; `Win32_SystemDriver`
 lists `OpenA2dp`; `pnputil /enum-drivers` still shows `opena2dp.inf`;
 `%SystemRoot%\System32\drivers\OpenA2dp.sys` exists; nothing is bound to `BthA2dp`;
@@ -196,7 +196,7 @@ least 3 times; teardown tests 10 times.
   service log shows a new `[svc] opening ... registered`, and reconnect plays audio.
 
 **T12 Disable/enable the device (S)**
-1. While streaming, disable the OpenA2dp device node, wait 5 s, enable it.
+1. While streaming, disable the OpenA2DP device node, wait 5 s, enable it.
 - Expect: disable completes within a few seconds (no hang); `control device removed`;
   after enable the service re-attaches and playback works.
 
@@ -258,7 +258,7 @@ it), reattach.
    `codec aac` reports the missing encoder service when that is the reason.
 
 **T21 Codec preference persistence (S/A)**
-1. `OpenA2dpCtl codec sbc`, then disable and enable the OpenA2dp device (or reboot).
+1. `OpenA2dpCtl codec sbc`, then disable and enable the OpenA2DP device (or reboot).
    Connect and play.
 - Expect: `settings restored from ...\devices\<address>.ini` when the device starts, then
   `configured codec SBC` with no further `codec` command.
@@ -510,11 +510,11 @@ hiccups, or a service that restarts.
 ### Driver switching
 
 Both tools change which A2DP source driver owns one sink, and neither needs the sink to be on
-`OpenA2dp` first: PnP names the node and no control device is involved. The switch installs the
+`OpenA2DP` first: PnP names the node and no control device is involved. The switch installs the
 other package on that node, which restarts it.
 
 **T34 Per-sink driver switch (S/A)** — needs `OpenA2dp.inf` deployed and an elevated prompt.
-1. With one sink connected on `BthA2dp` and a second in range on `OpenA2dp`, run
+1. With one sink connected on `BthA2dp` and a second in range on `OpenA2DP`, run
    `OpenA2dpCtl driver`: one line per A2DP node with its driver, including the sink that has no
    control device. Then play to a sink and run a switch: the player is paused and named in the
    output, the switch takes a second or two, the sink stays paired, and playback resumes when
@@ -522,9 +522,9 @@ other package on that node, which restarts it.
    the sink untouched, the program named): stop it and run the switch again.
 2. `OpenA2dpCtl driver windows --device <BthA2dp address>` reports `already on BthA2dp`;
    `driver opena2dp --device <address>` installs the package on that node. The node restarts,
-   then `driver` and `OpenA2dpCtl list` report `OpenA2dp` and `status` returns a report.
+   then `driver` and `OpenA2dpCtl list` report `OpenA2DP` and `status` returns a report.
 3. In `OpenA2dpConfig` the same sink is listed as `<address> - Windows driver`, with Apply
-   disabled and a `Use OpenA2dp driver` button. Pressing it asks for confirmation and switches
+   disabled and a `Use OpenA2DP driver` button. Pressing it asks for confirmation and switches
    the sink; the window reopens it and the button reads `Use Windows driver`. Pressing that
    restores the `BthA2dp` binding.
 4. The second sink keeps the driver and the settings it had throughout, and audio stops only on

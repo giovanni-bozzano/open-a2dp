@@ -10,14 +10,14 @@ RTP.
 ## Binding
 
 Windows creates a BTHENUM node for each paired sink's AudioSink service
-(`0x110B`). Its function driver is the A2DP source. OpenA2dp matches the node and
+(`0x110B`). Its function driver is the A2DP source. OpenA2DP matches the node and
 binds to it with:
 
 - the remote A2DP sink service UUID `0x110B`,
 - `BTH_PROFILE_DRIVER_INTERFACE`, and
 - L2CAP PSM `0x0019` for signaling and media.
 
-The radio, `bthport`, HFP and AVRCP are untouched. A sink that OpenA2dp does not
+The radio, `bthport`, HFP and AVRCP are untouched. A sink that OpenA2DP does not
 bind keeps the inbox source.
 
 The A2DP package is the one whose compatible id is the service id itself,
@@ -27,7 +27,7 @@ own `..._LOCALMFG&nnnn`; neither is an A2DP source.
 
 ## Driver switching
 
-A sink moves between `BthA2dp` and `OpenA2dp` one node at a time.
+A sink moves between `BthA2dp` and `OpenA2DP` one node at a time.
 `tools/common/SinkDriver.*` reads the node's bound service, its instance id and
 its compatible list, then calls `DiInstallDevice` on the package entry for that
 node. The install restarts the node, so its endpoints, stream and control device

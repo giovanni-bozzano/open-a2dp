@@ -19,7 +19,7 @@ enum class SinkDriver {
 	OpenA2dp, // this driver
 };
 
-// "BthA2dp", "OpenA2dp" or "unknown", for the report and the window.
+// "BthA2dp", "OpenA2DP" or "unknown", for the report and the window.
 const char* SinkDriverName(SinkDriver driver);
 
 // The other driver, for a toggle: Unknown maps to Unknown.

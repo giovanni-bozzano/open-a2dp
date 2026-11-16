@@ -1,15 +1,15 @@
-# OpenA2dp
+# OpenA2DP
 
-OpenA2dp is an A2DP source driver for Windows 11. It replaces the Bluetooth audio
+OpenA2DP is an A2DP source driver for Windows 11. It replaces the Bluetooth audio
 driver for the headsets you choose, so you can pick the codec and stream settings
 and see what the stream is doing while it plays.
 
-OpenA2dp takes over one paired sink at a time and gives you control of its codec
+OpenA2DP takes over one paired sink at a time and gives you control of its codec
 and stream. It brings its own A2DP source, endpoint and settings while leaving
 the Bluetooth radio, pairing, HFP and AVRCP to Windows. Handing a headset back is
 one command or one button.
 
-## What OpenA2dp gives you
+## What OpenA2DP gives you
 
 | Capability | What it means in use |
 |---|---|
@@ -21,7 +21,7 @@ one command or one button.
 | A way back | `OpenA2dpCtl driver windows` or one window button returns a sink to the driver it came from. |
 | One report, two tools | The window, its **Copy** button and `OpenA2dpCtl status` read the same status report, so a script and a person see the same fields. |
 
-The Bluetooth radio, pairing, HFP/HSP and AVRCP stay with Windows. OpenA2dp is a
+The Bluetooth radio, pairing, HFP/HSP and AVRCP stay with Windows. OpenA2DP is a
 replacement A2DP source, not a replacement Bluetooth stack.
 
 ### The codec you want, on the headset you want it on
@@ -53,12 +53,12 @@ A2DP node, not a radio or a machine-wide stack.
 
 - Windows 11 x64. The driver is not Microsoft-signed, so the machine has to accept
   test-signed drivers.
-- The sink has to advertise a codec before OpenA2dp can use it. Pinning a codec the
+- The sink has to advertise a codec before OpenA2DP can use it. Pinning a codec the
   sink does not offer is refused.
 - Six codecs are supported: SBC, AAC, aptX, aptX LL, aptX HD and LDAC. SBC is
   encoded in the driver; AAC uses the Windows Media Foundation encoder; aptX,
   aptX LL, aptX HD and LDAC are encoded by the service.
-- Bluetooth range and interference still apply. OpenA2dp changes the codec and the
+- Bluetooth range and interference still apply. OpenA2DP changes the codec and the
   timing, not the radio.
 - One A2DP stream per sink.
 
@@ -98,7 +98,7 @@ The command line is the same thing as text:
 | Command | What it does |
 |---|---|
 | `OpenA2dpCtl status` | The full report for one sink, refreshed with `--watch`. |
-| `OpenA2dpCtl list` | The OpenA2dp devices that are present. |
+| `OpenA2dpCtl list` | The OpenA2DP devices that are present. |
 | `OpenA2dpCtl codec ldac --preroll 40` | Pin a codec, or tune its settings, for this sink. |
 | `OpenA2dpCtl format ldac 96000 2` | Choose the sample rate and channel count a codec's streams use. |
 | `OpenA2dpCtl driver windows` | Hand the sink back to the Windows driver. |
@@ -107,7 +107,7 @@ The command line is the same thing as text:
 | `OpenA2dpCtl help` | Every command and option. |
 
 Both tools need an elevated prompt: the control device allows SYSTEM and
-Administrators only. The full reference is in [Using OpenA2dp](docs/USING.md).
+Administrators only. The full reference is in [Using OpenA2DP](docs/USING.md).
 
 ## How it works
 
@@ -123,7 +123,7 @@ device, which is also where the status report comes from, so the window, its
 | Guide | What it covers |
 |---|---|
 | [Build and deploy](docs/BUILD.md) | Prerequisites, build, tests, deploy, VM, uninstall |
-| [Using OpenA2dp](docs/USING.md) | Window, command line and per-sink settings |
+| [Using OpenA2DP](docs/USING.md) | Window, command line and per-sink settings |
 | [Diagnostics](docs/DIAGNOSTICS.md) | Status report, logs, counters and triage |
 | [Testing](docs/TESTING.md) | Host tests and the hardware test harness |
 | [Architecture](docs/architecture/README.md) | Components, codec and driver design |

@@ -9,7 +9,7 @@ Start-HwTest -Id 'T29' -Title 'Latency, peak, lead, underruns and trims' -Level 
     -Device $Device -Ctl $Ctl -DriverLog $DriverLog -ResultDir $ResultDir -NonInteractive:$NonInteractive `
     -Body {
         Assert-CtlOk (Invoke-Ctl 'codec' 'sbc' '--preroll' '60') 'setting the 60 ms lead' | Out-Null
-        Prompt-Operator 'Connect the sink and start playback to the OpenA2dp endpoint.'
+        Prompt-Operator 'Connect the sink and start playback to the OpenA2DP endpoint.'
         Start-Audio
         Assert-Streaming -Codec 'SBC' -TimeoutSec 45 | Out-Null
         # The peak and the loss counters accumulate across streams; this window is this test's.

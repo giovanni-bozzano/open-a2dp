@@ -9,7 +9,7 @@ Start-HwTest -Id 'T18' -Title 'Service starting mid-stream renegotiates to AAC' 
         Require-Codec 'aac' | Out-Null
         Assert-CtlOk (Invoke-Ctl 'codec' 'auto') 'setting the codec preference to auto' | Out-Null
         Stop-EncoderService
-        Prompt-Operator 'Connect the sink, then start playback to the OpenA2dp endpoint.'
+        Prompt-Operator 'Connect the sink, then start playback to the OpenA2DP endpoint.'
         Start-Audio
         Assert-Streaming -Codec 'SBC' -TimeoutSec 45 | Out-Null
 

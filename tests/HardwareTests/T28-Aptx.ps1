@@ -13,7 +13,7 @@ Start-HwTest -Id 'T28' -Title 'Classic aptX end to end' -Level 'assisted' -Repea
         Assert-True ($status.Encoder -eq 'registered') 'no aptX encoder is registered (is OpenA2dpSvc running?)'
         Assert-CtlOk (Invoke-Ctl 'codec' 'auto') 'setting the codec preference to auto' | Out-Null
 
-        Prompt-Operator 'Disconnect the sink if it is still connected, connect it again, and start playback to the OpenA2dp endpoint.'
+        Prompt-Operator 'Disconnect the sink if it is still connected, connect it again, and start playback to the OpenA2DP endpoint.'
         Start-Audio
         $status = Assert-Streaming -TimeoutSec 45
         if ($both) {

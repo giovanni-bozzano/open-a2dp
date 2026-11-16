@@ -2,7 +2,7 @@
 
 [Documentation](../README.md) | [README](../../README.md)
 
-These references explain why OpenA2dp is shaped the way it is. They are not an
+These references explain why OpenA2DP is shaped the way it is. They are not an
 API reference: constants, structures and wire layouts live in the headers under
 `common/include/OpenA2dp/`, and the source is the final authority.
 
@@ -29,7 +29,7 @@ Operational material lives one level up: [build](../BUILD.md),
 These hold across every subsystem. A change that breaks one is a design change,
 not a local fix.
 
-1. **One sink, one takeover.** OpenA2dp binds the A2DP node of a single remote
+1. **One sink, one takeover.** OpenA2DP binds the A2DP node of a single remote
    sink. It does not replace the radio, the Bluetooth core, HFP or AVRCP, and it
    never affects a sink that was not switched.
 2. **SBC never depends on the service.** The kernel path must work with no
