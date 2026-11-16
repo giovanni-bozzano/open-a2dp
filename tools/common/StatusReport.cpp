@@ -161,7 +161,11 @@ void AppendPreference(std::string& text, const Ioctl::Preference& preference)
 	{
 		AppendLine(text, "AAC bitrate", Format("%u bps", preference.aacBitrate));
 	}
-	if (preference.prerollMs != 0)
+	// LL forces its own lead, so a stored value is not a setting it runs with; the value in use is
+	// reported with the buffers instead.
+	const bool fixedLead = (preference.flags & Ioctl::kPreferenceForceCodec) != 0 &&
+						   preference.codec == Ioctl::kCodecAptxLl;
+	if (preference.prerollMs != 0 && !fixedLead)
 	{
 		AppendLine(text, "pacing lead", Format("%u ms (stored)", preference.prerollMs));
 	}

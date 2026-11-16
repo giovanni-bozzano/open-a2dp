@@ -1296,15 +1296,6 @@ void SelectPreferenceValues(HWND hwnd)
 									  state->endpointFormat.channels[tab]));
 }
 
-// aptX LL runs with a fixed pacing lead, so the control is not offered while it is the choice:
-// a value the driver ignores is worse than no control.
-void UpdatePacingLeadEnabled(HWND hwnd)
-{
-	const uint32_t value = ComboValue(hwnd, kCodecCombo);
-	const bool ll = value == CodecEntryValue(false, static_cast<int>(CodecTab::AptxLl));
-	EnableWindow(GetDlgItem(hwnd, kPacingLeadCombo), ll ? FALSE : TRUE);
-}
-
 // Shows one codec's table. The tabs only say what the pane shows: the codec the sink runs is
 // the drop-down's business, so looking at AAC's settings never forces AAC.
 void ShowCodecTable(HWND hwnd, int tab)
@@ -1582,9 +1573,15 @@ void ApplyLayout(HWND hwnd)
 	// codec, so the other codecs' controls are hidden rather than destroyed - their stored
 	// values keep.
 	const int contentTop = bodyTop + inset;
+	// LL has no pacing lead setting: hide that row on its tab and while it is the chosen codec.
+	// The pause grace above it stays, so the shared rows do not move.
+	const bool fixedLead = state->tab == static_cast<int>(CodecTab::AptxLl) ||
+		ComboValue(hwnd, kCodecCombo) == CodecEntryValue(false, static_cast<int>(CodecTab::AptxLl));
+	const HWND pacingLead = GetDlgItem(hwnd, kPacingLeadCombo);
 	for (const Field& field : Fields)
 	{
-		const bool visible = field.tab == kAllTabs || field.tab == state->tab;
+		const bool visible = (field.tab == kAllTabs || field.tab == state->tab) &&
+			!(fixedLead && field.control == pacingLead);
 		ShowWindow(field.label, visible ? SW_SHOW : SW_HIDE);
 		ShowWindow(field.control, visible ? SW_SHOW : SW_HIDE);
 		if (!visible)
@@ -1869,12 +1866,12 @@ void CreateControls(HWND hwnd)
 		state->sessionPanel = GetDlgItem(hwnd, kStatusList);
 	}
 
-	// The top of every table: the settings every codec shares, with the pause grace under the
+	// The top of every table: the settings every codec shares, with the pause grace above the
 	// pacing lead. The rows below them belong to the shown codec alone, so a box is only offered
 	// where it changes something.
 	CreateField(hwnd, L"Sample rate", kFormatCombo, kAllTabs, 0, 0, font);
-	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, kAllTabs, 1, 0, font);
-	CreateField(hwnd, L"Pause grace", kPauseGraceCombo, kAllTabs, 1, 1, font);
+	CreateField(hwnd, L"Pause grace", kPauseGraceCombo, kAllTabs, 1, 0, font);
+	CreateField(hwnd, L"Pacing lead", kPacingLeadCombo, kAllTabs, 1, 1, font);
 	CreateField(hwnd, L"Bitpool", kBitpoolCombo, static_cast<int>(CodecTab::Sbc), 0, 1, font);
 	CreateField(hwnd, L"Subbands", kSubbandsCombo, static_cast<int>(CodecTab::Sbc), 0, 2, font);
 	CreateField(hwnd, L"Allocation", kAllocationCombo, static_cast<int>(CodecTab::Sbc), 1, 2, font);
@@ -1992,7 +1989,6 @@ void LoadPreferenceIntoControls(HWND hwnd)
 	// no tab for reads as the automatic choice, which is what the driver does with it as well.
 	const int forced = TabOfCodec(state->preference.codec);
 	SelectComboValue(hwnd, kCodecCombo, CodecEntryValue(state->automatic || forced < 0, forced));
-	UpdatePacingLeadEnabled(hwnd);
 	RebuildTabLists(hwnd);
 	SelectPreferenceValues(hwnd);
 	ApplyLayout(hwnd);
@@ -2998,7 +2994,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 				{
 					ShowCodecTable(hwnd, static_cast<int>(value) - 1);
 				}
-				UpdatePacingLeadEnabled(hwnd);
+				else
+				{
+					// Automatic can leave the pane where it is, but the shared rows still depend
+					// on whether LL is the choice, so the layout has to run.
+					ApplyLayout(hwnd);
+				}
 			}
 			return 0;
 		}

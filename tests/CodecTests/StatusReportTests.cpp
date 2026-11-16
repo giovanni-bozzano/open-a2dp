@@ -212,6 +212,19 @@ TEST(StatusReport_ShowsARaisedLead)
 	CHECK(!Contains(asStored, "raised from"));
 }
 
+// LL's lead is fixed by the driver, so a stored value is not shown as a setting for it. The live
+// lead still appears with the buffers.
+TEST(StatusReport_HidesTheStoredLeadForAptxLl)
+{
+	Ioctl::Preference preference = StreamingPreference();
+	preference.flags = Ioctl::kPreferenceForceCodec;
+	preference.codec = Ioctl::kCodecAptxLl;
+	preference.prerollMs = 60;
+	const std::string report = Report(false, StreamingStatus(), preference);
+	CHECK(Contains(report, "preference      force aptX LL"));
+	CHECK(!Contains(report, "60 ms (stored)"));
+}
+
 // The pause grace decides whether a resume costs a START, so a stored value is reported; the
 // default is not restated, the same as every other stored-only setting.
 TEST(StatusReport_ShowsTheStoredPauseGrace)
