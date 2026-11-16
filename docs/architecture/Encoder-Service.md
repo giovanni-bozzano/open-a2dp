@@ -5,16 +5,17 @@
 ## Role
 
 `OpenA2dpSvc.exe` encodes the codecs that do not run in the kernel: AAC-LC,
-classic aptX, aptX HD and LDAC. SBC stays in the driver and works with no service
-installed, running or reachable.
+classic aptX, aptX LL, aptX HD and LDAC. SBC stays in the driver and works with
+no service installed, running or reachable.
 
 The split is deliberate:
 
 - Media Foundation's AAC encoder is a user-mode transform and cannot be loaded in
   the kernel. The tree drives `CLSID_AACMFTEncoder` and owns the LATM framing, so
   no AAC encoder is distributed or maintained here.
-- The aptX, aptX HD and LDAC encoders are user-mode AOSP code. Keeping them out
-  of the kernel keeps CPU-heavy code and codec implementations out of the driver.
+- The aptX, aptX LL, aptX HD and LDAC encoders are user-mode AOSP code. Keeping
+  them out of the kernel keeps CPU-heavy code and codec implementations out of
+  the driver.
 - A service crash is contained. The driver loses the encoder, not the transport,
   and SBC remains available.
 

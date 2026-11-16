@@ -27,7 +27,7 @@ Outputs go to `out\x64\<Configuration>\`:
 | Output | Built from | Role |
 |---|---|---|
 | `OpenA2dp.sys` | `driver/` | KMDF/ACX driver, SBC encoder and A2DP transport |
-| `OpenA2dpSvc.exe` | `service/` | AAC, aptX, aptX HD and LDAC encoders |
+| `OpenA2dpSvc.exe` | `service/` | AAC, aptX, aptX LL, aptX HD and LDAC encoders |
 | `OpenA2dpCtl.exe` | `tools/OpenA2dpCtl/` | Command-line control and status |
 | `OpenA2dpConfig.exe` | `tools/OpenA2dpConfig/` | Settings window |
 | `CodecTests.exe` | `tests/CodecTests/` | Host tests, no hardware needed |

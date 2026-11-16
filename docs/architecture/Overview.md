@@ -13,7 +13,7 @@ device from the rest of the system's point of view.
 | Component | Runs in | Responsibility |
 |---|---|---|
 | `OpenA2dp.sys` | kernel, KMDF + ACX | Per-sink A2DP source: binding, AVDTP, L2CAP BRBs, ACX endpoint, kernel SBC encoding, RTP, control device |
-| `OpenA2dpSvc.exe` | user mode, LocalSystem | Encodes AAC, aptX, aptX HD and LDAC into the driver's frame ring |
+| `OpenA2dpSvc.exe` | user mode, LocalSystem | Encodes AAC, aptX, aptX LL, aptX HD and LDAC into the driver's frame ring |
 | `OpenA2dpCtl.exe` | user mode, elevated | Command-line status, codec and endpoint settings, driver switching |
 | `OpenA2dpConfig.exe` | user mode, elevated | Settings window over the same control device and status report |
 | `common/include/OpenA2dp/` | shared headers | Kernel-safe ABI, rings, AVDTP/RTP types, codec selection, latency arithmetic |
