@@ -61,6 +61,8 @@ using Tools::ReadSinkDriver;
 using Tools::SinkDriver;
 using Tools::SinkDriverState;
 using Tools::SinkNode;
+using Tools::SwitchOutcome;
+using Tools::SwitchReport;
 using Tools::SwitchSinkDriver;
 
 // Nothing here is shared with the driver; the control IDs are the only contract between
@@ -146,6 +148,13 @@ constexpr WidestField kWidestFields[] = {
 
 // A combo box is created with the height of its drop-down list, which is never resized.
 constexpr int kComboListHeight = 320;
+// The loading bar in the driver switch overlay: the width it reads best at, the height the
+// themed control draws its track at, the margin it keeps from a narrow window's edge, and how
+// fast the marquee moves.
+constexpr int kSwitchBarWidth = 260;
+constexpr int kSwitchBarHeight = 16;
+constexpr int kSwitchBarMargin = 40;
+constexpr UINT kSwitchBarStepMs = 30;
 // Rows the session panel shows when the screen has room for them; it scrolls itself for the
 // rows that do not fit, so the window never has to scroll as a whole.
 constexpr int kMinPanelRows = 6;
@@ -224,6 +233,9 @@ constexpr int kStatusTimerId = 1;
 constexpr int kStatusRefreshMs = 1000;
 // Posted from the interface notification thread; the list is re-enumerated on the UI thread.
 constexpr UINT kDeviceChangeMessage = WM_APP + 1;
+// Posted from the switch thread when the install has finished; the window joins it and reads
+// the outcome on the UI thread.
+constexpr UINT kSwitchDoneMessage = WM_APP + 2;
 
 // The endpoint format combo carries the whole format in its item data: 0 is automatic,
 // otherwise rate * 10 + channels (480001 = 48000 Hz mono). One selection, one setting.
@@ -300,10 +312,20 @@ struct SinkState
 	int tab = 0;
 	bool automatic = true;
 	HWND codecLabel = nullptr;
-	// Covers the window while a driver switch runs, so the blocking install shows why the
-	// window cannot be used.
+	// Covers the window while a driver switch runs, so the install cannot be started twice and
+	// the window reads as working. The bar inside it is the loading animation.
 	HWND switchOverlay = nullptr;
+	HWND switchProgress = nullptr;
 	bool switching = false;
+	// The switch runs on its own thread, because the install blocks for seconds and the bar has
+	// to keep moving while it does. The thread writes these and then posts the message that
+	// ends the switch; the window reads them once it has joined the thread.
+	HANDLE switchThread = nullptr;
+	std::wstring switchTitle;
+	SinkDriver switchTarget = SinkDriver::Unknown;
+	SwitchOutcome switchOutcome = SwitchOutcome::Failed;
+	SwitchReport switchReport;
+	std::string switchError;
 	// Owns the one tooltip window the fields share; a child of the frame, so it goes with it.
 	HWND tooltip = nullptr;
 	// The client size the layout settled on. Both only grow, so a measurement that changes with
@@ -468,6 +490,22 @@ int WorkAreaHeight(HWND hwnd)
 void Place(HWND control, int x, int y, int width, int height)
 {
 	SetWindowPos(control, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// The loading bar sits in the middle of the overlay, whatever the window's size.
+void PlaceSwitchBar(HWND bar, int width, int height)
+{
+	if (bar == nullptr)
+	{
+		return;
+	}
+	int barWidth = width - kSwitchBarMargin * 2;
+	if (barWidth > kSwitchBarWidth)
+	{
+		barWidth = kSwitchBarWidth;
+	}
+	Place(bar, (width - barWidth) / 2, (height - kSwitchBarHeight) / 2, barWidth,
+		  kSwitchBarHeight);
 }
 
 // Which section of the list a report line belongs to, or null for the raw field dump, whose
@@ -1585,6 +1623,7 @@ void ApplyLayout(HWND hwnd)
 	if (state->switchOverlay != nullptr)
 	{
 		Place(state->switchOverlay, 0, 0, width, height);
+		PlaceSwitchBar(state->switchProgress, width, height);
 	}
 
 	// The message keeps the whole width above the buttons, so a refusal reads in full; the buttons
@@ -1910,6 +1949,14 @@ void CreateControls(HWND hwnd)
 		{
 			ShowWindow(state->switchOverlay, SW_HIDE);
 			SetWindowSubclass(state->switchOverlay, SwitchOverlaySubclass, kSwitchOverlaySubclassId, 0);
+			// The wait has no percentage to show, so it is a marquee bar: the control keeps the
+			// track moving on its own, and the window only has to keep painting.
+			state->switchProgress = CreateChild(state->switchOverlay, PROGRESS_CLASSW, L"",
+												PBS_MARQUEE, 0, 0, 10, 10, 0, font);
+			if (state->switchProgress != nullptr)
+			{
+				ShowWindow(state->switchProgress, SW_HIDE);
+			}
 		}
 	}
 	EnableWindow(GetDlgItem(hwnd, kDriverButton), FALSE);
@@ -2903,15 +2950,9 @@ std::wstring DriverTitle(SinkDriver driver)
 											: L"no A2DP driver";
 }
 
-std::wstring SwitchOverlayText(SinkDriver target)
-{
-	return L"Switching to " + DriverTitle(target) +
-		   L"...\n\nPlease wait; the sink reconnects and audio stops for a moment.";
-}
-
-// Covers the window and disables it before the install starts. The overlay is painted before
-// the window is disabled, so the wait is visible instead of a frozen frame.
-void BeginDriverSwitch(HWND hwnd, SinkDriver target)
+// Covers the window and disables it before the install starts; the overlay and its bar are
+// painted before the window is disabled, so the wait is visible instead of a frozen frame.
+void BeginDriverSwitch(HWND hwnd)
 {
 	SinkState* state = StateOf(hwnd);
 	if (state == nullptr)
@@ -2921,18 +2962,19 @@ void BeginDriverSwitch(HWND hwnd, SinkDriver target)
 	state->switching = true;
 	if (state->switchOverlay != nullptr)
 	{
-		const std::wstring text = SwitchOverlayText(target);
-		SetWindowTextW(state->switchOverlay, text.c_str());
 		RECT client = {};
 		GetClientRect(hwnd, &client);
 		SetWindowPos(state->switchOverlay, HWND_TOP, 0, 0, client.right, client.bottom,
 					 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		PlaceSwitchBar(state->switchProgress, client.right, client.bottom);
+		if (state->switchProgress != nullptr)
+		{
+			// Indeterminate: nothing reports how far the install is, so the bar only says that
+			// the window is working.
+			SendMessageW(state->switchProgress, PBM_SETMARQUEE, TRUE, kSwitchBarStepMs);
+		}
 		InvalidateRect(state->switchOverlay, nullptr, TRUE);
 		UpdateWindow(state->switchOverlay);
-	}
-	else
-	{
-		SetMessage(hwnd, L"Switching driver; please wait...");
 	}
 	SetCursor(LoadCursorW(nullptr, IDC_WAIT));
 	EnableWindow(hwnd, FALSE);
@@ -2946,6 +2988,11 @@ void EndDriverSwitch(HWND hwnd)
 		return;
 	}
 	state->switching = false;
+	if (state->switchProgress != nullptr)
+	{
+		SendMessageW(state->switchProgress, PBM_SETMARQUEE, FALSE, 0);
+		ShowWindow(state->switchProgress, SW_HIDE);
+	}
 	if (state->switchOverlay != nullptr)
 	{
 		ShowWindow(state->switchOverlay, SW_HIDE);
@@ -2955,13 +3002,66 @@ void EndDriverSwitch(HWND hwnd)
 	BringToFront(hwnd);
 }
 
+// One switch, passed to the thread that runs it. The thread owns the job, writes the outcome
+// into the window's state and posts the message that ends the switch.
+struct SwitchJob
+{
+	HWND hwnd;
+	SinkState* state;
+	std::string reference;
+	SinkDriver target;
+};
+
+DWORD WINAPI SwitchThreadProc(void* parameter)
+{
+	SwitchJob* job = static_cast<SwitchJob*>(parameter);
+	std::string error;
+	job->state->switchOutcome =
+			SwitchSinkDriver(job->reference, job->target, job->state->switchReport, error);
+	job->state->switchError = error;
+	PostMessageW(job->hwnd, kSwitchDoneMessage, 0, 0);
+	delete job;
+	return 0;
+}
+
+// The switch's result, on the UI thread: the thread has exited, so its writes are visible and
+// its handle can be closed. The sink list is read again, because the node restarted under the
+// driver it settled on.
+void FinishDriverSwitch(HWND hwnd)
+{
+	SinkState* state = StateOf(hwnd);
+	if (state == nullptr)
+	{
+		return;
+	}
+	if (state->switchThread != nullptr)
+	{
+		WaitForSingleObject(state->switchThread, INFINITE);
+		CloseHandle(state->switchThread);
+		state->switchThread = nullptr;
+	}
+	const std::wstring title = state->switchTitle;
+	const SinkDriver target = state->switchTarget;
+	ReloadDevices(hwnd);
+	EndDriverSwitch(hwnd);
+	if (state->switchOutcome != SwitchOutcome::Switched)
+	{
+		SetMessage(hwnd, Tools::Widen(state->switchError));
+		return;
+	}
+	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) + L"." +
+					   (state->switchReport.pausedPlayer.empty()
+								? std::wstring()
+								: L" " + Tools::Widen(state->switchReport.pausedPlayer) + L" was paused."));
+}
+
 // Moves the selected sink to the other A2DP source driver. The install restarts that sink's
 // A2DP node, so its control device, endpoints and stream go with it: the list is read again
 // afterwards and reopens the sink under whichever driver now owns it.
 void SwitchSelectedDriver(HWND hwnd)
 {
 	SinkState* state = StateOf(hwnd);
-	if (state == nullptr || state->selected >= state->devices.size())
+	if (state == nullptr || state->switching || state->selected >= state->devices.size())
 	{
 		return;
 	}
@@ -2984,27 +3084,23 @@ void SwitchSelectedDriver(HWND hwnd)
 		return;
 	}
 
-	// A switch is a blocking install and node restart, so the window is covered and disabled
-	// while it runs: no control can start a second switch and the wait is visible.
-	BeginDriverSwitch(hwnd, target);
+	// A switch is a blocking install and node restart, so it runs on its own thread: the window
+	// is covered and disabled, no control can start a second switch, and the bar keeps moving.
+	state->switchTitle = title;
+	state->switchTarget = target;
+	BeginDriverSwitch(hwnd);
 	// The window's own handle on the control device would keep the old OpenA2dp image loaded
 	// after its node is gone, and a later switch back then fails until a reboot (problem 38).
 	// It is closed before the node restarts, not after.
 	CloseControl(*state);
-	std::string error;
-	Tools::SwitchReport report;
-	const Tools::SwitchOutcome outcome = SwitchSinkDriver(reference, target, report, error);
-	ReloadDevices(hwnd);
-	EndDriverSwitch(hwnd);
-	if (outcome != Tools::SwitchOutcome::Switched)
+	auto* job = new SwitchJob{hwnd, state, reference, target};
+	state->switchThread = CreateThread(nullptr, 0, SwitchThreadProc, job, 0, nullptr);
+	if (state->switchThread == nullptr)
 	{
-		SetMessage(hwnd, Tools::Widen(error));
-		return;
+		delete job;
+		EndDriverSwitch(hwnd);
+		SetMessage(hwnd, L"The driver switch could not be started; nothing was changed.");
 	}
-	SetMessage(hwnd, L"Switched " + title + L" to " + DriverTitle(target) + L"." +
-					   (report.pausedPlayer.empty()
-								? std::wstring()
-								: L" " + Tools::Widen(report.pausedPlayer) + L" was paused."));
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -3116,6 +3212,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_TIMER:
 		if (wParam == kStatusTimerId)
 		{
+			const SinkState* state = StateOf(hwnd);
+			// A switch installs over the node and restarts it, so every sink is left alone until
+			// it ends: opening the control device now is what keeps the old driver image loaded
+			// and makes the next switch fail until a reboot (problem 38).
+			if (state != nullptr && state->switching)
+			{
+				return 0;
+			}
 			RefreshStatus(hwnd);
 			// Another sink may have started or stopped streaming, which no device notification
 			// reports, so the list is checked on the same tick as the status.
@@ -3140,7 +3244,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		break;
 	}
 	case kDeviceChangeMessage:
+	{
+		const SinkState* state = StateOf(hwnd);
+		// The node's own restart is reported here; the list is read once the switch ends.
+		if (state != nullptr && state->switching)
+		{
+			return 0;
+		}
 		ReloadDevices(hwnd);
+		return 0;
+	}
+	case kSwitchDoneMessage:
+		FinishDriverSwitch(hwnd);
 		return 0;
 	case WM_DRAWITEM:
 		PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
@@ -3186,6 +3301,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 		SinkState* state = StateOf(hwnd);
 		if (state != nullptr)
 		{
+			// A switch in flight writes its outcome into this state, so it is joined before the
+			// state goes; the install itself is bounded by its own timeouts.
+			if (state->switchThread != nullptr)
+			{
+				WaitForSingleObject(state->switchThread, INFINITE);
+				CloseHandle(state->switchThread);
+				state->switchThread = nullptr;
+			}
 			if (state->notify != nullptr)
 			{
 				CM_Unregister_Notification(state->notify);
@@ -3310,7 +3433,8 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE previous, _In_ P
 	UNREFERENCED_PARAMETER(commandLine);
 	// The tooltip window is a Win95 common control, not one of the standard classes a button
 	// or an edit comes from.
-	INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
+	INITCOMMONCONTROLSEX controls = {sizeof(controls),
+									 ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES | ICC_PROGRESS_CLASS};
 	InitCommonControlsEx(&controls);
 	return OpenA2dp::ConfigUi::Run(instance, show);
 }
