@@ -28,6 +28,7 @@
 - Entry/PnP: `driver/Driver.cpp`; `driver/README.md` lists subsystem `.cpp` files under `driver/{audio,config,l2cap,signaling,service,media}/`.
 - Encoder service: `service/main.cpp`.
 - Diagnostics: `tools/OpenA2dpCtl/`.
+- Setup: `tools/OpenA2dpSetup/`; payload embedding: `scripts/generate-setup-payload.ps1`.
 - Codecs: `codecs/`.
 - Tests: `tests/CodecTests/`.
 - ABI: `common/include/OpenA2dp/Ioctl.h`.

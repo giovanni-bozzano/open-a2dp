@@ -17,12 +17,12 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M7 aptX + aptX HD | Done | — |
 | M8 LDAC | Done | — |
 | M9 Config UI + install/uninstall | Done | — |
-| M10 Setup file | Not started | One setup file that installs the driver package, the service and the tools, and removes them |
+| M10 Setup file | Done | — |
 
 ## Next
 
-1. **A setup file (M10)**: one setup file that installs the driver package, the service and the
-   tools, and removes them.
+1. **Validate setup on a clean VM**: install, update, uninstall and the restart path, with test
+   signing enabled and a sink paired before and after.
 
 ## Blockers
 

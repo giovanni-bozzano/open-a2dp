@@ -83,6 +83,13 @@ package, the tools and the encoder service, and starts the service:
 and the test certificate, and checks that the sink is back on the inbox driver.
 See [Build and deploy](docs/BUILD.md) for the options and the manual checks.
 
+For an interactive install or update, run `out\x64\<Configuration>\OpenA2dpSetup.exe`
+elevated. It is self-contained, asks where to install the tools, stages the driver
+package without switching any headset, and can be removed from **Settings > Apps**.
+An update keeps the saved settings and restarts only headsets already on OpenA2DP.
+Uninstall returns every headset to the Windows driver and removes the package from
+the driver store.
+
 Then open `OpenA2dpConfig.exe`, pick a headset and choose a codec. If the sink is
 still on the Windows driver, the window offers to switch it over. The settings
 take effect on the next negotiation; a running stream is restarted only when the

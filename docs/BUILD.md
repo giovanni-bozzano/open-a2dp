@@ -102,6 +102,28 @@ password:
 }
 ```
 
+## Setup
+
+`out\x64\<Configuration>\OpenA2dpSetup.exe` is the self-contained installer. It embeds the
+driver package, the encoder service and both tools, so it can be handed out on its own. Run it
+elevated; it asks for an install folder, defaulting to `%ProgramFiles%\OpenA2DP`.
+
+Setup adds the package to the driver store with `pnputil /add-driver` and deliberately omits
+`/install`: no headset is switched. Choose headsets afterwards in `OpenA2dpConfig.exe` or with
+`OpenA2dpCtl driver opena2dp`. The wizard and its operations live in `tools/OpenA2dpSetup/`;
+`scripts/generate-setup-payload.ps1` embeds the build outputs.
+
+Running setup again on the same machine updates the existing installation in place. It keeps the
+saved headset settings, replaces the files and service, and restarts only headsets that were
+already on OpenA2DP so they load the new driver. Headsets on the Windows driver are not touched.
+
+Remove OpenA2DP from **Settings > Apps**. The uninstaller returns every OpenA2DP sink to
+`BthA2dp`, removes every `opena2dp.inf` package from the driver store, removes both service
+entries, the shortcut, the Apps entry, the test certificate it added and the installed files.
+Saved per-sink settings are kept unless **Also delete saved headset settings** is ticked on the
+confirmation page. A restart is requested when Windows cannot finish a removal immediately;
+setup reports that on the progress page.
+
 ## Restore
 
 ```powershell

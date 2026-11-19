@@ -5,6 +5,20 @@
 Both tools need an elevated prompt. The control device accepts SYSTEM and
 Administrators only; the settings window asks for elevation itself.
 
+## Install, update and remove
+
+`OpenA2dpSetup.exe` is the interactive installer. It asks where to put the tools (the default is
+`%ProgramFiles%\OpenA2DP`), installs the driver package, the encoder service and both tools, and
+starts the service. It never switches a headset: the driver package is staged in the driver store
+and a sink stays on the Windows driver until it is chosen below.
+
+Running setup again updates the existing installation. Settings are kept; headsets already on
+OpenA2DP are restarted so they load the new driver, and headsets on the Windows driver are not
+touched. Remove OpenA2DP from **Settings > Apps**. The uninstaller returns every OpenA2DP sink to
+the Windows driver, removes the package from the driver store, and removes the services, shortcut,
+Apps entry and installed files. Saved per-sink settings are kept unless the uninstaller's
+**Also delete saved headset settings** box is ticked.
+
 ## Switch a sink over
 
 A sink stays on the Windows driver until it is switched. Both tools do the switch
