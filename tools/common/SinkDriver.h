@@ -83,4 +83,11 @@ struct SwitchReport
 SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, SwitchReport& report,
 							   std::string& error);
 
+// Reloads the driver image on a sink that is already on OpenA2dp, so a package staged by an
+// update loads now instead of at the next reconnect. A sink on any other driver is refused: an
+// update must never move a Windows-bound sink to OpenA2DP. Like a switch, a program rendering to
+// the sink is paused first, and a program that cannot be paused makes the reload refuse without
+// changing the node.
+SwitchOutcome ReloadSinkDriver(const std::string& reference, SwitchReport& report, std::string& error);
+
 } // namespace OpenA2dp::Tools

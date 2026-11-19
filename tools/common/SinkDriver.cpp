@@ -685,4 +685,42 @@ SwitchOutcome SwitchSinkDriver(const std::string& reference, SinkDriver target, 
 	return switched ? SwitchOutcome::Switched : SwitchOutcome::Failed;
 }
 
+SwitchOutcome ReloadSinkDriver(const std::string& reference, SwitchReport& report, std::string& error)
+{
+	report = {};
+	SinkDriverState state;
+	if (!ReadSinkDriver(reference, state, error))
+	{
+		return SwitchOutcome::Failed;
+	}
+	if (state.current != SinkDriver::OpenA2dp)
+	{
+		error = "the sink is not using OpenA2DP (it is on " + std::string(SinkDriverName(state.current)) +
+				"); an update does not switch a sink that did not choose it";
+		return SwitchOutcome::Failed;
+	}
+
+	std::string paused;
+	if (!EnsureSinkIdle(reference, state.instanceId, paused, error))
+	{
+		report.pausedPlayer = paused;
+		return SwitchOutcome::PlaysAudio;
+	}
+	report.pausedPlayer = paused;
+
+	HDEVINFO set = INVALID_HANDLE_VALUE;
+	SP_DEVINFO_DATA dev = {};
+	if (!FindNode(reference, set, dev, error))
+	{
+		return SwitchOutcome::Failed;
+	}
+	const bool restarted = RestartNode(dev, error);
+	if (restarted && !NodeRunning(dev))
+	{
+		error = "the sink's A2DP node did not start after the driver update; reconnect the sink";
+	}
+	SetupDiDestroyDeviceInfoList(set);
+	return restarted && error.empty() ? SwitchOutcome::Switched : SwitchOutcome::Failed;
+}
+
 } // namespace OpenA2dp::Tools
