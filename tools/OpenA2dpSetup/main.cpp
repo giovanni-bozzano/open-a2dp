@@ -589,7 +589,9 @@ int RunWizard(Job& job)
 
 	PROPSHEETHEADERW header = {};
 	header.dwSize = sizeof(header);
-	header.dwFlags = PSH_WIZARD | PSH_NOAPPLYNOW | PSH_USEHICON;
+	// ppsp points at PROPSHEETPAGE structures, not CreatePropertySheetPage handles. Without this
+	// flag comctl32 interprets the first structure's dwSize/dwFlags as a page handle.
+	header.dwFlags = PSH_WIZARD | PSH_NOAPPLYNOW | PSH_USEHICON | PSH_PROPSHEETPAGE;
 	header.hInstance = module;
 	header.pszCaption = L"OpenA2DP Setup";
 	header.nPages = count;
