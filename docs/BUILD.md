@@ -116,6 +116,9 @@ Setup adds the package to the driver store with `pnputil /add-driver` and delibe
 Running setup again on the same machine updates the existing installation in place. It keeps the
 saved headset settings, replaces the files and service, and restarts only headsets that were
 already on OpenA2DP so they load the new driver. Headsets on the Windows driver are not touched.
+After the new package is verified, setup removes the superseded `opena2dp.inf` packages from the
+driver store. That cleanup does not use `/uninstall`, so it does not switch or uninstall a sink; if
+Windows still holds a package, setup reports it and requests a restart when Windows requires one.
 
 Remove OpenA2DP from **Settings > Apps**. The uninstaller returns every OpenA2DP sink to
 `BthA2dp`, removes every `opena2dp.inf` package from the driver store, removes both service

@@ -14,7 +14,8 @@ and a sink stays on the Windows driver until it is chosen below.
 
 Running setup again updates the existing installation. Settings are kept; headsets already on
 OpenA2DP are restarted so they load the new driver, and headsets on the Windows driver are not
-touched. Remove OpenA2DP from **Settings > Apps**. The uninstaller returns every OpenA2DP sink to
+touched. The update also removes the previous driver package from the driver store; if Windows
+still holds it, setup reports it and requests a restart when Windows requires one. Remove OpenA2DP from **Settings > Apps**. The uninstaller returns every OpenA2DP sink to
 the Windows driver, removes the package from the driver store, and removes the services, shortcut,
 Apps entry and installed files. Saved per-sink settings are kept unless the uninstaller's
 **Also delete saved headset settings** box is ticked.

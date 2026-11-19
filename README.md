@@ -86,7 +86,8 @@ See [Build and deploy](docs/BUILD.md) for the options and the manual checks.
 For an interactive install or update, run `out\x64\<Configuration>\OpenA2dpSetup.exe`
 elevated. It is self-contained, asks where to install the tools, stages the driver
 package without switching any headset, and can be removed from **Settings > Apps**.
-An update keeps the saved settings and restarts only headsets already on OpenA2DP.
+An update keeps the saved settings, removes the superseded driver package from the
+store, and restarts only headsets already on OpenA2DP.
 Uninstall returns every headset to the Windows driver and removes the package from
 the driver store.
 
