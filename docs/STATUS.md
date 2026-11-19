@@ -19,15 +19,6 @@ the procedures are in [HARDWARE-TESTS](HARDWARE-TESTS.md) and scripted per test 
 | M9 Config UI + install/uninstall | Done | — |
 | M10 Setup file | Done | — |
 
-## Next
-
-1. **Validate setup on a clean VM**: install, update, uninstall and the restart path, with test
-   signing enabled and a sink paired before and after.
-
-## Blockers
-
-- None.
-
 ## Where the decisions live
 
 - Which codecs may ship, and what a distributor owes: [Codec licensing](architecture/Codec-Licensing.md).
