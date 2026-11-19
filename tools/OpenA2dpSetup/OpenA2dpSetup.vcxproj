@@ -1,0 +1,83 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup Label="Globals">
+	<ProjectGuid>{6B1E3C2A-4F1D-4C7E-9A11-2D0F6E7A1007}</ProjectGuid>
+	<RootNamespace>OpenA2dpSetup</RootNamespace>
+	<ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+	<ClCompile>
+	  <!-- SinkDriver and the shared text conversions are the same code the two tools use. -->
+	  <AdditionalIncludeDirectories>$(OpenA2dpRoot)tools;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	</ClCompile>
+	<ResourceCompile>
+	  <AdditionalIncludeDirectories>$(ProjectDir);$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+	</ResourceCompile>
+	<Link>
+	  <SubSystem>Windows</SubSystem>
+	  <!-- setupapi and newdev: the driver package and the per-sink switch; cfgmgr32: the node
+	       restart; crypt32 and wintrust: the package signature and its certificate; comctl32:
+	       the wizard; shell32, shlwapi and ole32: the folder picker and the shortcut;
+	       advapi32: the service and registry; windowsapp: the audio-session check in SinkDriver. -->
+	  <AdditionalDependencies>advapi32.lib;cfgmgr32.lib;comctl32.lib;crypt32.lib;newdev.lib;ole32.lib;setupapi.lib;shell32.lib;shlwapi.lib;user32.lib;windowsapp.lib;wintrust.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	  <!-- Installing a driver and writing the machine registry need elevation. -->
+	  <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
+	</Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+	<ClCompile Include="main.cpp" />
+	<ClCompile Include="SetupDriverStore.cpp" />
+	<ClCompile Include="SetupEnvironment.cpp" />
+	<ClCompile Include="SetupOperations.cpp" />
+	<ClCompile Include="SetupPayload.cpp" />
+	<ClCompile Include="SetupRegistry.cpp" />
+	<ClCompile Include="SetupService.cpp" />
+	<ClCompile Include="SetupShortcut.cpp" />
+	<ClCompile Include="SetupSignature.cpp" />
+	<ClCompile Include="..\common\SetupEnumeration.cpp" />
+	<ClCompile Include="..\common\SinkDriver.cpp" />
+	<ClCompile Include="..\common\SinkMatch.cpp" />
+	<ClCompile Include="..\common\SinkPause.cpp" />
+	<ClCompile Include="..\common\SinkPlayback.cpp" />
+	<ClCompile Include="..\common\ControlDevice.cpp" />
+	<ClCompile Include="..\common\Text.cpp" />
+	<ClInclude Include="SetupDriverStore.h" />
+	<ClInclude Include="SetupEnvironment.h" />
+	<ClInclude Include="SetupNames.h" />
+	<ClInclude Include="SetupOperations.h" />
+	<ClInclude Include="SetupPayload.h" />
+	<ClInclude Include="SetupRegistry.h" />
+	<ClInclude Include="SetupResources.h" />
+	<ClInclude Include="SetupService.h" />
+	<ClInclude Include="SetupShortcut.h" />
+	<ClInclude Include="SetupSignature.h" />
+	<ClInclude Include="SetupTypes.h" />
+  </ItemGroup>
+  <ItemGroup>
+	<ResourceCompile Include="OpenA2dpSetup.rc" />
+	<ResourceCompile Include="$(IntDir)Payload.rc" />
+  </ItemGroup>
+  <ItemGroup>
+	<ProjectReference Include="..\..\driver\OpenA2dp.vcxproj">
+	  <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
+	</ProjectReference>
+	<ProjectReference Include="..\..\service\OpenA2dpSvc.vcxproj">
+	  <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
+	</ProjectReference>
+	<ProjectReference Include="..\OpenA2dpCtl\OpenA2dpCtl.vcxproj">
+	  <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
+	</ProjectReference>
+	<ProjectReference Include="..\OpenA2dpConfig\OpenA2dpConfig.vcxproj">
+	  <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
+	</ProjectReference>
+  </ItemGroup>
+  <Target Name="GenerateSetupPayload" BeforeTargets="ResourceCompile">
+	<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(OpenA2dpRoot)scripts\generate-setup-payload.ps1&quot; -OutDir &quot;$(OutDir).&quot; -Output &quot;$(IntDir)Payload.rc&quot;" />
+  </Target>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

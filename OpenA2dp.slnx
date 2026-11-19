@@ -37,6 +37,12 @@
   <Folder Name="/tools/">
     <Project Path="tools/OpenA2dpCtl/OpenA2dpCtl.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1004" />
     <Project Path="tools/OpenA2dpConfig/OpenA2dpConfig.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1005" />
+    <Project Path="tools/OpenA2dpSetup/OpenA2dpSetup.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1007">
+      <BuildDependency Project="driver/OpenA2dp.vcxproj" />
+      <BuildDependency Project="service/OpenA2dpSvc.vcxproj" />
+      <BuildDependency Project="tools/OpenA2dpCtl/OpenA2dpCtl.vcxproj" />
+      <BuildDependency Project="tools/OpenA2dpConfig/OpenA2dpConfig.vcxproj" />
+    </Project>
   </Folder>
   <Folder Name="/service/">
     <Project Path="service/OpenA2dpSvc.vcxproj" Id="6b1e3c2a-4f1d-4c7e-9a11-2d0f6e7a1006" />

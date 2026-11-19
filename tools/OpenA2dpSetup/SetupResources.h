@@ -1,0 +1,33 @@
+#ifndef OPENA2DP_SETUP_RESOURCES_H
+#define OPENA2DP_SETUP_RESOURCES_H
+
+// Resource and dialog identifiers shared by the resource script and the installer code.
+
+#define IDI_SETUP_APP 101
+
+#define IDD_WELCOME 200
+#define IDD_LOCATION 201
+#define IDD_PROGRESS 202
+#define IDD_CONFIRM 203
+
+#define IDC_WELCOME_TEXT 300
+#define IDC_PATH 301
+#define IDC_BROWSE 302
+#define IDC_LOCATION_NOTE 303
+#define IDC_STATUS 310
+#define IDC_PROGRESS 311
+#define IDC_LOG 312
+#define IDC_SINKS 320
+#define IDC_REMOVE_SETTINGS 321
+#define IDC_OPEN_SETTINGS 322
+#define IDC_RESTART_NOTE 323
+#define IDC_FOOTNOTE 324
+
+#define IDR_PAYLOAD_SYS 1001
+#define IDR_PAYLOAD_INF 1002
+#define IDR_PAYLOAD_CAT 1003
+#define IDR_PAYLOAD_SERVICE 1004
+#define IDR_PAYLOAD_CONTROL 1005
+#define IDR_PAYLOAD_CONFIG 1006
+
+#endif

@@ -41,7 +41,9 @@
 	<ClCompile Include="SbcFixedTests.cpp" />
 	<ClCompile Include="SbcFrameTests.cpp" />
 	<ClCompile Include="StatusReportTests.cpp" />
+	<ClCompile Include="SetupTests.cpp" />
 	<!-- The report the CLI and the settings window share. -->
+	<ClCompile Include="..\..\tools\common\SetupEnumeration.cpp" />
 	<ClCompile Include="..\..\tools\common\SinkMatch.cpp" />
 	<ClCompile Include="..\..\tools\common\StatusReport.cpp" />
 	<ClCompile Include="..\..\tools\common\Text.cpp" />
