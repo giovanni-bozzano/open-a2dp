@@ -297,7 +297,8 @@ bool PrepareDriverPackage(const std::wstring& packageDir, HWND owner, PackageTru
 		error = L"This OpenA2DP build is test-signed, but Windows test signing is off on this PC.\n\n"
 				L"Enable it from an elevated prompt with:\n"
 				L"    bcdedit /set testsigning on\n\n"
-				L"then restart Windows and run setup again.";
+				L"then restart Windows and run setup again. If Secure Boot is enabled, test signing "
+				L"cannot be used; install a production-signed build instead.";
 		return false;
 	}
 
