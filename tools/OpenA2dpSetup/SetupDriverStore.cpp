@@ -191,6 +191,33 @@ bool ListPackages(std::vector<std::wstring>& published, const Log& log, std::wst
 	return true;
 }
 
+bool DeleteOnePackage(const std::wstring& published, bool uninstallDevices, bool& restartRequired,
+					  const Log& log, std::wstring& error)
+{
+	const std::wstring options = uninstallDevices ? L" /uninstall /force" : L" /force";
+	const std::wstring arguments = L"/delete-driver " + published + options;
+	log(L"pnputil /delete-driver " + published + options);
+	DWORD exitCode = 0;
+	std::string output;
+	if (!RunTool(System32(L"pnputil.exe"), arguments, 180000, exitCode, output, error))
+	{
+		LogOutput(log, output);
+		return false;
+	}
+	LogOutput(log, output);
+	if (exitCode == 3010)
+	{
+		restartRequired = true;
+	}
+	if (exitCode != 0 && exitCode != 259 && exitCode != 3010)
+	{
+		error = L"The driver package " + published + L" could not be removed (exit " +
+				std::to_wstring(exitCode) + L").";
+		return false;
+	}
+	return true;
+}
+
 } // namespace
 
 bool ListOpenA2dpPackages(std::vector<std::wstring>& published, const Log& log, std::wstring& error)
@@ -234,27 +261,13 @@ bool StageDriverPackage(const std::wstring& infPath, const Log& log, std::wstrin
 bool DeleteDriverPackage(const std::wstring& published, bool& restartRequired, const Log& log,
 						 std::wstring& error)
 {
-	const std::wstring arguments = L"/delete-driver " + published + L" /uninstall /force";
-	log(L"pnputil /delete-driver " + published + L" /uninstall /force");
-	DWORD exitCode = 0;
-	std::string output;
-	if (!RunTool(System32(L"pnputil.exe"), arguments, 180000, exitCode, output, error))
-	{
-		LogOutput(log, output);
-		return false;
-	}
-	LogOutput(log, output);
-	if (exitCode == 3010)
-	{
-		restartRequired = true;
-	}
-	if (exitCode != 0 && exitCode != 259 && exitCode != 3010)
-	{
-		error = L"The driver package " + published + L" could not be removed (exit " +
-				std::to_wstring(exitCode) + L").";
-		return false;
-	}
-	return true;
+	return DeleteOnePackage(published, true, restartRequired, log, error);
+}
+
+bool DeleteDriverPackageFromStore(const std::wstring& published, bool& restartRequired,
+								  const Log& log, std::wstring& error)
+{
+	return DeleteOnePackage(published, false, restartRequired, log, error);
 }
 
 bool DeleteDriverPackages(bool& restartRequired, const Log& log, std::wstring& error)

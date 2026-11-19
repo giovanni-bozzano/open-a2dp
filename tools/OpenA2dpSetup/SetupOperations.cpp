@@ -53,6 +53,40 @@ std::wstring Combine(const std::wstring& directory, const std::wstring& name)
 	return directory + L"\\" + name;
 }
 
+std::wstring PublishedInfPath(const std::wstring& published)
+{
+	wchar_t windows[MAX_PATH] = {};
+	const UINT length = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
+	if (length == 0 || length >= ARRAYSIZE(windows))
+	{
+		return {};
+	}
+	return std::wstring(windows, length) + L"\\INF\\" + published;
+}
+
+// The packages in the store whose published INF is not this build. A package whose version cannot
+// be read counts as old, but if no package matches the new version at all the caller leaves the
+// store alone rather than risk deleting the package it just staged.
+std::vector<std::wstring> OldDriverPackages(const std::vector<std::wstring>& packages,
+											const std::wstring& currentVersion, bool& foundCurrent)
+{
+	std::vector<std::wstring> old;
+	foundCurrent = false;
+	for (const std::wstring& package : packages)
+	{
+		const std::wstring path = PublishedInfPath(package);
+		if (!path.empty() &&
+			CompareStringOrdinal(ReadDriverVersion(path).c_str(), -1, currentVersion.c_str(), -1, TRUE) ==
+				CSTR_EQUAL)
+		{
+			foundCurrent = true;
+			continue;
+		}
+		old.push_back(package);
+	}
+	return old;
+}
+
 std::wstring SinkName(const Tools::SinkNode& sink)
 {
 	return Tools::Widen(Tools::FormatAddress(sink.reference));
@@ -454,6 +488,66 @@ Result Install(const std::wstring& installDir, const std::wstring& setupExePath,
 		}
 	}
 
+	bool oldPackagesRemoved = false;
+	bool oldPackageWarning = false;
+	bool oldPackageRestart = false;
+	if (updating && info.version != L"1.0")
+	{
+		bool currentFound = false;
+		const std::vector<std::wstring> oldPackages =
+			OldDriverPackages(installedPackages, info.version, currentFound);
+		if (!currentFound)
+		{
+			log(L"warning: the current driver package version could not be identified; the driver "
+				L"store was left unchanged.");
+			oldPackageWarning = true;
+		}
+		else if (!oldPackages.empty())
+		{
+			log(L"Removing the previous driver package from the driver store...");
+			for (const std::wstring& package : oldPackages)
+			{
+				bool restart = false;
+				if (!DeleteDriverPackageFromStore(package, restart, log, error))
+				{
+					log(L"warning: " + error);
+					oldPackageWarning = true;
+				}
+				oldPackageRestart = oldPackageRestart || restart;
+			}
+
+			std::vector<std::wstring> remaining;
+			if (!ListOpenA2dpPackages(remaining, log, error))
+			{
+				log(L"warning: " + error);
+				oldPackageWarning = true;
+			}
+			else
+			{
+				bool remainingCurrent = false;
+				const std::vector<std::wstring> left =
+					OldDriverPackages(remaining, info.version, remainingCurrent);
+				if (!remainingCurrent || !left.empty())
+				{
+					log(L"warning: the previous driver package is still in the driver store.");
+					oldPackageWarning = true;
+				}
+				else
+				{
+					oldPackagesRemoved = true;
+					oldPackageRestart = false;
+				}
+			}
+		}
+	}
+	else if (updating)
+	{
+		log(L"warning: the driver package version could not be read; the driver store was left "
+			L"unchanged.");
+		oldPackageWarning = true;
+	}
+	result.restartRequired = oldPackageRestart;
+
 	result.success = true;
 	if (updating)
 	{
@@ -462,6 +556,19 @@ Result Install(const std::wstring& installDir, const std::wstring& setupExePath,
 		{
 			result.message += L"\n\n" + std::to_wstring(reloaded) +
 							  L" headset(s) already using OpenA2DP were restarted to load the new driver.";
+		}
+		if (oldPackagesRemoved)
+		{
+			result.message += L"\n\nThe previous driver package was removed from the driver store.";
+		}
+		else if (oldPackageWarning)
+		{
+			result.message += L"\n\nThe previous driver package could not be removed from the driver "
+							  L"store; see the log above.";
+		}
+		if (oldPackageRestart)
+		{
+			result.message += L"\n\nRestart Windows to finish removing the previous driver package.";
 		}
 		result.message += L"\n\nHeadsets on the Windows driver were not touched.";
 	}

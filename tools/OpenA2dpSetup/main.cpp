@@ -203,16 +203,19 @@ void UpdateProgressPage(Job* job, HWND page)
 	}
 	EnableWindow(GetDlgItem(job->sheet, IDCANCEL), TRUE);
 	EnableMenuItem(GetSystemMenu(job->sheet, FALSE), SC_CLOSE, MF_BYCOMMAND | MF_ENABLED);
-	if (job->mode == Mode::Install && result.success)
+	if (job->mode == Mode::Install && result.success && !result.restartRequired)
 	{
 		ShowWindow(GetDlgItem(page, IDC_OPEN_SETTINGS), SW_SHOW);
 		CheckDlgButton(page, IDC_OPEN_SETTINGS, BST_CHECKED);
 	}
-	if (job->mode == Mode::Uninstall && result.restartRequired)
+	if (result.restartRequired)
 	{
+		ShowWindow(GetDlgItem(page, IDC_OPEN_SETTINGS), SW_HIDE);
 		ShowWindow(GetDlgItem(page, IDC_RESTART_NOTE), SW_SHOW);
 		SetDlgItemTextW(page, IDC_RESTART_NOTE,
-						L"Restart Windows to finish removing the driver package.");
+						job->mode == Mode::Uninstall
+							? L"Restart Windows to finish removing the driver package."
+							: L"Restart Windows to finish removing the previous driver package.");
 	}
 }
 

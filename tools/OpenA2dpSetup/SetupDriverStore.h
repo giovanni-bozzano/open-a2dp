@@ -22,6 +22,12 @@ bool DeleteDriverPackages(bool& restartRequired, const Log& log, std::wstring& e
 bool DeleteDriverPackage(const std::wstring& published, bool& restartRequired, const Log& log,
 						 std::wstring& error);
 
+// Removes one superseded package from the store during an update. `/uninstall` is deliberately
+// absent, so a device that still refers to the package is not uninstalled; it keeps the loaded
+// image until it reconnects or Windows restarts.
+bool DeleteDriverPackageFromStore(const std::wstring& published, bool& restartRequired,
+								  const Log& log, std::wstring& error);
+
 // Deletes the kernel driver service entry the INF created, after its devices are gone.
 bool DeleteDriverService(const Log& log, std::wstring& error);
 

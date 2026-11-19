@@ -14,7 +14,8 @@ namespace OpenA2dp::Setup {
 std::vector<std::wstring> CurrentOpenA2dpSinks(std::wstring& error);
 
 // Stages the package, installs or updates the files and service, restarts only sinks that were
-// already on OpenA2dp, and registers the installation. Does not switch any sink.
+// already on OpenA2dp, removes the superseded package after an update, and registers the
+// installation. Does not switch any sink.
 Result Install(const std::wstring& installDir, const std::wstring& setupExePath, HWND owner,
 			   const Log& log);
 
