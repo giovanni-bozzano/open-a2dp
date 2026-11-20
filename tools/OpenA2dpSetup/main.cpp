@@ -14,6 +14,8 @@
 #include "SetupResources.h"
 #include "SetupTypes.h"
 
+#include "common/Text.h"
+
 #include <windows.h>
 
 #include <commctrl.h>
@@ -26,6 +28,7 @@
 #include <cstdlib>
 #include <cwchar>
 #include <cwctype>
+#include <exception>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -126,9 +129,9 @@ void AddLog(Job* job, const std::wstring& line)
 		job->log += line;
 		job->log += L"\r\n";
 	}
-	if (job->sheet != nullptr)
+	if (job->progressPage != nullptr)
 	{
-		PostMessageW(job->sheet, kJobUpdate, 0, 0);
+		PostMessageW(job->progressPage, kJobUpdate, 0, 0);
 	}
 }
 
@@ -138,9 +141,9 @@ void SetStatus(Job* job, const std::wstring& status)
 		std::lock_guard<std::mutex> lock(job->mutex);
 		job->status = status;
 	}
-	if (job->sheet != nullptr)
+	if (job->progressPage != nullptr)
 	{
-		PostMessageW(job->sheet, kJobUpdate, 0, 0);
+		PostMessageW(job->progressPage, kJobUpdate, 0, 0);
 	}
 }
 
@@ -148,13 +151,26 @@ void RunWorker(Job* job)
 {
 	const Log log = [job](const std::wstring& line) { AddLog(job, line); };
 	Result result;
-	if (job->mode == Mode::Install)
+	try
 	{
-		result = Install(job->installDir, job->setupExe, job->sheet, log);
+		if (job->mode == Mode::Install)
+		{
+			result = Install(job->installDir, job->setupExe, job->sheet, log);
+		}
+		else
+		{
+			result = Uninstall(job->installDir, job->removeSettings, log);
+		}
 	}
-	else
+	catch (const std::exception& failure)
 	{
-		result = Uninstall(job->installDir, job->removeSettings, log);
+		result = {};
+		result.message = L"Setup failed unexpectedly: " + Tools::Widen(failure.what());
+	}
+	catch (...)
+	{
+		result = {};
+		result.message = L"Setup failed unexpectedly.";
 	}
 	{
 		std::lock_guard<std::mutex> lock(job->mutex);
@@ -162,9 +178,9 @@ void RunWorker(Job* job)
 		job->status = result.message;
 		job->done = true;
 	}
-	if (job->sheet != nullptr)
+	if (job->progressPage != nullptr)
 	{
-		PostMessageW(job->sheet, kJobDone, 0, 0);
+		PostMessageW(job->progressPage, kJobDone, 0, 0);
 	}
 }
 
@@ -477,7 +493,18 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 			if (!job->started)
 			{
 				job->started = true;
-				job->worker = std::thread([job] { RunWorker(job); });
+				try
+				{
+					job->worker = std::thread([job] { RunWorker(job); });
+				}
+				catch (...)
+				{
+					std::lock_guard<std::mutex> lock(job->mutex);
+					job->result.message = L"Setup could not start its worker thread.";
+					job->status = job->result.message;
+					job->done = true;
+					PostMessageW(page, kJobDone, 0, 0);
+				}
 			}
 			return PageResult(page, 0);
 		}
@@ -493,7 +520,7 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 		case PSN_QUERYCANCEL:
 		{
 			Job* job = JobOf(page);
-			if (job != nullptr && !job->done)
+			if (job != nullptr && job->started && !job->done)
 			{
 				return PageResult(page, 1);
 			}
