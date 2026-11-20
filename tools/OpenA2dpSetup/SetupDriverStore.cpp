@@ -103,10 +103,14 @@ bool RunTool(const std::wstring& executable, const std::wstring& arguments, DWOR
 	}
 	SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
 
+	// pnputil reads no input, and a program started from Explorer has no usable standard input:
+	// CreateProcess fails when STARTF_USESTDHANDLES names a handle that cannot be inherited.
+	const HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+									 &attributes, OPEN_EXISTING, 0, nullptr);
 	STARTUPINFOW startup = {};
 	startup.cb = sizeof(startup);
 	startup.dwFlags = STARTF_USESTDHANDLES;
-	startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	startup.hStdInput = input;
 	startup.hStdOutput = write;
 	startup.hStdError = write;
 
@@ -122,6 +126,10 @@ bool RunTool(const std::wstring& executable, const std::wstring& arguments, DWOR
 		CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, TRUE,
 					   CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, nullptr, nullptr, &startup, &process);
 	CloseHandle(write);
+	if (input != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(input);
+	}
 	if (!created)
 	{
 		error = L"The driver-store command could not be started: " + SystemMessage(GetLastError());
