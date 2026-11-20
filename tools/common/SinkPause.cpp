@@ -95,6 +95,10 @@ void PauseOnWorker(const std::vector<std::string>& players, std::string& paused,
 		{
 			error = "its media session could not be read (" + Code(failure) + ")";
 		}
+		catch (...)
+		{
+			error = "its media session could not be read";
+		}
 		(void)winrt::uninit_apartment();
 	});
 	worker.join();
