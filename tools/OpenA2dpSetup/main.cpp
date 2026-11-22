@@ -209,6 +209,18 @@ void UpdateProgressPage(Job* job, HWND page)
 	{
 		status = L"Working...";
 	}
+	if (done)
+	{
+		// The status box is two lines; a failure can be longer and its recovery command must stay
+		// readable. Keep the status short and put the full result at the end of the log.
+		status = result.success ? L"Setup finished." : L"Setup failed.";
+		if (!result.message.empty())
+		{
+			log += L"\r\n";
+			log += result.message;
+			log += L"\r\n";
+		}
+	}
 	SetDlgItemTextW(page, IDC_STATUS, status.c_str());
 	SendDlgItemMessageW(page, IDC_LOG, EM_SETLIMITTEXT, 1024 * 1024, 0);
 	SetDlgItemTextW(page, IDC_LOG, log.c_str());
