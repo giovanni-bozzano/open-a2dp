@@ -76,6 +76,14 @@ Job* JobOf(HWND page)
 	return reinterpret_cast<Job*>(GetWindowLongPtrW(page, DWLP_USER));
 }
 
+// A property sheet page receives a pointer to its PROPSHEETPAGE copy in WM_INITDIALOG; the Job
+// pointer was passed in that structure's lParam.
+Job* JobFromPage(LPARAM lParam)
+{
+	const auto* page = reinterpret_cast<const PROPSHEETPAGEW*>(lParam);
+	return page != nullptr ? reinterpret_cast<Job*>(page->lParam) : nullptr;
+}
+
 INT_PTR PageResult(HWND page, INT_PTR result)
 {
 	SetWindowLongPtrW(page, DWLP_MSGRESULT, result);
@@ -249,7 +257,7 @@ INT_PTR CALLBACK WelcomeProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 	{
 	case WM_INITDIALOG:
 	{
-		Job* job = reinterpret_cast<Job*>(lParam);
+		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
 		std::wstring text;
 		if (job->updating)
@@ -326,7 +334,7 @@ INT_PTR CALLBACK LocationProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 	{
 	case WM_INITDIALOG:
 	{
-		Job* job = reinterpret_cast<Job*>(lParam);
+		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
 		SetDlgItemTextW(page, IDC_PATH, job->installDir.c_str());
 		if (job->updating)
@@ -410,7 +418,7 @@ INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 	{
 	case WM_INITDIALOG:
 	{
-		Job* job = reinterpret_cast<Job*>(lParam);
+		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
 		std::wstring error;
 		const std::vector<std::wstring> sinks = CurrentOpenA2dpSinks(error);
@@ -463,7 +471,7 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 	{
 	case WM_INITDIALOG:
 	{
-		Job* job = reinterpret_cast<Job*>(lParam);
+		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
 		ShowWindow(GetDlgItem(page, IDC_OPEN_SETTINGS), SW_HIDE);
 		ShowWindow(GetDlgItem(page, IDC_RESTART_NOTE), SW_HIDE);
