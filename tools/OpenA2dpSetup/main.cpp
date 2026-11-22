@@ -477,7 +477,25 @@ INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 	return FALSE;
 }
 
-INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM, LPARAM lParam)
+LRESULT CALLBACK LogEditProc(HWND log, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR)
+{
+	const LRESULT result = DefSubclassProc(log, message, wParam, lParam);
+	switch (message)
+	{
+	case WM_SETFOCUS:
+	case WM_LBUTTONDOWN:
+	case WM_LBUTTONDBLCLK:
+	case WM_KEYDOWN:
+	case WM_CHAR:
+		HideCaret(log);
+		break;
+	default:
+		break;
+	}
+	return result;
+}
+
+INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
@@ -485,6 +503,13 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 	{
 		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
+		if (const HWND log = GetDlgItem(page, IDC_LOG))
+		{
+			// The resource marks the log read-only; enforce it and hide the caret so the output
+			// pane cannot look like an input field.
+			SendMessageW(log, EM_SETREADONLY, TRUE, 0);
+			SetWindowSubclass(log, LogEditProc, 1, 0);
+		}
 		ShowWindow(GetDlgItem(page, IDC_OPEN_SETTINGS), SW_HIDE);
 		ShowWindow(GetDlgItem(page, IDC_RESTART_NOTE), SW_HIDE);
 		SendDlgItemMessageW(page, IDC_PROGRESS, PBM_SETMARQUEE, FALSE, 0);
@@ -497,6 +522,16 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 			UpdateProgressPage(job, page);
 		}
 		return TRUE;
+	case WM_CTLCOLORSTATIC:
+	case WM_CTLCOLOREDIT:
+		if (reinterpret_cast<HWND>(lParam) == GetDlgItem(page, IDC_LOG))
+		{
+			const HDC dc = reinterpret_cast<HDC>(wParam);
+			SetBkColor(dc, GetSysColor(COLOR_3DFACE));
+			SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
+			return reinterpret_cast<INT_PTR>(GetSysColorBrush(COLOR_3DFACE));
+		}
+		break;
 	case WM_NOTIFY:
 		switch (reinterpret_cast<NMHDR*>(lParam)->code)
 		{
