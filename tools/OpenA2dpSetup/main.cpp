@@ -45,14 +45,10 @@ constexpr UINT kJobUpdate = WM_APP + 1;
 constexpr UINT kJobDone = WM_APP + 2;
 constexpr UINT kBringToFront = WM_APP + 3;
 
-// The wizard frame and its buttons stay native; the page content is drawn from this palette.
-constexpr COLORREF kPageBackground = RGB(0xFF, 0xFF, 0xFF);
-constexpr COLORREF kPageText = RGB(0x1A, 0x1A, 0x1A);
-constexpr COLORREF kPageMuted = RGB(0x5F, 0x5F, 0x5F);
-constexpr COLORREF kPagePanel = RGB(0xF7, 0xF7, 0xF7);
-constexpr COLORREF kPageBorder = RGB(0xDD, 0xDD, 0xDD);
-constexpr COLORREF kStatusGood = RGB(0x0E, 0x6B, 0x2E);
-constexpr COLORREF kStatusBad = RGB(0xB0, 0x1B, 0x1B);
+// The log pane is the one part of the page that is drawn from its own palette.
+constexpr COLORREF kLogBackground = RGB(0xF7, 0xF7, 0xF7);
+constexpr COLORREF kLogText = RGB(0x1A, 0x1A, 0x1A);
+constexpr COLORREF kLogBorder = RGB(0xDD, 0xDD, 0xDD);
 
 enum class Mode
 {
@@ -72,7 +68,6 @@ struct Job
 	bool started = false;
 	HWND sheet = nullptr;
 	HWND progressPage = nullptr;
-	HFONT statusFont = nullptr;
 	HFONT logFont = nullptr;
 	std::thread worker;
 
@@ -84,9 +79,8 @@ struct Job
 };
 
 HINSTANCE g_instance = nullptr;
-HBRUSH g_pageBrush = nullptr;
-HBRUSH g_panelBrush = nullptr;
-HBRUSH g_borderBrush = nullptr;
+HBRUSH g_logBrush = nullptr;
+HBRUSH g_logBorderBrush = nullptr;
 
 Job* JobOf(HWND page)
 {
@@ -131,64 +125,13 @@ void BringToFront(HWND hwnd)
 	}
 }
 
-HFONT CreateUiFont(HWND page, int points, int weight, const wchar_t* face, bool fixed)
+HFONT CreateLogFont(HWND page)
 {
 	const UINT dpi = GetDpiForWindow(page);
-	const int height = -MulDiv(points, dpi != 0 ? static_cast<int>(dpi) : 96, 72);
-	return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-					   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-					   fixed ? FIXED_PITCH | FF_MODERN : DEFAULT_PITCH | FF_DONTCARE, face);
-}
-
-bool IsMutedControl(int id)
-{
-	return id == IDC_LOCATION_NOTE || id == IDC_STORE_NOTE || id == IDC_RESTART_NOTE ||
-		   id == IDC_CONFIRM_NOTE;
-}
-
-// The wizard frame stays native, but the page is painted on white and the notes and the log get
-// their own palette, so the content reads like a current settings page instead of a grey dialog.
-INT_PTR PageColor(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
-{
-	HBRUSH background = g_pageBrush != nullptr ? g_pageBrush : GetSysColorBrush(COLOR_WINDOW);
-	if (message == WM_CTLCOLORDLG)
-	{
-		return reinterpret_cast<INT_PTR>(background);
-	}
-	const HWND control = reinterpret_cast<HWND>(lParam);
-	const HDC dc = reinterpret_cast<HDC>(wParam);
-	const int id = GetDlgCtrlID(control);
-	if (id == IDC_LOG)
-	{
-		SetBkColor(dc, kPagePanel);
-		SetTextColor(dc, kPageText);
-		return reinterpret_cast<INT_PTR>(g_panelBrush != nullptr ? g_panelBrush
-															 : GetSysColorBrush(COLOR_WINDOW));
-	}
-	SetBkColor(dc, kPageBackground);
-	COLORREF color = IsMutedControl(id) ? kPageMuted : kPageText;
-	if (!IsWindowEnabled(control))
-	{
-		color = GetSysColor(COLOR_GRAYTEXT);
-	}
-	else if (id == IDC_STATUS)
-	{
-		Job* job = JobOf(page);
-		bool done = false;
-		bool success = false;
-		if (job != nullptr)
-		{
-			std::lock_guard<std::mutex> lock(job->mutex);
-			done = job->done;
-			success = job->result.success;
-		}
-		if (done)
-		{
-			color = success ? kStatusGood : kStatusBad;
-		}
-	}
-	SetTextColor(dc, color);
-	return reinterpret_cast<INT_PTR>(background);
+	return CreateFontW(-MulDiv(9, dpi != 0 ? static_cast<int>(dpi) : 96, 72), 0, 0, 0, FW_NORMAL,
+					   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+					   CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN,
+					   L"Consolas");
 }
 
 std::wstring WindowsLineEndings(const std::wstring& text)
@@ -383,15 +326,10 @@ void SetNextText(HWND sheet, const wchar_t* text)
 	}
 }
 
-INT_PTR CALLBACK WelcomeProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
+INT_PTR CALLBACK WelcomeProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 {
 	switch (message)
 	{
-	case WM_CTLCOLORDLG:
-	case WM_CTLCOLORSTATIC:
-	case WM_CTLCOLORBTN:
-	case WM_CTLCOLOREDIT:
-		return PageColor(page, message, wParam, lParam);
 	case WM_INITDIALOG:
 	{
 		Job* job = JobFromPage(lParam);
@@ -474,11 +412,6 @@ INT_PTR CALLBACK LocationProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 {
 	switch (message)
 	{
-	case WM_CTLCOLORDLG:
-	case WM_CTLCOLORSTATIC:
-	case WM_CTLCOLORBTN:
-	case WM_CTLCOLOREDIT:
-		return PageColor(page, message, wParam, lParam);
 	case WM_INITDIALOG:
 	{
 		Job* job = JobFromPage(lParam);
@@ -559,15 +492,10 @@ INT_PTR CALLBACK LocationProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 	return FALSE;
 }
 
-INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
+INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 {
 	switch (message)
 	{
-	case WM_CTLCOLORDLG:
-	case WM_CTLCOLORSTATIC:
-	case WM_CTLCOLORBTN:
-	case WM_CTLCOLOREDIT:
-		return PageColor(page, message, wParam, lParam);
 	case WM_INITDIALOG:
 	{
 		Job* job = JobFromPage(lParam);
@@ -648,18 +576,9 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 	{
 		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
-		if (job->statusFont == nullptr)
-		{
-			job->statusFont = CreateUiFont(page, 12, FW_SEMIBOLD, L"Segoe UI", false);
-		}
 		if (job->logFont == nullptr)
 		{
-			job->logFont = CreateUiFont(page, 9, FW_NORMAL, L"Consolas", true);
-		}
-		if (job->statusFont != nullptr)
-		{
-			SendDlgItemMessageW(page, IDC_STATUS, WM_SETFONT,
-								reinterpret_cast<WPARAM>(job->statusFont), TRUE);
+			job->logFont = CreateLogFont(page);
 		}
 		if (const HWND log = GetDlgItem(page, IDC_LOG))
 		{
@@ -692,26 +611,29 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 	{
 		PAINTSTRUCT paint = {};
 		const HDC dc = BeginPaint(page, &paint);
-		RECT client = {};
-		GetClientRect(page, &client);
-		FillRect(dc, &client, g_pageBrush != nullptr ? g_pageBrush : GetSysColorBrush(COLOR_WINDOW));
 		if (const HWND log = GetDlgItem(page, IDC_LOG))
 		{
 			RECT border = {};
 			GetWindowRect(log, &border);
 			MapWindowPoints(nullptr, page, reinterpret_cast<POINT*>(&border), 2);
 			InflateRect(&border, 1, 1);
-			FrameRect(dc, &border, g_borderBrush != nullptr ? g_borderBrush
-													  : GetSysColorBrush(COLOR_3DSHADOW));
+			FrameRect(dc, &border, g_logBorderBrush != nullptr ? g_logBorderBrush
+													   : GetSysColorBrush(COLOR_3DSHADOW));
 		}
 		EndPaint(page, &paint);
 		return TRUE;
 	}
-	case WM_CTLCOLORDLG:
 	case WM_CTLCOLORSTATIC:
-	case WM_CTLCOLORBTN:
 	case WM_CTLCOLOREDIT:
-		return PageColor(page, message, wParam, lParam);
+		if (reinterpret_cast<HWND>(lParam) == GetDlgItem(page, IDC_LOG))
+		{
+			const HDC dc = reinterpret_cast<HDC>(wParam);
+			SetBkColor(dc, kLogBackground);
+			SetTextColor(dc, kLogText);
+			return reinterpret_cast<INT_PTR>(g_logBrush != nullptr ? g_logBrush
+																  : GetSysColorBrush(COLOR_WINDOW));
+		}
+		break;
 	case WM_NOTIFY:
 		switch (reinterpret_cast<NMHDR*>(lParam)->code)
 		{
@@ -860,34 +782,23 @@ int RunWizard(Job& job)
 	header.nPages = count;
 	header.ppsp = pages;
 	header.hIcon = LoadIconW(module, MAKEINTRESOURCEW(IDI_SETUP_APP));
-	g_pageBrush = CreateSolidBrush(kPageBackground);
-	g_panelBrush = CreateSolidBrush(kPagePanel);
-	g_borderBrush = CreateSolidBrush(kPageBorder);
+	g_logBrush = CreateSolidBrush(kLogBackground);
+	g_logBorderBrush = CreateSolidBrush(kLogBorder);
 	(void)PropertySheetW(&header);
-	if (job.statusFont != nullptr)
-	{
-		DeleteObject(job.statusFont);
-		job.statusFont = nullptr;
-	}
 	if (job.logFont != nullptr)
 	{
 		DeleteObject(job.logFont);
 		job.logFont = nullptr;
 	}
-	if (g_pageBrush != nullptr)
+	if (g_logBrush != nullptr)
 	{
-		DeleteObject(g_pageBrush);
-		g_pageBrush = nullptr;
+		DeleteObject(g_logBrush);
+		g_logBrush = nullptr;
 	}
-	if (g_panelBrush != nullptr)
+	if (g_logBorderBrush != nullptr)
 	{
-		DeleteObject(g_panelBrush);
-		g_panelBrush = nullptr;
-	}
-	if (g_borderBrush != nullptr)
-	{
-		DeleteObject(g_borderBrush);
-		g_borderBrush = nullptr;
+		DeleteObject(g_logBorderBrush);
+		g_logBorderBrush = nullptr;
 	}
 
 	if (job.worker.joinable())

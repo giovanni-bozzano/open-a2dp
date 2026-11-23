@@ -33,47 +33,47 @@ BEGIN
     END
 END
 
-IDD_WELCOME DIALOGEX 0, 0, 360, 236
+IDD_WELCOME DIALOGEX 0, 0, 320, 200
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 CAPTION "Welcome"
-FONT 10, "Segoe UI", 400, 0, 0x1
+FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
-    ICON            IDI_SETUP_APP, -1, 20, 20, 32, 32
-    LTEXT           "", IDC_WELCOME_TEXT, 66, 20, 274, 196, SS_LEFT | SS_NOPREFIX
+    ICON            IDI_SETUP_APP, -1, 12, 12, 32, 32
+    LTEXT           "", IDC_WELCOME_TEXT, 54, 12, 254, 174, SS_LEFT | SS_NOPREFIX
 END
 
-IDD_LOCATION DIALOGEX 0, 0, 360, 236
+IDD_LOCATION DIALOGEX 0, 0, 320, 200
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 CAPTION "Install location"
-FONT 10, "Segoe UI", 400, 0, 0x1
+FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
-    LTEXT           "Install OpenA2DP in:", -1, 20, 20, 320, 12
-    EDITTEXT        IDC_PATH, 20, 36, 236, 22, ES_AUTOHSCROLL
-    PUSHBUTTON      "Browse...", IDC_BROWSE, 264, 35, 76, 24
-    LTEXT           "", IDC_LOCATION_NOTE, 20, 70, 320, 60, SS_LEFT | SS_NOPREFIX
-    LTEXT           "The driver package is added to the Windows driver store. Setup does not switch any headset.", IDC_STORE_NOTE, 20, 196, 320, 24, SS_LEFT | SS_NOPREFIX
+    LTEXT           "Install OpenA2DP in:", -1, 12, 12, 296, 10
+    EDITTEXT        IDC_PATH, 12, 26, 240, 14, ES_AUTOHSCROLL
+    PUSHBUTTON      "Browse...", IDC_BROWSE, 258, 25, 50, 16
+    LTEXT           "", IDC_LOCATION_NOTE, 12, 50, 296, 60, SS_LEFT | SS_NOPREFIX
+    LTEXT           "The driver package is added to the Windows driver store. Setup does not switch any headset.", -1, 12, 150, 296, 30, SS_LEFT | SS_NOPREFIX
 END
 
-IDD_PROGRESS DIALOGEX 0, 0, 360, 236
+IDD_PROGRESS DIALOGEX 0, 0, 320, 200
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 CAPTION "Working"
-FONT 10, "Segoe UI", 400, 0, 0x1
+FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
-    LTEXT           "", IDC_STATUS, 20, 18, 320, 20, SS_LEFT | SS_NOPREFIX
-    CONTROL         "", IDC_PROGRESS, "msctls_progress32", PBS_MARQUEE, 20, 42, 320, 6
-    EDITTEXT        IDC_LOG, 20, 62, 320, 140, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
-    CONTROL         "Open OpenA2DP Settings after setup", IDC_OPEN_SETTINGS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 212, 260, 14
-    LTEXT           "", IDC_RESTART_NOTE, 20, 212, 320, 14, SS_LEFT | SS_NOPREFIX
+    LTEXT           "", IDC_STATUS, 12, 12, 296, 24, SS_LEFT | SS_NOPREFIX
+    CONTROL         "", IDC_PROGRESS, "msctls_progress32", PBS_MARQUEE, 12, 40, 296, 12
+    EDITTEXT        IDC_LOG, 12, 58, 296, 118, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Open OpenA2DP Settings after setup", IDC_OPEN_SETTINGS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 180, 240, 12
+    LTEXT           "", IDC_RESTART_NOTE, 12, 180, 296, 12, SS_LEFT | SS_NOPREFIX
 END
 
-IDD_CONFIRM DIALOGEX 0, 0, 360, 236
+IDD_CONFIRM DIALOGEX 0, 0, 320, 200
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 CAPTION "Remove OpenA2DP"
-FONT 10, "Segoe UI", 400, 0, 0x1
+FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
-    LTEXT           "Setup will return every headset using OpenA2DP to the Windows driver, stop and remove the encoder service, remove the driver package from the driver store, and remove the installed tools, shortcut and Settings > Apps entry.", -1, 20, 20, 320, 56, SS_LEFT | SS_NOPREFIX
-    LTEXT           "Headsets currently using OpenA2DP:", -1, 20, 88, 320, 12
-    EDITTEXT        IDC_SINKS, 20, 104, 320, 40, ES_MULTILINE | ES_READONLY | WS_VSCROLL
-    CONTROL         "Also delete saved headset settings", IDC_REMOVE_SETTINGS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 156, 320, 14
-    LTEXT           "Leave this unchecked to keep settings for a later reinstall. Headsets that are not connected will use the Windows driver when they reconnect.", IDC_CONFIRM_NOTE, 20, 178, 320, 40, SS_LEFT | SS_NOPREFIX
+    LTEXT           "Setup will return every headset using OpenA2DP to the Windows driver, stop and remove the encoder service, remove the driver package from the driver store, and remove the installed tools, shortcut and Settings > Apps entry.", -1, 12, 12, 296, 60, SS_LEFT | SS_NOPREFIX
+    LTEXT           "Headsets currently using OpenA2DP:", -1, 12, 76, 296, 10
+    EDITTEXT        IDC_SINKS, 12, 88, 296, 40, ES_MULTILINE | ES_READONLY | WS_VSCROLL
+    CONTROL         "Also delete saved headset settings", IDC_REMOVE_SETTINGS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 136, 296, 12
+    LTEXT           "Leave this unchecked to keep settings for a later reinstall. Headsets that are not connected will use the Windows driver when they reconnect.", -1, 12, 152, 296, 36, SS_LEFT | SS_NOPREFIX
 END
