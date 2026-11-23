@@ -45,6 +45,15 @@ constexpr UINT kJobUpdate = WM_APP + 1;
 constexpr UINT kJobDone = WM_APP + 2;
 constexpr UINT kBringToFront = WM_APP + 3;
 
+// The wizard frame and its buttons stay native; the page content is drawn from this palette.
+constexpr COLORREF kPageBackground = RGB(0xFF, 0xFF, 0xFF);
+constexpr COLORREF kPageText = RGB(0x1A, 0x1A, 0x1A);
+constexpr COLORREF kPageMuted = RGB(0x5F, 0x5F, 0x5F);
+constexpr COLORREF kPagePanel = RGB(0xF7, 0xF7, 0xF7);
+constexpr COLORREF kPageBorder = RGB(0xDD, 0xDD, 0xDD);
+constexpr COLORREF kStatusGood = RGB(0x0E, 0x6B, 0x2E);
+constexpr COLORREF kStatusBad = RGB(0xB0, 0x1B, 0x1B);
+
 enum class Mode
 {
 	Install,
@@ -63,6 +72,8 @@ struct Job
 	bool started = false;
 	HWND sheet = nullptr;
 	HWND progressPage = nullptr;
+	HFONT statusFont = nullptr;
+	HFONT logFont = nullptr;
 	std::thread worker;
 
 	std::mutex mutex;
@@ -73,6 +84,9 @@ struct Job
 };
 
 HINSTANCE g_instance = nullptr;
+HBRUSH g_pageBrush = nullptr;
+HBRUSH g_panelBrush = nullptr;
+HBRUSH g_borderBrush = nullptr;
 
 Job* JobOf(HWND page)
 {
@@ -115,6 +129,66 @@ void BringToFront(HWND hwnd)
 	{
 		AttachThreadInput(current, foreground, FALSE);
 	}
+}
+
+HFONT CreateUiFont(HWND page, int points, int weight, const wchar_t* face, bool fixed)
+{
+	const UINT dpi = GetDpiForWindow(page);
+	const int height = -MulDiv(points, dpi != 0 ? static_cast<int>(dpi) : 96, 72);
+	return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+					   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+					   fixed ? FIXED_PITCH | FF_MODERN : DEFAULT_PITCH | FF_DONTCARE, face);
+}
+
+bool IsMutedControl(int id)
+{
+	return id == IDC_LOCATION_NOTE || id == IDC_STORE_NOTE || id == IDC_RESTART_NOTE ||
+		   id == IDC_CONFIRM_NOTE;
+}
+
+// The wizard frame stays native, but the page is painted on white and the notes and the log get
+// their own palette, so the content reads like a current settings page instead of a grey dialog.
+INT_PTR PageColor(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	HBRUSH background = g_pageBrush != nullptr ? g_pageBrush : GetSysColorBrush(COLOR_WINDOW);
+	if (message == WM_CTLCOLORDLG)
+	{
+		return reinterpret_cast<INT_PTR>(background);
+	}
+	const HWND control = reinterpret_cast<HWND>(lParam);
+	const HDC dc = reinterpret_cast<HDC>(wParam);
+	const int id = GetDlgCtrlID(control);
+	if (id == IDC_LOG)
+	{
+		SetBkColor(dc, kPagePanel);
+		SetTextColor(dc, kPageText);
+		return reinterpret_cast<INT_PTR>(g_panelBrush != nullptr ? g_panelBrush
+															 : GetSysColorBrush(COLOR_WINDOW));
+	}
+	SetBkColor(dc, kPageBackground);
+	COLORREF color = IsMutedControl(id) ? kPageMuted : kPageText;
+	if (!IsWindowEnabled(control))
+	{
+		color = GetSysColor(COLOR_GRAYTEXT);
+	}
+	else if (id == IDC_STATUS)
+	{
+		Job* job = JobOf(page);
+		bool done = false;
+		bool success = false;
+		if (job != nullptr)
+		{
+			std::lock_guard<std::mutex> lock(job->mutex);
+			done = job->done;
+			success = job->result.success;
+		}
+		if (done)
+		{
+			color = success ? kStatusGood : kStatusBad;
+		}
+	}
+	SetTextColor(dc, color);
+	return reinterpret_cast<INT_PTR>(background);
 }
 
 std::wstring WindowsLineEndings(const std::wstring& text)
@@ -309,10 +383,15 @@ void SetNextText(HWND sheet, const wchar_t* text)
 	}
 }
 
-INT_PTR CALLBACK WelcomeProc(HWND page, UINT message, WPARAM, LPARAM lParam)
+INT_PTR CALLBACK WelcomeProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
+	case WM_CTLCOLORDLG:
+	case WM_CTLCOLORSTATIC:
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLOREDIT:
+		return PageColor(page, message, wParam, lParam);
 	case WM_INITDIALOG:
 	{
 		Job* job = JobFromPage(lParam);
@@ -395,6 +474,11 @@ INT_PTR CALLBACK LocationProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 {
 	switch (message)
 	{
+	case WM_CTLCOLORDLG:
+	case WM_CTLCOLORSTATIC:
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLOREDIT:
+		return PageColor(page, message, wParam, lParam);
 	case WM_INITDIALOG:
 	{
 		Job* job = JobFromPage(lParam);
@@ -475,10 +559,15 @@ INT_PTR CALLBACK LocationProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 	return FALSE;
 }
 
-INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM, LPARAM lParam)
+INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
+	case WM_CTLCOLORDLG:
+	case WM_CTLCOLORSTATIC:
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLOREDIT:
+		return PageColor(page, message, wParam, lParam);
 	case WM_INITDIALOG:
 	{
 		Job* job = JobFromPage(lParam);
@@ -559,13 +648,33 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 	{
 		Job* job = JobFromPage(lParam);
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
+		if (job->statusFont == nullptr)
+		{
+			job->statusFont = CreateUiFont(page, 12, FW_SEMIBOLD, L"Segoe UI", false);
+		}
+		if (job->logFont == nullptr)
+		{
+			job->logFont = CreateUiFont(page, 9, FW_NORMAL, L"Consolas", true);
+		}
+		if (job->statusFont != nullptr)
+		{
+			SendDlgItemMessageW(page, IDC_STATUS, WM_SETFONT,
+								reinterpret_cast<WPARAM>(job->statusFont), TRUE);
+		}
 		if (const HWND log = GetDlgItem(page, IDC_LOG))
 		{
 			// The resource marks the log read-only; enforce it, disable the themed white
-			// background, and hide the caret so the output pane cannot look like an input field.
+			// background, give it a monospaced face, and hide the caret so the output pane
+			// cannot look like an input field.
 			SendMessageW(log, EM_SETREADONLY, TRUE, 0);
 			SetWindowTheme(log, L"", L"");
 			SetWindowSubclass(log, LogEditProc, 1, 0);
+			if (job->logFont != nullptr)
+			{
+				SendMessageW(log, WM_SETFONT, reinterpret_cast<WPARAM>(job->logFont), TRUE);
+			}
+			SendMessageW(log, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+						 MAKELPARAM(8, 8));
 		}
 		ShowWindow(GetDlgItem(page, IDC_OPEN_SETTINGS), SW_HIDE);
 		ShowWindow(GetDlgItem(page, IDC_RESTART_NOTE), SW_HIDE);
@@ -579,16 +688,30 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 			UpdateProgressPage(job, page);
 		}
 		return TRUE;
-	case WM_CTLCOLORSTATIC:
-	case WM_CTLCOLOREDIT:
-		if (reinterpret_cast<HWND>(lParam) == GetDlgItem(page, IDC_LOG))
+	case WM_PAINT:
+	{
+		PAINTSTRUCT paint = {};
+		const HDC dc = BeginPaint(page, &paint);
+		RECT client = {};
+		GetClientRect(page, &client);
+		FillRect(dc, &client, g_pageBrush != nullptr ? g_pageBrush : GetSysColorBrush(COLOR_WINDOW));
+		if (const HWND log = GetDlgItem(page, IDC_LOG))
 		{
-			const HDC dc = reinterpret_cast<HDC>(wParam);
-			SetBkColor(dc, GetSysColor(COLOR_3DFACE));
-			SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
-			return reinterpret_cast<INT_PTR>(GetSysColorBrush(COLOR_3DFACE));
+			RECT border = {};
+			GetWindowRect(log, &border);
+			MapWindowPoints(nullptr, page, reinterpret_cast<POINT*>(&border), 2);
+			InflateRect(&border, 1, 1);
+			FrameRect(dc, &border, g_borderBrush != nullptr ? g_borderBrush
+													  : GetSysColorBrush(COLOR_3DSHADOW));
 		}
-		break;
+		EndPaint(page, &paint);
+		return TRUE;
+	}
+	case WM_CTLCOLORDLG:
+	case WM_CTLCOLORSTATIC:
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLOREDIT:
+		return PageColor(page, message, wParam, lParam);
 	case WM_NOTIFY:
 		switch (reinterpret_cast<NMHDR*>(lParam)->code)
 		{
@@ -737,7 +860,35 @@ int RunWizard(Job& job)
 	header.nPages = count;
 	header.ppsp = pages;
 	header.hIcon = LoadIconW(module, MAKEINTRESOURCEW(IDI_SETUP_APP));
+	g_pageBrush = CreateSolidBrush(kPageBackground);
+	g_panelBrush = CreateSolidBrush(kPagePanel);
+	g_borderBrush = CreateSolidBrush(kPageBorder);
 	(void)PropertySheetW(&header);
+	if (job.statusFont != nullptr)
+	{
+		DeleteObject(job.statusFont);
+		job.statusFont = nullptr;
+	}
+	if (job.logFont != nullptr)
+	{
+		DeleteObject(job.logFont);
+		job.logFont = nullptr;
+	}
+	if (g_pageBrush != nullptr)
+	{
+		DeleteObject(g_pageBrush);
+		g_pageBrush = nullptr;
+	}
+	if (g_panelBrush != nullptr)
+	{
+		DeleteObject(g_panelBrush);
+		g_panelBrush = nullptr;
+	}
+	if (g_borderBrush != nullptr)
+	{
+		DeleteObject(g_borderBrush);
+		g_borderBrush = nullptr;
+	}
 
 	if (job.worker.joinable())
 	{
