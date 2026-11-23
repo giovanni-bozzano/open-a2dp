@@ -24,6 +24,7 @@
 #include <shlobj.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <uxtheme.h>
 
 #include <cstdlib>
 #include <cwchar>
@@ -35,6 +36,7 @@
 #include <vector>
 
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace OpenA2dp::Setup {
 namespace {
@@ -88,6 +90,24 @@ INT_PTR PageResult(HWND page, INT_PTR result)
 {
 	SetWindowLongPtrW(page, DWLP_MSGRESULT, result);
 	return TRUE;
+}
+
+std::wstring WindowsLineEndings(const std::wstring& text)
+{
+	std::wstring result;
+	result.reserve(text.size() + 16);
+	for (size_t i = 0; i < text.size(); ++i)
+	{
+		if (text[i] == L'\n' && (i == 0 || text[i - 1] != L'\r'))
+		{
+			result += L"\r\n";
+		}
+		else
+		{
+			result += text[i];
+		}
+	}
+	return result;
 }
 
 std::wstring Trim(const std::wstring& text)
@@ -223,7 +243,8 @@ void UpdateProgressPage(Job* job, HWND page)
 	}
 	SetDlgItemTextW(page, IDC_STATUS, status.c_str());
 	SendDlgItemMessageW(page, IDC_LOG, EM_SETLIMITTEXT, 1024 * 1024, 0);
-	SetDlgItemTextW(page, IDC_LOG, log.c_str());
+	const std::wstring display = WindowsLineEndings(log);
+	SetDlgItemTextW(page, IDC_LOG, display.c_str());
 	SendDlgItemMessageW(page, IDC_LOG, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
 	SendDlgItemMessageW(page, IDC_LOG, EM_SCROLLCARET, 0, 0);
 	if (!done)
@@ -505,9 +526,10 @@ INT_PTR CALLBACK ProgressProc(HWND page, UINT message, WPARAM wParam, LPARAM lPa
 		SetWindowLongPtrW(page, DWLP_USER, reinterpret_cast<LONG_PTR>(job));
 		if (const HWND log = GetDlgItem(page, IDC_LOG))
 		{
-			// The resource marks the log read-only; enforce it and hide the caret so the output
-			// pane cannot look like an input field.
+			// The resource marks the log read-only; enforce it, disable the themed white
+			// background, and hide the caret so the output pane cannot look like an input field.
 			SendMessageW(log, EM_SETREADONLY, TRUE, 0);
+			SetWindowTheme(log, L"", L"");
 			SetWindowSubclass(log, LogEditProc, 1, 0);
 		}
 		ShowWindow(GetDlgItem(page, IDC_OPEN_SETTINGS), SW_HIDE);
@@ -604,6 +626,7 @@ void WriteLog(Job& job)
 			text += L"\r\n";
 		}
 	}
+	text = WindowsLineEndings(text);
 	const std::wstring folder = TempFolder();
 	if (folder.empty())
 	{
