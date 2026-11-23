@@ -43,6 +43,7 @@ namespace {
 
 constexpr UINT kJobUpdate = WM_APP + 1;
 constexpr UINT kJobDone = WM_APP + 2;
+constexpr UINT kBringToFront = WM_APP + 3;
 
 enum class Mode
 {
@@ -90,6 +91,30 @@ INT_PTR PageResult(HWND page, INT_PTR result)
 {
 	SetWindowLongPtrW(page, DWLP_MSGRESULT, result);
 	return TRUE;
+}
+
+// A process started by another one - a terminal, a script, or the elevation path, which starts it
+// from the AppInfo service - is not the foreground process, so Windows shows its window without
+// activating it and the wizard appears behind the windows already open. The foreground thread's
+// input is joined for the one call that moves the window, which is the documented way for a
+// program that has just been started to take the user's attention.
+void BringToFront(HWND hwnd)
+{
+	if (GetForegroundWindow() == hwnd)
+	{
+		return;
+	}
+	const DWORD foreground = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+	const DWORD current = GetCurrentThreadId();
+	const bool joined = foreground != 0 && foreground != current &&
+						AttachThreadInput(current, foreground, TRUE) != FALSE;
+	BringWindowToTop(hwnd);
+	SetForegroundWindow(hwnd);
+	SetActiveWindow(hwnd);
+	if (joined)
+	{
+		AttachThreadInput(current, foreground, FALSE);
+	}
 }
 
 std::wstring WindowsLineEndings(const std::wstring& text)
@@ -314,8 +339,13 @@ INT_PTR CALLBACK WelcomeProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 				   L"enabled on this PC.";
 		}
 		SetDlgItemTextW(page, IDC_WELCOME_TEXT, text.c_str());
+		// The sheet is not shown yet; bring it forward once the modal loop runs.
+		PostMessageW(page, kBringToFront, 0, 0);
 		return TRUE;
 	}
+	case kBringToFront:
+		BringToFront(GetParent(page));
+		return TRUE;
 	case WM_NOTIFY:
 		if (reinterpret_cast<NMHDR*>(lParam)->code == PSN_SETACTIVE)
 		{
@@ -473,8 +503,13 @@ INT_PTR CALLBACK ConfirmProc(HWND page, UINT message, WPARAM, LPARAM lParam)
 		}
 		SetDlgItemTextW(page, IDC_SINKS, list.c_str());
 		CheckDlgButton(page, IDC_REMOVE_SETTINGS, BST_UNCHECKED);
+		// The sheet is not shown yet; bring it forward once the modal loop runs.
+		PostMessageW(page, kBringToFront, 0, 0);
 		return TRUE;
 	}
+	case kBringToFront:
+		BringToFront(GetParent(page));
+		return TRUE;
 	case WM_NOTIFY:
 		switch (reinterpret_cast<NMHDR*>(lParam)->code)
 		{
