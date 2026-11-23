@@ -699,6 +699,11 @@ SwitchOutcome ReloadSinkDriver(const std::string& reference, SwitchReport& repor
 				"); an update does not switch a sink that did not choose it";
 		return SwitchOutcome::Failed;
 	}
+	if (state.openA2dpInf.empty())
+	{
+		error = "the OpenA2DP package is not in the driver store; deploy it first";
+		return SwitchOutcome::Failed;
+	}
 
 	std::string paused;
 	if (!EnsureSinkIdle(reference, state.instanceId, paused, error))
@@ -714,13 +719,15 @@ SwitchOutcome ReloadSinkDriver(const std::string& reference, SwitchReport& repor
 	{
 		return SwitchOutcome::Failed;
 	}
-	const bool restarted = RestartNode(dev, error);
-	if (restarted && !NodeRunning(dev))
+	const bool applied = ApplyPackage(set, dev, state.openA2dpInf, SinkDriver::OpenA2dp, error);
+	if (!applied)
 	{
-		error = "the sink's A2DP node did not start after the driver update; reconnect the sink";
+		// ApplyPackage can leave the node stopped when the install was refused; never leave the
+		// sink out of the stack.
+		(void)CM_Enable_DevNode(dev.DevInst, 0);
 	}
 	SetupDiDestroyDeviceInfoList(set);
-	return restarted && error.empty() ? SwitchOutcome::Switched : SwitchOutcome::Failed;
+	return applied ? SwitchOutcome::Switched : SwitchOutcome::Failed;
 }
 
 } // namespace OpenA2dp::Tools

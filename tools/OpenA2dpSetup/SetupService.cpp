@@ -139,7 +139,7 @@ bool QueryEncoderServiceDirectory(std::wstring& directory)
 	return !directory.empty();
 }
 
-bool StopEncoderService(const Log& log, std::wstring& error)
+bool StopEncoderService(const Log& log, std::wstring& error, bool keepRecovery)
 {
 	error.clear();
 	const SC_HANDLE manager = OpenManager(SC_MANAGER_CONNECT, error);
@@ -162,11 +162,14 @@ bool StopEncoderService(const Log& log, std::wstring& error)
 		return false;
 	}
 
-	// A stop must not be undone by the restart-on-failure policy while the files are replaced.
-	SERVICE_FAILURE_ACTIONSW noActions = {};
-	noActions.dwResetPeriod = 0;
-	noActions.cActions = 0;
-	(void)ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &noActions);
+	if (!keepRecovery)
+	{
+		// A stop must not be undone by the restart-on-failure policy while the files are replaced.
+		SERVICE_FAILURE_ACTIONSW noActions = {};
+		noActions.dwResetPeriod = 0;
+		noActions.cActions = 0;
+		(void)ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &noActions);
+	}
 
 	SERVICE_STATUS status = {};
 	DWORD processId = 0;

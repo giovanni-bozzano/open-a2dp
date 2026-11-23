@@ -9,7 +9,7 @@ namespace OpenA2dp::Setup {
 bool EncoderServiceExists();
 bool QueryEncoderServiceDirectory(std::wstring& directory);
 
-bool StopEncoderService(const Log& log, std::wstring& error);
+bool StopEncoderService(const Log& log, std::wstring& error, bool keepRecovery = false);
 bool InstallEncoderService(const std::wstring& exePath, const Log& log, std::wstring& error);
 bool StartEncoderService(const Log& log, std::wstring& error);
 bool DeleteEncoderService(const Log& log, std::wstring& error);

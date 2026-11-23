@@ -458,6 +458,27 @@ Result Install(const std::wstring& installDir, const std::wstring& setupExePath,
 	}
 
 	int reloaded = 0;
+	int reloadFailed = 0;
+	bool serviceWarning = false;
+	bool reloadNeeded = false;
+	for (const Tools::SinkNode& sink : sinksBefore)
+	{
+		if (sink.driver == Tools::SinkDriver::OpenA2dp)
+		{
+			reloadNeeded = true;
+			break;
+		}
+	}
+	if (updating && reloadNeeded)
+	{
+		// The encoder service opens the driver's control devices. Stop it while the new package is
+		// applied, or the old image stays loaded and the sinks come back on the previous driver.
+		log(L"Stopping the encoder service so the driver can unload...");
+		if (!StopEncoderService(log, error, true))
+		{
+			log(L"warning: " + error);
+		}
+	}
 	if (updating)
 	{
 		for (const Tools::SinkNode& sink : sinksBefore)
@@ -482,9 +503,20 @@ Result Install(const std::wstring& installDir, const std::wstring& setupExePath,
 			}
 			else
 			{
+				++reloadFailed;
 				log(L"warning: " + SinkName(sink) + L" kept the previous driver: " +
 					Tools::Widen(switchError) + L". Reconnect the headset after setup.");
 			}
+		}
+	}
+	if (updating && reloadNeeded)
+	{
+		log(L"Starting the encoder service...");
+		std::wstring serviceError;
+		if (!StartEncoderService(log, serviceError))
+		{
+			log(L"warning: " + serviceError);
+			serviceWarning = true;
 		}
 	}
 
@@ -556,6 +588,16 @@ Result Install(const std::wstring& installDir, const std::wstring& setupExePath,
 		{
 			result.message += L"\n\n" + std::to_wstring(reloaded) +
 							  L" headset(s) already using OpenA2DP were restarted to load the new driver.";
+		}
+		if (reloadFailed > 0)
+		{
+			result.message += L"\n\n" + std::to_wstring(reloadFailed) +
+							  L" headset(s) kept the previous driver; see the log and reconnect them.";
+		}
+		if (serviceWarning)
+		{
+			result.message += L"\n\nThe encoder service could not be restarted; start it or restart "
+							  L"Windows.";
 		}
 		if (oldPackagesRemoved)
 		{
