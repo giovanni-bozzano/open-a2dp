@@ -157,7 +157,7 @@ bool IsTestSigningEnabled()
 		ULONG Options;
 	};
 	constexpr ULONG kSystemCodeIntegrityInformation = 103;
-	constexpr ULONG kTestSignOption = 0x40;
+	constexpr ULONG kTestSignOption = 0x02; // CODEINTEGRITY_OPTION_TESTSIGN
 
 	const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
 	if (ntdll == nullptr)
