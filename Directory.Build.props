@@ -68,4 +68,11 @@
 		  <ExceptionHandling>Sync</ExceptionHandling>
 		</ClCompile>
 	  </ItemDefinitionGroup>
+	  <!-- The driver receives these transitively from Microsoft.Windows.WDK.x64.
+	       The user-mode projects reference the pinned SDK packages directly so the
+	       build does not need a Windows SDK installed alongside the build tools. -->
+	  <ItemGroup Condition="'$(ConfigurationType)' != 'Driver' and '$(ConfigurationType)' != ''">
+		<PackageReference Include="Microsoft.Windows.SDK.CPP" />
+		<PackageReference Include="Microsoft.Windows.SDK.CPP.x64" />
+	  </ItemGroup>
 </Project>
