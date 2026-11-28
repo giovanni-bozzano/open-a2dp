@@ -61,6 +61,10 @@ The window refreshes itself, including sinks that start or stop playing while it
 is open. A field's tooltip explains the setting it changes; a status row whose
 value does not fit its column shows the whole value in the row's tooltip.
 
+`OpenA2dpConfig.exe --theme light|dark` starts the window in that theme for one
+run, which is what a shortcut or a screenshot needs. The option does not change
+the Windows app theme; without it the window follows it.
+
 ## The command line
 
 ```text

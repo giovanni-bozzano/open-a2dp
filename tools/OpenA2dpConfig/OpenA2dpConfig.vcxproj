@@ -17,8 +17,9 @@
 	       uxtheme: the dark title bar and the dark combo boxes; advapi32: the apps theme key;
 	       setupapi and newdev: which A2DP node a sink is on, and moving it to the other driver;
 	       ole32: whether the audio engine is playing to it; windowsapp: pausing that program
-	       through the media transport manager so the node can be restarted. -->
-	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;dwmapi.lib;uxtheme.lib;advapi32.lib;setupapi.lib;newdev.lib;ole32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+	       through the media transport manager so the node can be restarted; shell32: the command
+	       line, where the startup theme comes from. -->
+	  <AdditionalDependencies>cfgmgr32.lib;comctl32.lib;dwmapi.lib;uxtheme.lib;advapi32.lib;setupapi.lib;newdev.lib;ole32.lib;shell32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
 	  <!-- The control device is limited to Administrators, so ask for that up front. -->
 	  <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
 	</Link>

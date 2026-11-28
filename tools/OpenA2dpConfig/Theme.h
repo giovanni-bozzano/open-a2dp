@@ -22,9 +22,19 @@ struct Colors
 	COLORREF error;
 };
 
-// Reads the apps theme and opts the process into it. Must run before the window class is
-// registered, because the class background brush comes from the palette.
-void SelectTheme();
+// What the window starts with: the Windows app theme, or the one-run override the command line
+// asks for. Neither override changes the Windows setting.
+enum class ThemePreference
+{
+	System,
+	Light,
+	Dark,
+};
+
+// Reads the apps theme and opts the process into it, or applies `preference` instead. Must run
+// before the window class is registered, because the class background brush comes from the
+// palette.
+void SelectTheme(ThemePreference preference);
 
 bool DarkTheme();
 

@@ -76,7 +76,7 @@ bool DarkAppsRequested()
 // False when this Windows does not offer the opt-in, which also means the title bar and the
 // themed controls cannot be drawn dark. The module is held for the lifetime of the process
 // rather than unloaded, because the theme the setting installs lives inside it.
-bool EnableDarkMode()
+bool SetPreferredMode(PreferredAppMode mode)
 {
 	const HMODULE uxtheme = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
 	if (uxtheme == nullptr)
@@ -90,7 +90,7 @@ bool EnableDarkMode()
 	{
 		return false;
 	}
-	(void)setPreferred(PreferredAppMode::ForceDark);
+	(void)setPreferred(mode);
 	using FlushMenuThemes = void(WINAPI*)();
 	if (const auto flush =
 			reinterpret_cast<FlushMenuThemes>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(kFlushMenuThemesOrdinal))))
@@ -104,9 +104,23 @@ bool EnableDarkMode()
 
 // The brush belongs to the module: both the window class and every paint use it, so it is
 // created once and left to the process to release at exit.
-void SelectTheme()
+void SelectTheme(ThemePreference preference)
 {
-	g_dark = DarkAppsRequested() && EnableDarkMode();
+	// The stored setting decides only when this run did not name a theme. A forced light run also
+	// switches the process back, so a dark Windows setting cannot leak into the controls.
+	g_dark = false;
+	if (preference == ThemePreference::Dark)
+	{
+		g_dark = SetPreferredMode(PreferredAppMode::ForceDark);
+	}
+	else if (preference == ThemePreference::Light)
+	{
+		(void)SetPreferredMode(PreferredAppMode::ForceLight);
+	}
+	else
+	{
+		g_dark = DarkAppsRequested() && SetPreferredMode(PreferredAppMode::ForceDark);
+	}
 	g_colors = g_dark ? kDarkColors : kLightColors;
 	g_background = CreateSolidBrush(g_colors.background);
 }

@@ -22,6 +22,7 @@
 #include <windows.h>
 
 #include <commctrl.h>
+#include <shellapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
 
@@ -3394,12 +3395,50 @@ void BringToFront(HWND hwnd)
 	}
 }
 
+// `--theme light|dark` overrides the Windows app theme for this run. The window is the tool's
+// whole output, so a value it cannot use is reported rather than silently leaving the window
+// in the other theme.
+ThemePreference ParseThemePreference()
+{
+	ThemePreference preference = ThemePreference::System;
+	int count = 0;
+	LPWSTR* const arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+	if (arguments == nullptr)
+	{
+		return preference;
+	}
+	for (int i = 1; i < count; ++i)
+	{
+		if (_wcsicmp(arguments[i], L"--theme") != 0)
+		{
+			continue;
+		}
+		const wchar_t* const value = i + 1 < count ? arguments[i + 1] : nullptr;
+		if (value != nullptr && _wcsicmp(value, L"light") == 0)
+		{
+			preference = ThemePreference::Light;
+		}
+		else if (value != nullptr && _wcsicmp(value, L"dark") == 0)
+		{
+			preference = ThemePreference::Dark;
+		}
+		else
+		{
+			MessageBoxW(nullptr, L"--theme takes light or dark. The window follows the Windows app theme.",
+						L"OpenA2DP", MB_OK | MB_ICONWARNING);
+		}
+		++i;
+	}
+	LocalFree(arguments);
+	return preference;
+}
+
 } // namespace
 
 int Run(HINSTANCE instance, int showCommand)
 {
-	// The theme is read once, before the class brush and the first measurement exist.
-	SelectTheme();
+	// The theme is decided once, before the class brush and the first measurement exist.
+	SelectTheme(ParseThemePreference());
 	const wchar_t* const className = L"OpenA2dpConfigWindow";
 	WNDCLASSEXW windowClass = {};
 	windowClass.cbSize = sizeof(windowClass);
