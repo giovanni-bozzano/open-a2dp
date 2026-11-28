@@ -75,6 +75,9 @@
 	</ClCompile>
   </ItemGroup>
   <ItemGroup>
+	<ResourceCompile Include="OpenA2dpSvc.rc" />
+  </ItemGroup>
+  <ItemGroup>
 	<ClInclude Include="..\codecs\include\OpenA2dp\IA2dpCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AacCodec.h" />
 	<ClInclude Include="..\codecs\include\OpenA2dp\AacStreamEncoder.h" />
