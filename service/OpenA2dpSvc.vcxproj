@@ -76,6 +76,8 @@
   </ItemGroup>
   <ItemGroup>
 	<ResourceCompile Include="OpenA2dpSvc.rc" />
+	<!-- The icon Task Manager shows beside the process, the same file the tools wear. -->
+	<ResourceCompile Include="..\tools\common\AppIcon.rc" />
   </ItemGroup>
   <ItemGroup>
 	<ClInclude Include="..\codecs\include\OpenA2dp\IA2dpCodec.h" />
